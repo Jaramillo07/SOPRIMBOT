@@ -28,6 +28,21 @@ class MessageHandler:
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
     
+    def format_whatsapp_number(self, phone_number):
+        """
+        Asegura que el número de teléfono tenga el formato correcto para WhatsApp API.
+        Añade el signo "+" si no está presente.
+        """
+        # Eliminar cualquier espacio, guion u otro carácter no numérico excepto el "+"
+        cleaned_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+        
+        # Asegurarse de que tiene el signo "+"
+        if not cleaned_number.startswith('+'):
+            cleaned_number = '+' + cleaned_number
+            
+        logger.info(f"Número original: {phone_number} -> Formateado: {cleaned_number}")
+        return cleaned_number
+    
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
         Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
@@ -88,6 +103,9 @@ class MessageHandler:
         """
         logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
         
+        # Formatear el número de teléfono para asegurar que tiene el signo "+"
+        formatted_phone = self.format_whatsapp_number(phone_number)
+        
         # 1) Ignorar saludos y mensajes personales
         if self.es_mensaje_a_ignorar(mensaje):
             logger.info(f"Mensaje ignorado: '{mensaje}'")
@@ -108,7 +126,7 @@ class MessageHandler:
             if product_info:
                 logger.info(f"Información encontrada para {producto_detectado}")
                 respuesta = self.gemini_service.generate_product_response(mensaje, product_info)
-                self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
+                self.whatsapp_service.send_product_response(formatted_phone, respuesta, product_info)
                 return {
                     "success": True,
                     "message_type": "producto",
@@ -121,7 +139,7 @@ class MessageHandler:
                 respuesta = self.gemini_service.generate_response(
                     f"No encontré información específica sobre {producto_detectado}."
                 )
-                self.whatsapp_service.send_text_message(phone_number, respuesta)
+                self.whatsapp_service.send_text_message(formatted_phone, respuesta)
                 return {
                     "success": True,
                     "message_type": "producto_no_encontrado",
@@ -132,7 +150,7 @@ class MessageHandler:
         # 4) En cualquier otro caso, respuesta general
         logger.info("Generando respuesta general con Gemini")
         respuesta = self.gemini_service.generate_response(mensaje)
-        self.whatsapp_service.send_text_message(phone_number, respuesta)
+        self.whatsapp_service.send_text_message(formatted_phone, respuesta)
         return {
             "success": True,
             "message_type": "general",
