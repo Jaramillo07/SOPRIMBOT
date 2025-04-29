@@ -1,7 +1,8 @@
 FROM python:3.10-slim
 
-# Instalar dependencias del sistema
+# Instalar curl y otras dependencias del sistema
 RUN apt-get update && apt-get install -y \
+    curl \
     wget \
     gnupg \
     unzip \
@@ -34,9 +35,12 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1-3) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
+# Verificar que Chrome está instalado y obtener su versión
+RUN google-chrome --version
+
+# Descargar e instalar ChromeDriver usando una versión fija conocida
+# Esto evita tener que detectar la versión de Chrome dinámicamente
+RUN CHROMEDRIVER_VERSION="114.0.5735.90" \
     && wget -q "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
     && unzip chromedriver_linux64.zip \
     && mv chromedriver /usr/local/bin/ \
