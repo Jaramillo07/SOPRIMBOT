@@ -7,6 +7,10 @@ import google.generativeai as genai
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 class GeminiService:
@@ -21,9 +25,10 @@ class GeminiService:
         self.api_key = GEMINI_API_KEY
         self.model_name = GEMINI_MODEL
         
-        # Log de información de inicialización
+        # Log de información básica (sin exponer la clave completa)
+        api_key_preview = self.api_key[:4] + "..." if self.api_key and len(self.api_key) > 8 else "No disponible"
         logger.info(f"Inicializando GeminiService con modelo: {self.model_name}")
-        logger.info(f"API Key (primeros 4 caracteres): {self.api_key[:4] if self.api_key and len(self.api_key) > 4 else 'No disponible'}")
+        logger.info(f"API Key (primeros caracteres): {api_key_preview}")
         
         try:
             genai.configure(api_key=self.api_key)
@@ -45,11 +50,15 @@ class GeminiService:
         """
         try:
             prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nMensaje del cliente: {user_message}"
-            logger.info(f"Enviando prompt a Gemini [generate_response]: {prompt[:100]}...")
-            response = self.model.generate_content(prompt)
+            logger.info(f"Enviando prompt a Gemini para respuesta general. Mensaje: '{user_message[:50]}...'")
             
-            logger.info(f"Respuesta recibida de Gemini [generate_response]: {response.text[:100]}...")
-            return response.text.strip()
+            response = self.model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            logger.info(f"Respuesta recibida de Gemini ({len(response_text)} caracteres)")
+            logger.debug(f"Respuesta: {response_text[:100]}...")
+            
+            return response_text
         except Exception as e:
             logger.error(f"Error en generate_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
@@ -66,6 +75,7 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
+            # Formatear la información del producto
             if product_info:
                 product_details = f"""
 Información del producto encontrado:
@@ -78,6 +88,7 @@ Información del producto encontrado:
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
             
+            # Crear el prompt completo
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Mensaje del cliente: {user_message}
 {product_details}
@@ -85,11 +96,16 @@ Basándote en esta información, proporciona una respuesta útil y profesional a
 Si no tienes información específica sobre la disponibilidad actual, responde que verificarás si el producto está disponible
 y que el cliente puede consultar llamando a la farmacia o visitando la tienda.
 """
-            logger.info(f"Enviando prompt a Gemini [generate_product_response]: {prompt[:100]}...")
-            response = self.model.generate_content(prompt)
+            logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
+            logger.debug(f"Información del producto: {product_info}")
             
-            logger.info(f"Respuesta recibida de Gemini [generate_product_response]: {response.text[:100]}...")
-            return response.text.strip()
+            response = self.model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            logger.info(f"Respuesta de producto recibida de Gemini ({len(response_text)} caracteres)")
+            logger.debug(f"Respuesta: {response_text[:100]}...")
+            
+            return response_text
         except Exception as e:
             logger.error(f"Error en generate_product_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
@@ -107,27 +123,41 @@ Determina SI el siguiente mensaje está preguntando por un medicamento específi
 Mensaje: "{user_message}"
 """
         try:
-            logger.info(f"Enviando prompt a Gemini [detectar_producto]: {prompt[:100]}...")
+            logger.info(f"Enviando prompt a Gemini para detectar producto. Mensaje: '{user_message}'")
+            
+            # MODIFICACIÓN TEMPORAL: Para pruebas, puedes descomentar esta línea para forzar la detección
+            # Si el mensaje contiene "paracetamol", "ibuprofeno" u otros medicamentos comunes
+            medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", "loratadina", "antibiotico"]
+            mensaje_lower = user_message.lower()
+            for med in medicamentos_comunes:
+                if med in mensaje_lower:
+                    logger.info(f"Producto detectado localmente: {med}")
+                    return "consulta_producto", med
+            
+            # Si no se detectó localmente, consultar a Gemini
             response = self.model.generate_content(prompt)
             resp = response.text.strip()
             
-            # Log completo de la respuesta de Gemini
-            logger.info(f"Respuesta completa de Gemini [detectar_producto]: '{resp}'")
+            logger.info(f"Respuesta de Gemini para detección de producto: '{resp}'")
             
-            # Verificación más específica
+            # Procesar la respuesta
             if resp.upper() == "GENERAL":
                 logger.info("Detectado como consulta general")
                 return "consulta_general", None
             else:
-                # Intentar limpiar la respuesta para asegurar que solo tenemos el nombre del medicamento
+                # Limpiar la respuesta para obtener solo el nombre del medicamento
                 producto = resp.strip()
                 logger.info(f"Detectado como consulta de producto: '{producto}'")
                 return "consulta_producto", producto
         except Exception as e:
             logger.error(f"Error en detectar_producto: {e}")
-            # En caso de error, caemos en consulta general
+            # En caso de error, usar detección local básica (palabras clave) como respaldo
+            mensaje_lower = user_message.lower()
+            if "tienes" in mensaje_lower or "tienen" in mensaje_lower or "hay" in mensaje_lower:
+                for palabra in mensaje_lower.split():
+                    if len(palabra) > 4 and palabra not in ["tienes", "tienen", "ustedes", "algún", "alguna", "donde", "cuánto", "cuanto"]:
+                        logger.info(f"Respaldo: Producto detectado: {palabra}")
+                        return "consulta_producto", palabra
+            
+            logger.info("Respaldo: Consulta general")
             return "consulta_general", None
-
-        # Solución temporal: Si queremos forzar la detección de productos para pruebas
-        # Descomentar esta línea para pruebas:
-        # return "consulta_producto", user_message
