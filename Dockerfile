@@ -1,43 +1,69 @@
 FROM python:3.10-slim
 
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    unzip \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    xdg-utils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar Google Chrome
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar ChromeDriver
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1-3) \
+    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
+    && wget -q "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
+    && unzip chromedriver_linux64.zip \
+    && mv chromedriver /usr/local/bin/ \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm chromedriver_linux64.zip
+
+# Configurar directorio de trabajo
 WORKDIR /app
 
-# 1. Instalar dependencias del sistema y Chrome
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-      wget curl gnupg unzip xvfb libxi6 libgconf-2-4; \
-    curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub \
-      | gpg --dearmor -o /usr/share/keyrings/google.gpg; \
-    echo "deb [signed-by=/usr/share/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
-      > /etc/apt/sources.list.d/google.list; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends google-chrome-stable; \
-    rm -rf /var/lib/apt/lists/*
-
-# 2. Instalar ChromeDriver de forma robusta
-RUN set -eux; \
-    CHROME_MAJOR=$(dpkg-query -W -f='${Version}' google-chrome-stable | cut -d. -f1); \
-    CHROMEDRIVER_VERSION=$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_MAJOR}); \
-    wget -qO /tmp/chromedriver_linux64.zip \
-      "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"; \
-    unzip /tmp/chromedriver_linux64.zip -d /usr/local/bin/; \
-    chmod +x /usr/local/bin/chromedriver; \
-    rm /tmp/chromedriver_linux64.zip
-
-# 3. Variables de entorno para Selenium/Puppeteer
-ENV CHROME_BIN=/usr/bin/google-chrome-stable \
-    CHROMEDRIVER_PATH=/usr/local/bin/chromedriver \
-    PUPPETEER_SKIP_DOWNLOAD=true
-
-# 4. Crear usuario no-root
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-USER appuser
-
-# 5. Instalar dependencias Python
-COPY --chown=appuser:appuser requirements.txt .
+# Copiar requirements e instalar dependencias
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Copiar código y definir comando de inicio
-COPY --chown=appuser:appuser . .
-CMD ["python", "app.py"]
+# Copiar el código de la aplicación
+COPY . .
+
+# Configurar variables de entorno para Chrome sin interfaz gráfica
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DISPLAY=:99 \
+    CHROME_BIN=/usr/bin/google-chrome \
+    CHROME_PATH=/usr/lib/chromium/ \
+    CHROME_ARGS="--no-sandbox --headless --disable-gpu --disable-dev-shm-usage"
+
+# Puerto para FastAPI
+EXPOSE 8080
+
+# Script de inicio
+RUN chmod +x entrypoint.sh
+CMD ["./entrypoint.sh"]
