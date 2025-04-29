@@ -1,16 +1,18 @@
 """
 Servicio de scraping para buscar información de productos farmacéuticos.
-Este servicio integra la funcionalidad de scraping ya implementada.
+Este servicio integra la funcionalidad de scraping ya implementada,
+pero ahora usa webdriver-manager para alinear ChromeDriver automáticamente.
 """
 import logging
+import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import time
 from config.settings import HEADLESS_BROWSER
 
 # Configurar logging
@@ -25,26 +27,17 @@ class ScrapingService:
     Clase que proporciona métodos para buscar información de productos farmacéuticos mediante scraping.
     """
     
-    def __init__(self, headless=HEADLESS_BROWSER):
-        """
-        Inicializa el servicio de scraping.
-        
-        Args:
-            headless (bool): Si es True, el navegador se ejecutará en modo headless
-        """
+    def __init__(self, headless: bool = HEADLESS_BROWSER):
         self.headless = headless
     
     def inicializar_navegador(self):
         """
-        Inicializa el navegador Chrome con las opciones configuradas.
-        
-        Returns:
-            webdriver.Chrome: Instancia del navegador
+        Inicializa el navegador Chrome con webdriver-manager para
+        bajar e instalar la versión correcta de ChromeDriver.
         """
         options = Options()
         if self.headless:
             options.add_argument("--headless")
-        
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-extensions")
@@ -52,9 +45,11 @@ class ScrapingService:
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        
+
         try:
-            driver = webdriver.Chrome(options=options)
+            # webdriver-manager detecta y descarga el driver compatible
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
             return driver
         except Exception as e:
             logger.error(f"Error al inicializar el navegador: {e}")
