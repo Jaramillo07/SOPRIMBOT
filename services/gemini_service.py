@@ -30,10 +30,7 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
-            # Agregar contexto o instrucciones del sistema si es necesario
             prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nMensaje del cliente: {user_message}"
-            
-            # Generar respuesta
             response = self.model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
@@ -51,18 +48,15 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
-            # Crear un prompt enriquecido con la información del producto
-            product_details = ""
-            
             if product_info:
                 product_details = f"""
-                Información del producto encontrado:
-                - Nombre: {product_info.get('nombre', 'No disponible')}
-                - Laboratorio: {product_info.get('laboratorio', 'No disponible')}
-                - Código de barras: {product_info.get('codigo_barras', 'No disponible')}
-                - Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
-                - URL del producto: {product_info.get('url', 'No disponible')}
-                """
+Información del producto encontrado:
+- Nombre: {product_info.get('nombre', 'No disponible')}
+- Laboratorio: {product_info.get('laboratorio', 'No disponible')}
+- Código de barras: {product_info.get('codigo_barras', 'No disponible')}
+- Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
+- URL del producto: {product_info.get('url', 'No disponible')}
+"""
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
             
@@ -76,9 +70,31 @@ Basándote en esta información, proporciona una respuesta útil y profesional a
 Si no tienes información específica sobre la disponibilidad actual, responde que verificarás si el producto está disponible
 y que el cliente puede consultar llamando a la farmacia o visitando la tienda.
 """
-            
-            # Generar respuesta
             response = self.model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
+    
+    def detectar_producto(self, user_message):
+        """
+        Usa Gemini para determinar si el mensaje pregunta por un medicamento específico.
+        Si es así devuelve ('consulta_producto', '<nombre_del_medicamento>')
+        Si no, devuelve ('consulta_general', None).
+        """
+        prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
+
+Determina SI el siguiente mensaje está preguntando por un medicamento específico.
+- Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
+- Si NO, responde exactamente con la palabra GENERAL.
+
+Mensaje: "{user_message}"
+"""
+        try:
+            resp = self.model.generate_content(prompt).text.strip()
+            if resp.upper() != "GENERAL":
+                return "consulta_producto", resp
+            else:
+                return "consulta_general", None
+        except Exception as e:
+            # En caso de error, caemos en consulta general
+            return "consulta_general", None
