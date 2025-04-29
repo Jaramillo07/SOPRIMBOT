@@ -29,6 +29,21 @@ class WhatsAppService:
             "Content-Type": "application/json"
         }
     
+    def format_whatsapp_number(self, phone_number):
+        """
+        Asegura que el número de teléfono tenga el formato correcto para WhatsApp API.
+        Añade el signo "+" si no está presente.
+        """
+        # Eliminar cualquier espacio, guion u otro carácter no numérico excepto el "+"
+        cleaned_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+        
+        # Asegurarse de que tiene el signo "+"
+        if not cleaned_number.startswith('+'):
+            cleaned_number = '+' + cleaned_number
+            
+        logger.info(f"WhatsAppService: Número formateado de {phone_number} a {cleaned_number}")
+        return cleaned_number
+    
     def send_text_message(self, recipient, message):
         """
         Envía un mensaje de texto a un número de WhatsApp.
@@ -41,16 +56,19 @@ class WhatsAppService:
             dict: Respuesta de la API de WhatsApp
         """
         try:
+            # Asegurar que el número tiene el formato correcto
+            formatted_recipient = self.format_whatsapp_number(recipient)
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": recipient,
+                "to": formatted_recipient,
                 "type": "text",
                 "text": {
                     "body": message
                 }
             }
             
-            logger.info(f"Enviando mensaje a {recipient}")
+            logger.info(f"Enviando mensaje a {formatted_recipient}")
             response = requests.post(self.api_url, headers=self.headers, json=payload)
             response_data = response.json()
             
@@ -77,9 +95,12 @@ class WhatsAppService:
             dict: Respuesta de la API de WhatsApp
         """
         try:
+            # Asegurar que el número tiene el formato correcto
+            formatted_recipient = self.format_whatsapp_number(recipient)
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": recipient,
+                "to": formatted_recipient,
                 "type": "image",
                 "image": {
                     "link": image_url
@@ -90,7 +111,7 @@ class WhatsAppService:
             if caption:
                 payload["image"]["caption"] = caption
             
-            logger.info(f"Enviando imagen a {recipient}")
+            logger.info(f"Enviando imagen a {formatted_recipient}")
             response = requests.post(self.api_url, headers=self.headers, json=payload)
             response_data = response.json()
             
