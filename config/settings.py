@@ -18,8 +18,19 @@ WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
 WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v17.0")
 WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
 
-# Número de teléfono para pruebas (modificar según tus necesidades)
-TEST_RECIPIENT = os.getenv("TEST_RECIPIENT", "+524778150806")
+# Números de teléfono para pruebas (modificar según tus necesidades)
+# Añade aquí todos los números que tienes registrados como números de prueba
+TEST_RECIPIENT_1 = os.getenv("TEST_RECIPIENT_1", "+5214777150806")
+TEST_RECIPIENT_2 = os.getenv("TEST_RECIPIENT_2", "+5214778150806")
+TEST_RECIPIENT_3 = os.getenv("TEST_RECIPIENT_3", "+524778150806")  # Este parece estar sin el "1" después del código de país
+
+# Lista de números permitidos en el sandbox (asegúrate que estos números están registrados en Meta Developer)
+ALLOWED_TEST_NUMBERS = [
+    TEST_RECIPIENT_1,
+    TEST_RECIPIENT_2,
+    TEST_RECIPIENT_3,
+    # Puedes añadir más números aquí si los tienes registrados
+]
 
 # Configuración del scraping
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1", "t")
@@ -28,7 +39,6 @@ HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1"
 GEMINI_SYSTEM_INSTRUCTIONS = """
 Eres SOPRIM BOT, un asistente virtual para farmacias. Tu objetivo es proporcionar información precisa y útil sobre 
 medicamentos, disponibilidad de productos, y servicios de la farmacia de manera clara y amigable.
-
 REGLAS:
 1. Responde de manera concisa y útil en español.
 2. Si te preguntan por un medicamento específico, indica la información detallada que tenemos sobre él.
