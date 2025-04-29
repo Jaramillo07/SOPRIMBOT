@@ -13,23 +13,18 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBIGjXFq4wWHCQRtn-w7tEG80hN1Q
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
 
 # Configuración de WhatsApp Business API
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBOZBzDJguIJe3Jn1iZAXZA0jTck1NUBIdPIj58U7BtD38qSZAyEt7wyoOJFKsM1iI4ZBWZAZCcA2DR5cUVIGZBNOtlWaxGCN9bE9NvFZBwqZCburpZBAeUrg5USLV2jIlLi1OmI5ILzxgLQo76VjrN9OKLk8Ncj0s6uvLA4JZCZCWMroCPgt5S1wWdq8DazNPwdyHAcqKzOZC5K4aMXWO3RjeYZD")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO6ZAqMbwmKZCFZAwEKBsSLi2A0ifqXtvGpdofmNKGbo1A8Wl7M7UZBwCXSmQBYNhLHRmh3djjUHHyLF1ZBfLPCxO5cSG0JAnWsCiQ9liCGrS3zQerHigkKLPUdD2VwxMyE4aarZCvz9jdNZCldoItWSp9mZADia1Vxobv2F0MoZAmRPo1zhzxYotcHJI4ZAT1Ue7ZBiaTnrJ8cspk73itgZD")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
 WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v17.0")
 WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
 
-# Números de teléfono para pruebas (modificar según tus necesidades)
-# Añade aquí todos los números que tienes registrados como números de prueba
-TEST_RECIPIENT_1 = os.getenv("TEST_RECIPIENT_1", "+5214777150806")
-TEST_RECIPIENT_2 = os.getenv("TEST_RECIPIENT_2", "+5214778150806")
-TEST_RECIPIENT_3 = os.getenv("TEST_RECIPIENT_3", "+524778150806")  # Este parece estar sin el "1" después del código de país
-
-# Lista de números permitidos en el sandbox (asegúrate que estos números están registrados en Meta Developer)
+# Números de teléfono permitidos para pruebas (deben estar registrados en Meta Developer)
+# Formato: lista de números en formato internacional completo con el signo "+"
 ALLOWED_TEST_NUMBERS = [
-    TEST_RECIPIENT_1,
-    TEST_RECIPIENT_2,
-    TEST_RECIPIENT_3,
-    # Puedes añadir más números aquí si los tienes registrados
+    "+524778150806",
+    "+5214777150806",
+    "+5214778150806",
+    # Puedes añadir más números aquí, hasta 5 en total para el sandbox
 ]
 
 # Configuración del scraping
@@ -39,6 +34,7 @@ HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1"
 GEMINI_SYSTEM_INSTRUCTIONS = """
 Eres SOPRIM BOT, un asistente virtual para farmacias. Tu objetivo es proporcionar información precisa y útil sobre 
 medicamentos, disponibilidad de productos, y servicios de la farmacia de manera clara y amigable.
+
 REGLAS:
 1. Responde de manera concisa y útil en español.
 2. Si te preguntan por un medicamento específico, indica la información detallada que tenemos sobre él.
