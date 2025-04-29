@@ -1,14 +1,15 @@
 import os
 import json
 import logging
-import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from dotenv import load_dotenv
-from config.settings import WHATSAPP_API_URL, WHATSAPP_TOKEN
 
 # Cargar variables de entorno
 load_dotenv()
+
+# Importar el manejador de mensajes
+from handlers.message_handler import MessageHandler
 
 # Configurar logging
 logging.basicConfig(
@@ -16,55 +17,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# CÓDIGO DE DEPURACIÓN AÑADIDO AQUÍ
-def verificar_configuracion_whatsapp():
-    """
-    Verifica y muestra información de la configuración de WhatsApp para depuración.
-    """
-    # Verificar token
-    token = WHATSAPP_TOKEN
-    token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***TOKEN_DEMASIADO_CORTO***"
-    logger.info(f"Token WhatsApp: {token_preview} (Longitud: {len(token)})")
-    
-    # Verificar URL de API
-    logger.info(f"URL de API WhatsApp: {WHATSAPP_API_URL}")
-    
-    # Probar solicitud básica a Meta API para verificar autenticación
-    try:
-        test_url = "https://graph.facebook.com/v17.0/me"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        response = requests.get(test_url, headers=headers)
-        
-        if response.status_code == 200:
-            logger.info(f"Conexión a API Meta exitosa. Respuesta: {response.json()}")
-        else:
-            logger.error(f"Error al conectar a API Meta. Código: {response.status_code}, Respuesta: {response.text}")
-    except Exception as e:
-        logger.error(f"Excepción al probar conexión a API Meta: {e}")
-    
-    # Verificar variables de entorno relevantes
-    env_vars = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
-    for var in env_vars:
-        value = os.environ.get(var)
-        if value:
-            logger.info(f"Variable de entorno {var}: {value}")
-    
-    # Verificar si podemos hacer una solicitud HTTP básica
-    try:
-        response = requests.get("https://httpbin.org/get")
-        logger.info(f"Conexión HTTP básica exitosa. Código: {response.status_code}")
-    except Exception as e:
-        logger.error(f"Error en conexión HTTP básica: {e}")
-
-# Ejecutar verificación al inicio
-verificar_configuracion_whatsapp()
-
-# Importar el manejador de mensajes
-from handlers.message_handler import MessageHandler
 
 app = FastAPI(title="SOPRIM BOT API", description="API para el chatbot de farmacia SOPRIM BOT")
 
