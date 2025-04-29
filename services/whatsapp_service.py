@@ -4,7 +4,7 @@ Encapsula toda la lógica relacionada con el envío de mensajes a través de Wha
 """
 import requests
 import logging
-from config.settings import WHATSAPP_API_URL, WHATSAPP_TOKEN
+from config.settings import WHATSAPP_API_URL, WHATSAPP_TOKEN, ALLOWED_TEST_NUMBERS
 
 # Configurar logging
 logging.basicConfig(
@@ -29,6 +29,34 @@ class WhatsAppService:
             "Content-Type": "application/json"
         }
     
+    def format_whatsapp_number(self, phone_number):
+        """
+        Asegura que el número de teléfono tenga el formato correcto para WhatsApp API.
+        Añade el signo "+" si no está presente.
+        """
+        # Eliminar cualquier espacio, guion u otro carácter no numérico excepto el "+"
+        cleaned_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+        
+        # Asegurarse de que tiene el signo "+"
+        if not cleaned_number.startswith('+'):
+            cleaned_number = '+' + cleaned_number
+            
+        logger.info(f"WhatsAppService: Número formateado de {phone_number} a {cleaned_number}")
+        return cleaned_number
+    
+    def is_allowed_number(self, phone_number):
+        """
+        Verifica si el número está en la lista de números permitidos para pruebas.
+        """
+        formatted_number = self.format_whatsapp_number(phone_number)
+        is_allowed = formatted_number in ALLOWED_TEST_NUMBERS
+        
+        if not is_allowed:
+            logger.warning(f"El número {formatted_number} no está en la lista de números permitidos para pruebas")
+            logger.info(f"Números permitidos: {ALLOWED_TEST_NUMBERS}")
+        
+        return is_allowed
+    
     def send_text_message(self, recipient, message):
         """
         Envía un mensaje de texto a un número de WhatsApp.
@@ -41,16 +69,25 @@ class WhatsAppService:
             dict: Respuesta de la API de WhatsApp
         """
         try:
+            # Formatear el número correctamente
+            formatted_recipient = self.format_whatsapp_number(recipient)
+            
+            # Verificar si el número está permitido
+            if not self.is_allowed_number(formatted_recipient):
+                error_msg = f"No se puede enviar mensaje: el número {formatted_recipient} no está en la lista de números permitidos para pruebas"
+                logger.error(error_msg)
+                return {"error": error_msg, "sandbox_restriction": True}
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": recipient,
+                "to": formatted_recipient,
                 "type": "text",
                 "text": {
                     "body": message
                 }
             }
             
-            logger.info(f"Enviando mensaje a {recipient}")
+            logger.info(f"Enviando mensaje a {formatted_recipient}")
             response = requests.post(self.api_url, headers=self.headers, json=payload)
             response_data = response.json()
             
@@ -77,9 +114,18 @@ class WhatsAppService:
             dict: Respuesta de la API de WhatsApp
         """
         try:
+            # Formatear el número correctamente
+            formatted_recipient = self.format_whatsapp_number(recipient)
+            
+            # Verificar si el número está permitido
+            if not self.is_allowed_number(formatted_recipient):
+                error_msg = f"No se puede enviar imagen: el número {formatted_recipient} no está en la lista de números permitidos para pruebas"
+                logger.error(error_msg)
+                return {"error": error_msg, "sandbox_restriction": True}
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": recipient,
+                "to": formatted_recipient,
                 "type": "image",
                 "image": {
                     "link": image_url
@@ -90,7 +136,7 @@ class WhatsAppService:
             if caption:
                 payload["image"]["caption"] = caption
             
-            logger.info(f"Enviando imagen a {recipient}")
+            logger.info(f"Enviando imagen a {formatted_recipient}")
             response = requests.post(self.api_url, headers=self.headers, json=payload)
             response_data = response.json()
             
@@ -123,7 +169,7 @@ class WhatsAppService:
         results["text"] = text_result
         
         # Si hay información del producto y tiene una imagen, enviarla también
-        if product_info and product_info.get("imagen"):
+        if product_info and product_info.get("imagen") and not text_result.get("sandbox_restriction"):
             image_url = product_info["imagen"]
             caption = f"Producto: {product_info.get('nombre', 'Medicamento')}"
             image_result = self.send_image_message(recipient, image_url, caption)
