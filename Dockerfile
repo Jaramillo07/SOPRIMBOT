@@ -24,34 +24,41 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
 
 # Instalar Google Chrome
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+  && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+     >> /etc/apt/sources.list.d/google.list \
+  && apt-get update \
+  && apt-get install -y google-chrome-stable \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
 
 # Verificar que Chrome está instalado y obtener su versión
 RUN google-chrome --version
 
-# Descargar e instalar ChromeDriver usando una versión fija conocida
-# Esto evita tener que detectar la versión de Chrome dinámicamente
-RUN CHROMEDRIVER_VERSION="114.0.5735.90" \
-    && wget -q "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
-    && unzip chromedriver_linux64.zip \
-    && mv chromedriver /usr/local/bin/ \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm chromedriver_linux64.zip
+# ── Nuevo bloque dinámico para ChromeDriver ───────────────────────────────────
+RUN set -eux; \
+    # Extrae la versión mayor de Chrome (p.ej. 135 de "Google Chrome 135.0.####.##") \
+    CHROME_MAJOR=$(google-chrome --version | awk '{print $3}' | cut -d. -f1); \
+    echo "Chrome major version: $CHROME_MAJOR"; \
+    # Descarga la última versión de ChromeDriver compatible con esa major \
+    CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_MAJOR}"); \
+    echo "Matching ChromeDriver version: $CHROMEDRIVER_VERSION"; \
+    wget -q -O /tmp/chromedriver.zip \
+      "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"; \
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/; \
+    chmod +x /usr/local/bin/chromedriver; \
+    rm /tmp/chromedriver.zip
+# ───────────────────────────────────────────────────────────────────────────────
 
 # Configurar directorio de trabajo
 WORKDIR /app
 
 # Copiar requirements e instalar dependencias
-COPY requirements.txt .
+COPY requirements.txt .  
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar el código de la aplicación
