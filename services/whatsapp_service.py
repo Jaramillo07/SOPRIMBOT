@@ -51,6 +51,28 @@ class WhatsAppService:
         logger.info(f"Número formateado: {phone_number} -> {cleaned}")
         return cleaned
     
+    def format_phone_number_for_api(self, phone_number):
+        """
+        Formatea el número de teléfono para enviar a la API (sin el signo +).
+        
+        Args:
+            phone_number (str): Número de teléfono a formatear
+            
+        Returns:
+            str: Número de teléfono formateado para API
+        """
+        # Primero formateamos normalmente
+        formatted = self.format_phone_number(phone_number)
+        
+        # Luego eliminamos el signo "+" para la API
+        if formatted.startswith('+'):
+            api_formatted = formatted[1:]
+        else:
+            api_formatted = formatted
+            
+        logger.info(f"Número formateado para API: {formatted} -> {api_formatted}")
+        return api_formatted
+    
     def is_allowed_number(self, phone_number):
         """
         Verifica si el número está en la lista de números permitidos para pruebas.
@@ -62,7 +84,13 @@ class WhatsAppService:
             bool: True si está permitido, False en caso contrario
         """
         formatted_number = self.format_phone_number(phone_number)
+        
+        # Verificar tanto con el signo "+" como sin él
         is_allowed = formatted_number in ALLOWED_TEST_NUMBERS
+        
+        # Si no está permitido con el signo "+", verificar sin el signo
+        if not is_allowed and formatted_number.startswith('+'):
+            is_allowed = formatted_number[1:] in ALLOWED_TEST_NUMBERS
         
         if is_allowed:
             logger.info(f"Número {formatted_number} está en la lista de permitidos")
@@ -97,16 +125,19 @@ class WhatsAppService:
                     "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
                 }
             
+            # Formatear el número específicamente para la API (sin el signo +)
+            api_recipient = self.format_phone_number_for_api(formatted_recipient)
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": formatted_recipient,
+                "to": api_recipient,  # Usar la versión sin el signo "+"
                 "type": "text",
                 "text": {
                     "body": message
                 }
             }
             
-            logger.info(f"Enviando mensaje a {formatted_recipient}")
+            logger.info(f"Enviando mensaje a {api_recipient}")
             logger.debug(f"Headers: {self.headers}")
             logger.debug(f"Payload: {payload}")
             
@@ -157,9 +188,12 @@ class WhatsAppService:
                     "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
                 }
             
+            # Formatear el número específicamente para la API (sin el signo +)
+            api_recipient = self.format_phone_number_for_api(formatted_recipient)
+            
             payload = {
                 "messaging_product": "whatsapp",
-                "to": formatted_recipient,
+                "to": api_recipient,  # Usar la versión sin el signo "+"
                 "type": "image",
                 "image": {
                     "link": image_url
@@ -170,7 +204,7 @@ class WhatsAppService:
             if caption:
                 payload["image"]["caption"] = caption
             
-            logger.info(f"Enviando imagen a {formatted_recipient}")
+            logger.info(f"Enviando imagen a {api_recipient}")
             response = requests.post(self.api_url, headers=self.headers, json=payload)
             response_data = response.json()
             
