@@ -21,10 +21,16 @@ ALLOWED_TEST_NUMBERS = [
     "+524778150806",
     "+5214777150806",
     "+5214778150806",
-    # Número al que estás intentando enviar (521477815XXXX)
-    "+5214778150806",  # Reemplaza XXXX con los dígitos correctos
-
-   
+    # Mismo número, pero sin el signo "+" (como lo procesa el sistema)
+    "524778150806",
+    "5214777150806",
+    "5214778150806",
+    # Número que aparece en los logs (5214778150806)
+    "5214778150806",
+    "+5214778150806",
+    # Variaciones adicionales por si acaso
+    "521477815XXXX",  # Reemplaza XXXX con los últimos 4 dígitos si es diferente
+    "+521477815XXXX", # Reemplaza XXXX con los últimos 4 dígitos si es diferente
 ]
 # Configuración del scraping
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1", "t")
