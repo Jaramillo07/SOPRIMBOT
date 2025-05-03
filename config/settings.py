@@ -4,30 +4,26 @@ Centraliza todas las claves API y parámetros de configuración.
 """
 import os
 from dotenv import load_dotenv
-
 # Cargar variables de entorno desde archivo .env si existe
 load_dotenv()
-
 # Configuración de Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAdUgrPytizzW1O6N-dUFaBfTHahklE46c")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
-
 # Configuración de WhatsApp Business API
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO9weiEgaDaoTZCvtZCM6FlahHoZAbyYIpZBKpYt8wqLuN4Qazp7NRYZCfmHTwFrONQJymXNaxi5mWXLtHuMpz3SoU5ZAzNwgkhBYZByyKdZCxD6OhnZA9XDQpJI2luWGe50ZBebf6fe491r8Oel9EHpj5IZCGguEnfnTMSnGeZBSelkYPCUbBIxfFW9XrlxU5Ljm2h8ZAOqJd3nffnVM3ZB4kZD")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
 WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v22.0")
 WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
-
-# Números de teléfono permitidos para pruebas
+# Números de teléfono permitidos para pruebas (deben estar registrados en Meta Developer)
 # Formato: lista de números en formato internacional completo con el signo "+"
 ALLOWED_TEST_NUMBERS = [
     "+524778150806",
     "+5214777150806",
     "+5214778150806",
-   
+    # Puedes añadir más números aquí, hasta 5 en total para el sandbox
+]
 # Configuración del scraping
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1", "t")
-
 # Instrucciones de contexto para Gemini
 GEMINI_SYSTEM_INSTRUCTIONS = """
 Eres SOPRIM BOT, un asistente virtual para farmacias. Tu objetivo es proporcionar información precisa y útil sobre 
@@ -40,9 +36,7 @@ REGLAS:
 5. No des consejos médicos complejos o diagnósticos.
 6. Si alguien parece tener una emergencia médica, sugiere que busque atención médica inmediata.
 """
-
 # Modo de desarrollo
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
-
 # Token de verificación para el webhook de WhatsApp
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "soprim123")
