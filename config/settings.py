@@ -15,7 +15,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
 # Configuración de WhatsApp Business API
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO9weiEgaDaoTZCvtZCM6FlahHoZAbyYIpZBKpYt8wqLuN4Qazp7NRYZCfmHTwFrONQJymXNaxi5mWXLtHuMpz3SoU5ZAzNwgkhBYZByyKdZCxD6OhnZA9XDQpJI2luWGe50ZBebf6fe491r8Oel9EHpj5IZCGguEnfnTMSnGeZBSelkYPCUbBIxfFW9XrlxU5Ljm2h8ZAOqJd3nffnVM3ZB4kZD")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
-WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v17.0")
+WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v22.0")
 WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
 
 # Números de teléfono permitidos para pruebas (deben estar registrados en Meta Developer)
