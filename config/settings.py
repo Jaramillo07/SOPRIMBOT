@@ -17,10 +17,14 @@ WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHO
 # Números de teléfono permitidos para pruebas (deben estar registrados en Meta Developer)
 # Formato: lista de números en formato internacional completo con el signo "+"
 ALLOWED_TEST_NUMBERS = [
+    # Números originales
     "+524778150806",
     "+5214777150806",
     "+5214778150806",
-    # Puedes añadir más números aquí, hasta 5 en total para el sandbox
+    # Número al que estás intentando enviar (521477815XXXX)
+    "+5214778150806",  # Reemplaza XXXX con los dígitos correctos
+
+   
 ]
 # Configuración del scraping
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1", "t")
