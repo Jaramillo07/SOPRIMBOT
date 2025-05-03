@@ -87,15 +87,15 @@ class WhatsAppService:
             # Formatear y verificar el número
             formatted_recipient = self.format_phone_number(recipient)
             
-            # COMENTADO: Verificación de número permitido ya que estamos en producción
-            # if not self.is_allowed_number(formatted_recipient):
-            #     error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
-            #     logger.error(error_msg)
-            #     return {
-            #         "error": error_msg,
-            #         "sandbox_restriction": True,
-            #         "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
-            #     }
+            # Verificar si el número está en la lista de permitidos
+            if not self.is_allowed_number(formatted_recipient):
+                error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
+                logger.error(error_msg)
+                return {
+                    "error": error_msg,
+                    "sandbox_restriction": True,
+                    "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
+                }
             
             payload = {
                 "messaging_product": "whatsapp",
@@ -147,15 +147,15 @@ class WhatsAppService:
             # Formatear y verificar el número
             formatted_recipient = self.format_phone_number(recipient)
             
-            # COMENTADO: Verificación de número permitido ya que estamos en producción
-            # if not self.is_allowed_number(formatted_recipient):
-            #     error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
-            #     logger.error(error_msg)
-            #     return {
-            #         "error": error_msg,
-            #         "sandbox_restriction": True,
-            #         "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
-            #     }
+            # Verificar si el número está en la lista de permitidos
+            if not self.is_allowed_number(formatted_recipient):
+                error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
+                logger.error(error_msg)
+                return {
+                    "error": error_msg,
+                    "sandbox_restriction": True,
+                    "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
+                }
             
             payload = {
                 "messaging_product": "whatsapp",
@@ -210,11 +210,11 @@ class WhatsAppService:
         text_result = self.send_text_message(recipient, text_response)
         results["text"] = text_result
         
-        # COMENTADO: Verificación de restricción de sandbox
-        # if text_result.get("sandbox_restriction"):
-        #     logger.warning("No se enviará imagen debido a restricción de sandbox")
-        #     results["image"] = {"error": "No enviada por restricción de sandbox"}
-        #     return results
+        # Si hay restricción de sandbox, no intentar enviar la imagen
+        if text_result.get("sandbox_restriction"):
+            logger.warning("No se enviará imagen debido a restricción de sandbox")
+            results["image"] = {"error": "No enviada por restricción de sandbox"}
+            return results
         
         # Si hay información del producto y tiene una imagen, enviarla también
         if product_info and product_info.get("imagen"):
