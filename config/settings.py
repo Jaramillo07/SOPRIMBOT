@@ -9,11 +9,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuración de Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBIGjXFq4wWHCQRtn-w7tEG80hN1QqQXps")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAdUgrPytizzW1O6N-dUFaBfTHahklE46c")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
 
 # Configuración de WhatsApp Business API
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO6ZAqMbwmKZCFZAwEKBsSLi2A0ifqXtvGpdofmNKGbo1A8Wl7M7UZBwCXSmQBYNhLHRmh3djjUHHyLF1ZBfLPCxO5cSG0JAnWsCiQ9liCGrS3zQerHigkKLPUdD2VwxMyE4aarZCvz9jdNZCldoItWSp9mZADia1Vxobv2F0MoZAmRPo1zhzxYotcHJI4ZAT1Ue7ZBiaTnrJ8cspk73itgZD")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO9weiEgaDaoTZCvtZCM6FlahHoZAbyYIpZBKpYt8wqLuN4Qazp7NRYZCfmHTwFrONQJymXNaxi5mWXLtHuMpz3SoU5ZAzNwgkhBYZByyKdZCxD6OhnZA9XDQpJI2luWGe50ZBebf6fe491r8Oel9EHpj5IZCGguEnfnTMSnGeZBSelkYPCUbBIxfFW9XrlxU5Ljm2h8ZAOqJd3nffnVM3ZB4kZD")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
 WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v17.0")
 WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
