@@ -1,52 +1,47 @@
 """
 Archivo de configuración para SOPRIM BOT.
 Centraliza todas las claves API y parámetros de configuración.
+Ahora adaptado a Twilio Sandbox para WhatsApp.
 """
 import os
 from dotenv import load_dotenv
+
 # Cargar variables de entorno desde archivo .env si existe
 load_dotenv()
-# Configuración de Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAdUgrPytizzW1O6N-dUFaBfTHahklE46c")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
-# Configuración de WhatsApp Business API
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAA0Oho96A6kBO2bxQ37klQTdJzZB1KJZCLJKqId9ZC8l8DCzGOLSa7vJBRwawZA6iim1VutgMTnGoVRz7XhDNPHBTZBrs5m9plty7IYWBfl0TuHAqleqITMaf4OA1FwVot6Y1h6U9kGIchBdahayJPsfeBKb7Hvp2NdSpfePpXoCds19W4KloQ8Iyng4a33ZB9CiB68xaKp4FwUbMRKH6ayqQPaHbf")
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "637876229407517")
-WHATSAPP_VERSION = os.getenv("WHATSAPP_VERSION", "v22.0")
-WHATSAPP_API_URL = f"https://graph.facebook.com/{WHATSAPP_VERSION}/{WHATSAPP_PHONE_ID}/messages"
-# Números de teléfono permitidos para pruebas (deben estar registrados en Meta Developer)
-# Formato: lista de números en formato internacional completo con el signo "+"
+
+# --------------------------------------------------
+# Configuración de Gemini (IA)
+# --------------------------------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "models/gemini-1.5-pro-latest")
+
+# --------------------------------------------------
+# Configuración de Twilio WhatsApp Sandbox
+# --------------------------------------------------
+# Estas tres variables debes definirlas en tu entorno (Cloud Run o .env):
+TWILIO_ACCOUNT_SID             = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN              = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_SANDBOX_NUMBER = os.getenv(
+    "TWILIO_WHATSAPP_SANDBOX_NUMBER",
+    "whatsapp:+14155238886"
+)
+
+# --------------------------------------------------
+# Números permitidos (opcional)
+# --------------------------------------------------
+# Si quieres mantener un whitelist de pruebas, ponlos sin el prefijo "whatsapp:"
 ALLOWED_TEST_NUMBERS = [
-    # Números originales
-    "+524778150806",
-    "+5214777150806",
     "+5214778150806",
-    # Mismo número, pero sin el signo "+" (como lo procesa el sistema)
-    "524778150806",
-    "5214777150806",
-    "5214778150806",
-    # Número que aparece en los logs (5214778150806)
-    "5214778150806",
-    "+5214778150806",
-    # Variaciones adicionales por si acaso
-    "521477815XXXX",  # Reemplaza XXXX con los últimos 4 dígitos si es diferente
-    "+521477815XXXX", # Reemplaza XXXX con los últimos 4 dígitos si es diferente
+    # otros números de prueba...
 ]
-# Configuración del scraping
+
+# --------------------------------------------------
+# Configuración de scraping (si aplica)
+# --------------------------------------------------
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() in ("true", "1", "t")
-# Instrucciones de contexto para Gemini
-GEMINI_SYSTEM_INSTRUCTIONS = """
-Eres SOPRIM BOT, un asistente virtual para farmacias. Tu objetivo es proporcionar información precisa y útil sobre 
-medicamentos, disponibilidad de productos, y servicios de la farmacia de manera clara y amigable.
-REGLAS:
-1. Responde de manera concisa y útil en español.
-2. Si te preguntan por un medicamento específico, indica la información detallada que tenemos sobre él.
-3. Cuando no sepas algo, sé honesto y ofrece buscar la información.
-4. Mantén un tono amable y profesional, como un farmacéutico bien capacitado.
-5. No des consejos médicos complejos o diagnósticos.
-6. Si alguien parece tener una emergencia médica, sugiere que busque atención médica inmediata.
-"""
-# Modo de desarrollo
-DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
-# Token de verificación para el webhook de WhatsApp
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "soprim123")
+
+# --------------------------------------------------
+# Modo de desarrollo y verificación de webhook
+# --------------------------------------------------
+DEBUG         = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
+VERIFY_TOKEN  = os.getenv("VERIFY_TOKEN", "soprim123")
