@@ -7,7 +7,7 @@ import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService
-from config.settings import ALLOWED_TEST_NUMBERS
+from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
 logging.basicConfig(
