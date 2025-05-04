@@ -35,7 +35,7 @@ class ScrapingService:
         Inicializa el navegador Chrome con webdriver-manager para
         bajar e instalar la versión correcta de ChromeDriver.
         """
-        options = Options()
+        options = webdriver.ChromeOptions()
         if self.headless:
             options.add_argument("--headless")
         options.add_argument("--disable-gpu")
