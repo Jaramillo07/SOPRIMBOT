@@ -34,6 +34,23 @@ class WhatsAppService:
         self.client = Client(self.account_sid, self.auth_token)
         logger.info(f"Twilio WhatsApp inicializado con número: {self.from_number}")
 
+    def format_phone_number(self, number: str) -> str:
+        """
+        Elimina el prefijo 'whatsapp:' del número si existe y devuelve
+        solo el número en formato internacional.
+        
+        Args:
+            number (str): Número de teléfono, posiblemente con prefijo 'whatsapp:'
+            
+        Returns:
+            str: Número de teléfono sin el prefijo 'whatsapp:'
+        """
+        if number.startswith("whatsapp:"):
+            cleaned_number = number[9:]  # Quitar los primeros 9 caracteres ('whatsapp:')
+            logger.info(f"Prefijo 'whatsapp:' eliminado del número: {number} -> {cleaned_number}")
+            return cleaned_number
+        return number
+
     def _format_recipient(self, phone_number: str) -> str:
         """
         Asegura que el número venga en formato internacional y
