@@ -1,10 +1,6 @@
-"""
-Servicio para interactuar con la API de WhatsApp Business.
-Encapsula toda la lógica relacionada con el envío de mensajes a través de WhatsApp.
-"""
-import requests
+import os
 import logging
-from config.settings import WHATSAPP_API_URL, WHATSAPP_TOKEN, ALLOWED_TEST_NUMBERS
+from twilio.rest import Client
 
 # Configurar logging
 logging.basicConfig(
@@ -15,246 +11,116 @@ logger = logging.getLogger(__name__)
 
 class WhatsAppService:
     """
-    Clase que proporciona métodos para interactuar con la API de WhatsApp Business.
+    Servicio para enviar mensajes de WhatsApp usando Twilio.
     """
-    
+
     def __init__(self):
         """
-        Inicializa el servicio de WhatsApp configurando la URL y el token.
+        Inicializa el cliente de Twilio con credenciales de entorno.
         """
-        self.api_url = WHATSAPP_API_URL
-        self.token = WHATSAPP_TOKEN
-        self.headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-        logger.info(f"WhatsAppService inicializado. API URL: {self.api_url}")
-        logger.info(f"Números permitidos para pruebas: {ALLOWED_TEST_NUMBERS}")
-    
-    def format_phone_number(self, phone_number):
+        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        # El número de sandbox de Twilio debe incluir el prefijo "whatsapp:"
+        self.from_number = os.getenv(
+            "TWILIO_WHATSAPP_SANDBOX_NUMBER",
+            "whatsapp:+14155238886"
+        )
+
+        if not all([self.account_sid, self.auth_token]):
+            logger.error("Faltan TWILIO_ACCOUNT_SID o TWILIO_AUTH_TOKEN en el entorno")
+        else:
+            logger.info("Twilio credentials cargadas correctamente")
+
+        self.client = Client(self.account_sid, self.auth_token)
+        logger.info(f"Twilio WhatsApp inicializado con número: {self.from_number}")
+
+    def _format_recipient(self, phone_number: str) -> str:
         """
-        Formatea el número de teléfono para asegurar que tenga el formato correcto para WhatsApp API.
-        
-        Args:
-            phone_number (str): Número de teléfono a formatear
-            
-        Returns:
-            str: Número de teléfono formateado
+        Asegura que el número venga en formato internacional y
+        con el prefijo "whatsapp:" que Twilio requiere.
         """
-        # Eliminar caracteres no numéricos excepto el signo "+"
+        # Elimina caracteres no numéricos excepto '+'
         cleaned = ''.join(c for c in phone_number if c.isdigit() or c == '+')
-        
-        # Asegurar que tiene el signo "+"
         if not cleaned.startswith('+'):
             cleaned = '+' + cleaned
-        
-        logger.info(f"Número formateado: {phone_number} -> {cleaned}")
-        return cleaned
-    
-    def format_phone_number_for_api(self, phone_number):
+        return f"whatsapp:{cleaned}"
+
+    def send_text_message(self, recipient: str, message: str) -> dict:
         """
-        Formatea el número de teléfono para enviar a la API (sin el signo +).
-        
+        Envía un mensaje de texto por WhatsApp a través de Twilio.
+
         Args:
-            phone_number (str): Número de teléfono a formatear
-            
+            recipient (str): Número del destinatario (ej. +521234567890)
+            message (str): Texto a enviar
+
         Returns:
-            str: Número de teléfono formateado para API
-        """
-        # Primero formateamos normalmente
-        formatted = self.format_phone_number(phone_number)
-        
-        # Luego eliminamos el signo "+" para la API
-        if formatted.startswith('+'):
-            api_formatted = formatted[1:]
-        else:
-            api_formatted = formatted
-            
-        logger.info(f"Número formateado para API: {formatted} -> {api_formatted}")
-        return api_formatted
-    
-    def is_allowed_number(self, phone_number):
-        """
-        Verifica si el número está en la lista de números permitidos para pruebas.
-        
-        Args:
-            phone_number (str): Número de teléfono a verificar
-            
-        Returns:
-            bool: True si está permitido, False en caso contrario
-        """
-        formatted_number = self.format_phone_number(phone_number)
-        
-        # Verificar tanto con el signo "+" como sin él
-        is_allowed = formatted_number in ALLOWED_TEST_NUMBERS
-        
-        # Si no está permitido con el signo "+", verificar sin el signo
-        if not is_allowed and formatted_number.startswith('+'):
-            is_allowed = formatted_number[1:] in ALLOWED_TEST_NUMBERS
-        
-        if is_allowed:
-            logger.info(f"Número {formatted_number} está en la lista de permitidos")
-        else:
-            logger.warning(f"Número {formatted_number} NO está en la lista de permitidos")
-            logger.info(f"Números permitidos actuales: {ALLOWED_TEST_NUMBERS}")
-        
-        return is_allowed
-    
-    def send_text_message(self, recipient, message):
-        """
-        Envía un mensaje de texto a un número de WhatsApp.
-        
-        Args:
-            recipient (str): Número de teléfono del destinatario (con formato internacional, ej. +5219871234567)
-            message (str): Contenido del mensaje a enviar
-            
-        Returns:
-            dict: Respuesta de la API de WhatsApp
+            dict: Resultado con estado y SID o error
         """
         try:
-            # Formatear y verificar el número
-            formatted_recipient = self.format_phone_number(recipient)
-            
-            # Verificar si el número está en la lista de permitidos
-            if not self.is_allowed_number(formatted_recipient):
-                error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
-                logger.error(error_msg)
-                return {
-                    "error": error_msg,
-                    "sandbox_restriction": True,
-                    "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
-                }
-            
-            # Formatear el número específicamente para la API (sin el signo +)
-            api_recipient = self.format_phone_number_for_api(formatted_recipient)
-            
-            payload = {
-                "messaging_product": "whatsapp",
-                "to": api_recipient,  # Usar la versión sin el signo "+"
-                "type": "text",
-                "text": {
-                    "body": message
-                }
-            }
-            
-            logger.info(f"Enviando mensaje a {api_recipient}")
-            logger.debug(f"Headers: {self.headers}")
-            logger.debug(f"Payload: {payload}")
-            
-            response = requests.post(self.api_url, headers=self.headers, json=payload)
-            response_data = response.json()
-            
-            if response.status_code == 200:
-                logger.info(f"Mensaje enviado con éxito. Código: {response.status_code}")
-            else:
-                logger.error(f"Error al enviar mensaje. Código: {response.status_code}, Respuesta: {response_data}")
-                
-                # Detectar específicamente el error de número no permitido
-                if response.status_code == 400 and "error" in response_data:
-                    error_info = response_data.get("error", {})
-                    if error_info.get("code") == 131030:
-                        logger.error("Error de WhatsApp: Recipient phone number not in allowed list")
-                        response_data["sandbox_restriction"] = True
-                        response_data["suggestion"] = "Añade este número a la lista de números de prueba en Meta Developer"
-            
-            return response_data
+            to_number = self._format_recipient(recipient)
+            msg = self.client.messages.create(
+                from_=self.from_number,
+                to=to_number,
+                body=message
+            )
+            logger.info(f"Mensaje enviado a {to_number}. SID: {msg.sid}")
+            return {"status": "success", "sid": msg.sid}
         except Exception as e:
-            logger.error(f"Excepción al enviar mensaje: {e}")
-            return {"error": str(e)}
-    
-    def send_image_message(self, recipient, image_url, caption=None):
+            logger.error(f"Error enviando mensaje con Twilio: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def send_image_message(self, recipient: str, image_url: str, caption: str = None) -> dict:
         """
-        Envía una imagen a un número de WhatsApp.
-        
+        Envía una imagen por WhatsApp a través de Twilio.
+
         Args:
-            recipient (str): Número de teléfono del destinatario (con formato internacional)
-            image_url (str): URL de la imagen a enviar
-            caption (str, optional): Texto descriptivo para la imagen
-            
+            recipient (str): Número del destinatario (ej. +521234567890)
+            image_url (str): URL de la imagen
+            caption (str, optional): Texto adicional
+
         Returns:
-            dict: Respuesta de la API de WhatsApp
+            dict: Resultado con estado y SID o error
         """
         try:
-            # Formatear y verificar el número
-            formatted_recipient = self.format_phone_number(recipient)
-            
-            # Verificar si el número está en la lista de permitidos
-            if not self.is_allowed_number(formatted_recipient):
-                error_msg = f"Error de sandbox: El número {formatted_recipient} no está en la lista de números permitidos"
-                logger.error(error_msg)
-                return {
-                    "error": error_msg,
-                    "sandbox_restriction": True,
-                    "suggestion": "Añade este número a la lista de números de prueba en Meta Developer y pide al propietario que envíe un mensaje al bot"
-                }
-            
-            # Formatear el número específicamente para la API (sin el signo +)
-            api_recipient = self.format_phone_number_for_api(formatted_recipient)
-            
-            payload = {
-                "messaging_product": "whatsapp",
-                "to": api_recipient,  # Usar la versión sin el signo "+"
-                "type": "image",
-                "image": {
-                    "link": image_url
-                }
+            to_number = self._format_recipient(recipient)
+            params = {
+                "from_": self.from_number,
+                "to": to_number,
+                "media_url": [image_url]
             }
-            
-            # Agregar caption si se proporciona
             if caption:
-                payload["image"]["caption"] = caption
-            
-            logger.info(f"Enviando imagen a {api_recipient}")
-            response = requests.post(self.api_url, headers=self.headers, json=payload)
-            response_data = response.json()
-            
-            if response.status_code == 200:
-                logger.info(f"Imagen enviada con éxito. Código: {response.status_code}")
-            else:
-                logger.error(f"Error al enviar imagen. Código: {response.status_code}, Respuesta: {response_data}")
-                
-                # Detectar específicamente el error de número no permitido
-                if response.status_code == 400 and "error" in response_data:
-                    error_info = response_data.get("error", {})
-                    if error_info.get("code") == 131030:
-                        logger.error("Error de WhatsApp: Recipient phone number not in allowed list")
-                        response_data["sandbox_restriction"] = True
-                        response_data["suggestion"] = "Añade este número a la lista de números de prueba en Meta Developer"
-            
-            return response_data
+                params["body"] = caption
+
+            msg = self.client.messages.create(**params)
+            logger.info(f"Imagen enviada a {to_number}. SID: {msg.sid}")
+            return {"status": "success", "sid": msg.sid}
         except Exception as e:
-            logger.error(f"Excepción al enviar imagen: {e}")
-            return {"error": str(e)}
-    
-    def send_product_response(self, recipient, text_response, product_info=None):
+            logger.error(f"Error enviando imagen con Twilio: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def send_product_response(self, recipient: str, text_response: str, product_info: dict = None) -> dict:
         """
-        Envía una respuesta completa sobre un producto, incluyendo texto e imagen si está disponible.
-        
+        Envía primero texto y, si existe, una imagen de producto.
+
         Args:
-            recipient (str): Número de teléfono del destinatario
-            text_response (str): Respuesta textual sobre el producto
-            product_info (dict, optional): Información del producto que puede incluir una imagen
-            
+            recipient (str): Número del destinatario
+            text_response (str): Mensaje de texto
+            product_info (dict, optional): {
+                "nombre": "Producto",
+                "imagen": "https://..."
+            }
+
         Returns:
-            dict: Resultado de la operación
+            dict: {"text": {...}, "image": {...}}
         """
         results = {}
-        
-        # Siempre enviar la respuesta de texto
-        text_result = self.send_text_message(recipient, text_response)
-        results["text"] = text_result
-        
-        # Si hay restricción de sandbox, no intentar enviar la imagen
-        if text_result.get("sandbox_restriction"):
-            logger.warning("No se enviará imagen debido a restricción de sandbox")
-            results["image"] = {"error": "No enviada por restricción de sandbox"}
-            return results
-        
-        # Si hay información del producto y tiene una imagen, enviarla también
-        if product_info and product_info.get("imagen"):
+        # 1) Enviar texto
+        results["text"] = self.send_text_message(recipient, text_response)
+
+        # 2) Si hay imagen y no hubo error
+        if product_info and product_info.get("imagen") and results["text"].get("status") == "success":
             image_url = product_info["imagen"]
-            caption = f"Producto: {product_info.get('nombre', 'Medicamento')}"
-            image_result = self.send_image_message(recipient, image_url, caption)
-            results["image"] = image_result
-        
+            caption = f"Producto: {product_info.get('nombre', '')}"
+            results["image"] = self.send_image_message(recipient, image_url, caption)
+
         return results
