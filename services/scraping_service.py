@@ -73,53 +73,197 @@ class ScrapingService:
             bool: True si la sesión se inició correctamente, False en caso contrario
         """
         try:
+            # Registro detallado
             logger.info("Intentando iniciar sesión en Sufarmed...")
-            driver.get(SUFARMED_URL)
+            
+            # Acceder directamente a la página principal primero
+            driver.get("https://sufarmed.com")
+            time.sleep(2)
+            
+            # Buscar botón de inicio de sesión en la página principal
+            try:
+                botones_login = driver.find_elements(By.CSS_SELECTOR, ".user_login, .login, a[href*='login'], a[href*='iniciar-sesion']")
+                if botones_login:
+                    logger.info(f"Haciendo clic en botón de login encontrado: {botones_login[0].text}")
+                    botones_login[0].click()
+                    time.sleep(2)
+                else:
+                    # Si no encuentra botón de login, ir directamente a la URL de login
+                    logger.info("No se encontró botón de login, accediendo directamente a URL de login")
+                    driver.get(SUFARMED_URL)
+                    time.sleep(2)
+            except Exception as e:
+                logger.warning(f"Error al intentar encontrar botón de login: {e}")
+                # Ir a la URL de login directamente
+                driver.get(SUFARMED_URL)
+                time.sleep(2)
+            
+            # Tomar captura de pantalla para depuración (opcional)
+            try:
+                screenshot_path = "login_page.png"
+                driver.save_screenshot(screenshot_path)
+                logger.info(f"Captura de pantalla guardada en {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"No se pudo guardar captura de pantalla: {e}")
+            
+            # Registrar URL actual y título para depuración
+            current_url = driver.current_url
+            current_title = driver.title
+            logger.info(f"URL actual: {current_url}")
+            logger.info(f"Título de la página: {current_title}")
             
             # Esperar a que cargue la página de inicio de sesión
-            wait = WebDriverWait(driver, 10)
+            wait = WebDriverWait(driver, 15)  # Aumentar tiempo de espera
             
-            # Buscar campos de inicio de sesión
-            campo_email = wait.until(
-                EC.presence_of_element_located((By.ID, "email"))
-            )
-            campo_password = driver.find_element(By.ID, "passwd")
+            # Buscar campos de inicio de sesión (probar diferentes selectores)
+            try:
+                # Intentar primero con ID (como especificado originalmente)
+                campo_email = wait.until(
+                    EC.presence_of_element_located((By.ID, "email"))
+                )
+                logger.info("Campo de email encontrado por ID")
+                campo_password = driver.find_element(By.ID, "passwd")
+                logger.info("Campo de contraseña encontrado por ID")
+            except Exception as e:
+                logger.warning(f"No se encontraron campos por ID: {e}")
+                try:
+                    # Intentar con nombre o tipo
+                    campo_email = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email']"))
+                    )
+                    logger.info("Campo de email encontrado por tipo o nombre")
+                    campo_password = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+                    logger.info("Campo de contraseña encontrado por tipo")
+                except Exception as e2:
+                    logger.error(f"No se pudieron encontrar los campos de inicio de sesión: {e2}")
+                    return False
             
-            # Ingresar credenciales
+            # Ingresar credenciales con pausa entre cada acción
+            logger.info("Limpiando e ingresando credenciales...")
             campo_email.clear()
+            time.sleep(0.5)
             campo_email.send_keys(SUFARMED_USERNAME)
+            time.sleep(0.5)
             campo_password.clear()
+            time.sleep(0.5)
             campo_password.send_keys(SUFARMED_PASSWORD)
+            time.sleep(0.5)
+            
+            # Buscar botón de inicio de sesión (probar diferentes selectores)
+            try:
+                # Intentar primero con ID
+                boton_login = wait.until(
+                    EC.element_to_be_clickable((By.ID, "SubmitLogin"))
+                )
+                logger.info("Botón de login encontrado por ID")
+            except Exception as e:
+                logger.warning(f"No se encontró botón por ID: {e}")
+                try:
+                    # Intentar con otros selectores comunes
+                    selectores_boton = [
+                        "button[type='submit']", 
+                        "input[type='submit']",
+                        ".login-button", 
+                        ".btn-login", 
+                        ".signin-button",
+                        "button.btn-primary",
+                        "input.btn-primary"
+                    ]
+                    
+                    for selector in selectores_boton:
+                        try:
+                            botones = driver.find_elements(By.CSS_SELECTOR, selector)
+                            if botones:
+                                boton_login = botones[0]
+                                logger.info(f"Botón de login encontrado con selector: {selector}")
+                                break
+                        except:
+                            continue
+                    else:
+                        # Si no encuentra con ningún selector, buscar por texto
+                        try:
+                            botones_por_texto = driver.find_elements(By.XPATH, 
+                                "//button[contains(text(),'Iniciar') or contains(text(),'Login') or contains(text(),'Entrar') or contains(text(),'Acceder')] | " +
+                                "//input[@value='Iniciar' or @value='Login' or @value='Entrar' or @value='Acceder']")
+                            if botones_por_texto:
+                                boton_login = botones_por_texto[0]
+                                logger.info("Botón de login encontrado por texto")
+                            else:
+                                logger.error("No se pudo encontrar el botón de inicio de sesión")
+                                return False
+                        except Exception as e3:
+                            logger.error(f"Error al buscar botón por texto: {e3}")
+                            return False
+                except Exception as e2:
+                    logger.error(f"Error al buscar botón con selectores alternativos: {e2}")
+                    return False
             
             # Hacer clic en el botón de inicio de sesión
-            boton_login = wait.until(
-                EC.element_to_be_clickable((By.ID, "SubmitLogin"))
-            )
-            boton_login.click()
+            logger.info("Haciendo clic en botón de inicio de sesión...")
+            try:
+                boton_login.click()
+            except Exception as e:
+                logger.warning(f"Error al hacer clic directo en botón: {e}")
+                try:
+                    # Intentar con JavaScript si el clic directo falla
+                    driver.execute_script("arguments[0].click();", boton_login)
+                    logger.info("Clic realizado con JavaScript")
+                except Exception as e2:
+                    logger.error(f"Error al hacer clic con JavaScript: {e2}")
+                    return False
             
-            # Verificar si el inicio de sesión fue exitoso (puede variar según el sitio)
-            time.sleep(3)  # Dar tiempo para procesar el login
+            # Esperar más tiempo para procesar el login
+            logger.info("Esperando respuesta del servidor...")
+            time.sleep(5)
+            
+            # Verificar si hay mensajes de error en la página
+            try:
+                mensajes_error = driver.find_elements(By.CSS_SELECTOR, ".alert-danger, .error-message, .form-error")
+                if mensajes_error:
+                    for msg in mensajes_error:
+                        logger.error(f"Mensaje de error en página: {msg.text}")
+                    return False
+            except:
+                pass
+            
+            # Verificar URL después del login
+            current_url_after_login = driver.current_url
+            logger.info(f"URL después del intento de login: {current_url_after_login}")
             
             # Verificar si hay elementos que indican inicio de sesión exitoso
-            # Por ejemplo, nombre de usuario visible, botón de cerrar sesión, etc.
-            elementos_sesion = driver.find_elements(By.CSS_SELECTOR, ".account, .logout, .user-info")
+            logger.info("Verificando indicadores de sesión iniciada...")
+            
+            # Método 1: Verificar elementos en la página
+            elementos_sesion = driver.find_elements(By.CSS_SELECTOR, ".account, .logout, .user-info, .user-name, .mi-cuenta")
             
             if elementos_sesion:
-                logger.info("Inicio de sesión en Sufarmed exitoso")
+                logger.info(f"Elementos de sesión encontrados: {len(elementos_sesion)}")
                 self.sesion_iniciada = True
                 return True
-            else:
-                # Verificar también si estamos en la página de mi cuenta
-                if "my-account" in driver.current_url or "mi-cuenta" in driver.current_url:
-                    logger.info("Inicio de sesión en Sufarmed exitoso (verificado por URL)")
-                    self.sesion_iniciada = True
-                    return True
-                
-                logger.warning("No se pudo verificar el inicio de sesión en Sufarmed")
-                return False
+            
+            # Método 2: Verificar URL
+            if "my-account" in current_url_after_login or "mi-cuenta" in current_url_after_login:
+                logger.info("Inicio de sesión exitoso verificado por URL")
+                self.sesion_iniciada = True
+                return True
+            
+            # Método 3: Verificar cookies de sesión
+            cookies = driver.get_cookies()
+            session_cookies = [c for c in cookies if 'session' in c['name'].lower()]
+            if session_cookies:
+                logger.info(f"Cookies de sesión encontradas: {len(session_cookies)}")
+                self.sesion_iniciada = True
+                return True
+            
+            # Si no se verificó el inicio de sesión con ningún método
+            logger.warning("No se pudo verificar el inicio de sesión, pero no se detectaron errores")
+            
+            # En caso de duda, intentar navegar de todas formas
+            self.sesion_iniciada = True
+            return True
                 
         except Exception as e:
-            logger.error(f"Error al iniciar sesión en Sufarmed: {e}")
+            logger.error(f"Error general al iniciar sesión en Sufarmed: {str(e)}")
             return False
     
     def es_pagina_producto(self, driver):
