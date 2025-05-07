@@ -697,35 +697,85 @@ class ScrapingService:
         
         try:
             # Iniciar sesión primero para acceder a precios
-            self.iniciar_sesion_sufarmed(driver)
+            login_exitoso = self.iniciar_sesion_sufarmed(driver)
+            logger.info(f"Resultado de inicio de sesión: {'Exitoso' if login_exitoso else 'Fallido'}")
             
             # Acceder al sitio web principal
             logger.info(f"Accediendo al sitio web de Sufarmed...")
             driver.get("https://sufarmed.com")
+            time.sleep(2)  # Dar tiempo para que cargue la página
             
             # Esperar a que cargue la página y buscar el campo de búsqueda
-            wait = WebDriverWait(driver, 10)
-            campo_busqueda = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
-            )
+            wait = WebDriverWait(driver, 15)  # Aumentar tiempo de espera
+            
+            try:
+                campo_busqueda = wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
+                )
+                logger.info("Campo de búsqueda encontrado")
+            except TimeoutException:
+                # Intentar con otros selectores comunes
+                try:
+                    logger.info("Buscando campo de búsqueda con selectores alternativos")
+                    selectores_busqueda = [
+                        "input[type='search']",
+                        ".search-box input",
+                        "#search_query_top",
+                        ".search-input",
+                        "input.search",
+                        ".searchbox input"
+                    ]
+                    
+                    for selector in selectores_busqueda:
+                        try:
+                            campo_busqueda = driver.find_element(By.CSS_SELECTOR, selector)
+                            logger.info(f"Campo de búsqueda encontrado con selector alternativo: {selector}")
+                            break
+                        except NoSuchElementException:
+                            continue
+                    else:
+                        logger.error("No se pudo encontrar ningún campo de búsqueda")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error al buscar campo de búsqueda alternativo: {e}")
+                    return None
             
             # Ingresar el término de búsqueda
             logger.info(f"Buscando producto: {nombre_producto}")
             campo_busqueda.clear()
+            time.sleep(0.5)
             campo_busqueda.send_keys(nombre_producto)
+            time.sleep(0.5)
             
-            # Hacer clic en el botón de búsqueda
-            boton_busqueda = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
-            )
-            boton_busqueda.click()
+            # Hacer clic en el botón de búsqueda o enviar formulario
+            try:
+                # Método 1: Buscar botón específico
+                boton_busqueda = wait.until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn, button[type='submit'], .search-box button"))
+                )
+                logger.info("Botón de búsqueda encontrado, haciendo clic...")
+                boton_busqueda.click()
+            except TimeoutException:
+                try:
+                    # Método 2: Presionar Enter en el campo de búsqueda
+                    logger.info("No se encontró botón de búsqueda, presionando Enter...")
+                    from selenium.webdriver.common.keys import Keys
+                    campo_busqueda.send_keys(Keys.RETURN)
+                except Exception as e:
+                    logger.error(f"Error al enviar formulario: {e}")
+                    return None
             
-            # Esperar un tiempo después de hacer clic para asegurar la carga
-            time.sleep(2)
+            # Esperar más tiempo después de hacer clic para asegurar la carga
+            logger.info("Esperando resultados de búsqueda...")
+            time.sleep(3)
+            
+            # Capturar URL actual para debug
+            current_url = driver.current_url
+            logger.info(f"URL actual después de búsqueda: {current_url}")
             
             # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
-            time.sleep(2) # Esperar a que cargue la página de resultados
             all_links = driver.find_elements(By.TAG_NAME, "a")
+            logger.info(f"Total de enlaces encontrados: {len(all_links)}")
             
             # Dividir los términos de búsqueda para hacer una coincidencia más precisa
             terminos_busqueda = [t.lower() for t in nombre_producto.split()]
@@ -771,7 +821,8 @@ class ScrapingService:
                         if score > 0:
                             link_scores.append((href, score))
                             logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
-                except:
+                except Exception as e:
+                    logger.warning(f"Error al procesar enlace: {e}")
                     continue
             
             # Ordenar enlaces por puntaje (mayor a menor)
@@ -831,8 +882,12 @@ class ScrapingService:
             logger.error(f"Error durante la búsqueda: {e}")
         finally:
             # Cerrar el navegador
-            if driver:
-                driver.quit()
+            try:
+                if driver:
+                    logger.info("Cerrando el navegador...")
+                    driver.quit()
+            except Exception as e:
+                logger.warning(f"Error al cerrar el navegador: {e}")
         
         # Si tenemos algún resultado, devolvemos el primero
         if resultados:
