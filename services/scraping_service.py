@@ -634,8 +634,4 @@ class ScrapingService:
                     # Xpath para código de barras
                     if not info_producto["codigo_barras"]:
                         try:
-                            barcode_xpath = "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]"
-                            barcode_elements = driver.find_elements(By.XPATH, barcode_xpath)
-                            if barcode_elements:
-                                info_producto["codigo_barras"] = barcode_elements[0].text.strip()
-                                logger.info(f"Código
+                            barcode_xpath = "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')
