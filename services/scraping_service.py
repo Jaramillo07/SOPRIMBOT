@@ -6,11 +6,13 @@ y agrega autenticación para acceder a precios de productos en Sufarmed.
 """
 import logging
 import time
+import re
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -379,72 +381,88 @@ class ScrapingService:
                 except Exception as e:
                     logger.warning(f"Error al buscar imagen alternativa: {e}")
             
-            # Extraer el precio si se ha iniciado sesión
+            # Extraer el precio si se ha iniciada la sesión
             if self.sesion_iniciada:
                 try:
-                    # Método 1: Selectores directos basados en la estructura de PrestaShop
-                    selectores_precio = [
-                        # Selectores específicos de PrestaShop vistos en tus capturas
-                        "span[itemprop='price']",
-                        ".current-price .price",
-                        ".product-price",
-                        "#our_price_display",
-                        "meta[property='product:price:amount']",  # Selector meta que vimos en tu captura HTML
+                    # Método 1: Extraer directamente de las meta tags (más preciso en PrestaShop)
+                    try:
+                        # Buscar primero meta tags de precio que son bastante estables
+                        js_script = """
+                        const priceMeta = document.querySelector('meta[property="product:price:amount"]');
+                        if (priceMeta) return priceMeta.getAttribute('content');
                         
-                        # Selectores genéricos
-                        ".current-price",
-                        ".price",
-                        ".product-price span",
-                        "#product-price",
-                        ".price-tag span",
-                        ".new-price",
-                        "div.price .amount", 
-                        "p.price"
-                    ]
+                        // Alternativas de meta tags si la primera falla
+                        const altMetas = [
+                            'meta[property="product:pretax_price:amount"]',
+                            'meta[property="og:price:amount"]',
+                            'meta[itemprop="price"]'
+                        ];
+                        
+                        for (let selector of altMetas) {
+                            const meta = document.querySelector(selector);
+                            if (meta) return meta.getAttribute('content');
+                        }
+                        
+                        return null;
+                        """
+                        precio_meta = driver.execute_script(js_script)
+                        
+                        if precio_meta:
+                            info_producto["precio"] = precio_meta
+                            logger.info(f"Precio extraído de meta tag: {info_producto['precio']}")
+                            precio_encontrado = True
+                        else:
+                            precio_encontrado = False
+                    except Exception as e:
+                        logger.warning(f"Error al extraer precio desde meta tags: {e}")
+                        precio_encontrado = False
                     
-                    precio_encontrado = False
-                    
-                    # Método 1: Intentar con selectores CSS
-                    for selector in selectores_precio:
-                        try:
-                            precio_elem = driver.find_element(By.CSS_SELECTOR, selector)
-                            
-                            # Obtener el precio como texto o como atributo content (para meta tags)
-                            if "meta" in selector:
-                                precio_texto = precio_elem.get_attribute("content")
-                            else:
-                                precio_texto = precio_elem.text.strip()
-                                
-                            if precio_texto:
-                                # Limpiar el precio (eliminar símbolos y formateo)
-                                precio_limpio = ''.join(c for c in precio_texto if c.isdigit() or c == '.' or c == ',')
-                                # Convertir comas a puntos
-                                precio_limpio = precio_limpio.replace(',', '.')
-                                info_producto["precio"] = precio_limpio
-                                logger.info(f"Precio extraído ({selector}): {info_producto['precio']}")
-                                precio_encontrado = True
-                                break
-                        except NoSuchElementException:
-                            continue
-                    
-                    # Método 2: Buscar en el HTML los meta tags de precios (común en PrestaShop)
+                    # Método 2: Selectores directos basados en la estructura de PrestaShop
                     if not precio_encontrado:
-                        try:
-                            # Ejecutar JavaScript para obtener el precio desde los meta tags
-                            js_script = """
-                            const priceMeta = document.querySelector('meta[property="product:price:amount"]');
-                            return priceMeta ? priceMeta.getAttribute('content') : null;
-                            """
-                            precio_meta = driver.execute_script(js_script)
+                        selectores_precio = [
+                            # Selectores específicos de PrestaShop
+                            ".product-price .current-price",
+                            "#our_price_display",
+                            ".current-price span[content]",
+                            "span[itemprop='price']",
+                            ".current-price .price",
+                            ".product-price",
                             
-                            if precio_meta:
-                                info_producto["precio"] = precio_meta
-                                logger.info(f"Precio extraído de meta tag: {info_producto['precio']}")
-                                precio_encontrado = True
-                        except Exception as e:
-                            logger.warning(f"Error al extraer precio desde meta tags: {e}")
+                            # Selectores genéricos
+                            ".current-price",
+                            ".price",
+                            ".product-price span",
+                            "#product-price",
+                            ".price-tag span",
+                            ".new-price",
+                            "div.price .amount", 
+                            "p.price"
+                        ]
+                        
+                        for selector in selectores_precio:
+                            try:
+                                precio_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                                
+                                # Intentar obtener el precio del atributo content primero
+                                precio_texto = precio_elem.get_attribute("content")
+                                
+                                # Si no hay atributo content, usar el texto
+                                if not precio_texto:
+                                    precio_texto = precio_elem.text.strip()
+                                    
+                                if precio_texto:
+                                    # Limpiar el precio (eliminar símbolos y formateo)
+                                    precio_limpio = ''.join(c for c in precio_texto if c.isdigit() or c == '.' or c == ',')
+                                    # Convertir comas a puntos
+                                    precio_limpio = precio_limpio.replace(',', '.')
+                                    info_producto["precio"] = precio_limpio
+                                    logger.info(f"Precio extraído ({selector}): {info_producto['precio']}")
+                                    precio_encontrado = True
+                                    break
+                            except NoSuchElementException:
+                                continue
                     
-                    # Método 3: Buscar en el texto de la página
+                    # Método 3: Buscar en el texto de la página basado en patrones
                     if not precio_encontrado:
                         try:
                             # Buscar patrones como "$XX.XX" o "XX.XX MXN" en el texto de la página
@@ -458,7 +476,6 @@ class ScrapingService:
                                 r'(\d+[\.,]\d+)\s*pesos'         # 28.15 pesos
                             ]
                             
-                            import re
                             for patron in patrones_precio:
                                 matches = re.findall(patron, page_text)
                                 if matches:
@@ -472,794 +489,18 @@ class ScrapingService:
                         except Exception as e:
                             logger.warning(f"Error al extraer precio del texto: {e}")
                     
-                    # Método 4: Capturar estructuras específicas de disponibilidad
+                    # Método 4: Buscar precio cerca del texto "Disponible"
                     if not precio_encontrado and "Disponible" in driver.page_source:
                         try:
-                            # Buscar el precio cerca del texto "Disponible"
-                            elementos_disponible = driver.find_elements(By.XPATH, "//*[contains(text(), 'Disponible')]/following::*[contains(text(), '
-            
-            # Cambiar a la pestaña de detalles del producto si existe
-            try:
-                # Encontrar y hacer clic en la pestaña de detalles
-                pestanas = driver.find_elements(By.CSS_SELECTOR, "a[href='#detalles-del-producto'], a[href='#product-details'], a[data-toggle='tab']")
-                detalles_clickeado = False
-                for pestana in pestanas:
-                    try:
-                        texto_pestana = pestana.text.lower()
-                        if "detalles" in texto_pestana or "características" in texto_pestana or "descripción" in texto_pestana:
-                            logger.info(f"Haciendo clic en pestaña: {pestana.text}")
-                            driver.execute_script("arguments[0].click();", pestana)
-                            time.sleep(1)  # Pequeña pausa para que cargue el contenido
-                            detalles_clickeado = True
-                            break
-                    except:
-                        pass
-                
-                if not detalles_clickeado:
-                    logger.info("No se encontró pestaña de detalles o no se pudo hacer clic en ella")
-            except Exception as e:
-                logger.warning(f"Error al intentar cambiar a la pestaña de detalles: {e}")
-            
-            # Método 1: Extraer información basada en estructura dt/dd como se ve en la imagen
-            try:
-                logger.info("Buscando información en estructura dt/dd...")
-                
-                # Buscar todos los dt (términos) y sus dd (definiciones) asociados
-                dt_elements = driver.find_elements(By.CSS_SELECTOR, "dt.name, dt")
-                
-                for dt in dt_elements:
-                    try:
-                        # Obtener el texto del término
-                        term_text = dt.text.strip().lower()
-                        logger.info(f"Término encontrado: {term_text}")
-                        
-                        # Buscar el dd asociado (puede ser el siguiente elemento hermano)
-                        dd = None
-                        
-                        # Método 1: Buscar el siguiente elemento hermano directamente
-                        try:
-                            dd = dt.find_element(By.XPATH, "./following-sibling::dd[1]")
-                        except:
-                            # Método 2: Buscar por JavaScript
-                            try:
-                                dd_script = """
-                                return arguments[0].nextElementSibling;
-                                """
-                                dd = driver.execute_script(dd_script, dt)
-                            except:
-                                pass
-                        
-                        if dd:
-                            value_text = dd.text.strip()
-                            logger.info(f"Valor asociado: {value_text}")
+                            # Definir la expresión XPath en una variable
+                            xpath_query = "//*[contains(text(), 'Disponible')]/following::*[contains(text(), '$') or contains(@class, 'price')]"
+                            # Usar la variable en la búsqueda
+                            elementos_disponible = driver.find_elements(By.XPATH, xpath_query)
                             
-                            # Mapear los términos a nuestros campos
-                            if "laboratorio" in term_text:
-                                info_producto["laboratorio"] = value_text
-                                logger.info(f"Laboratorio extraído: {value_text}")
-                            elif ("código" in term_text and "barras" in term_text) or "código de barras" in term_text:
-                                info_producto["codigo_barras"] = value_text
-                                logger.info(f"Código de barras extraído: {value_text}")
-                            elif "registro" in term_text and "sanitario" in term_text:
-                                info_producto["registro_sanitario"] = value_text
-                                logger.info(f"Registro sanitario extraído: {value_text}")
-                    except Exception as e:
-                        logger.warning(f"Error al procesar término dt: {e}")
-            except Exception as e:
-                logger.warning(f"Error al procesar estructura dt/dd: {e}")
-
-            # Método 2: Buscar en tablas específicas
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                try:
-                    logger.info("Buscando en tablas...")
-                    # Buscar filas de tabla con información
-                    filas = driver.find_elements(By.CSS_SELECTOR, "table tr, .table-data-sheet tr, .data-sheet tr")
-                    
-                    for fila in filas:
-                        try:
-                            # Obtener celdas
-                            celdas = fila.find_elements(By.TAG_NAME, "td")
-                            if len(celdas) >= 2:
-                                clave = celdas[0].text.strip().lower()
-                                valor = celdas[1].text.strip()
-                                
-                                # Mapear claves a nuestros campos
-                                if "laboratorio" in clave and not info_producto["laboratorio"]:
-                                    info_producto["laboratorio"] = valor
-                                    logger.info(f"Laboratorio extraído de tabla: {valor}")
-                                elif ("codigo" in clave and "barras" in clave) and not info_producto["codigo_barras"]:
-                                    info_producto["codigo_barras"] = valor
-                                    logger.info(f"Código de barras extraído de tabla: {valor}")
-                                elif "registro" in clave and "sanitario" in clave and not info_producto["registro_sanitario"]:
-                                    info_producto["registro_sanitario"] = valor
-                                    logger.info(f"Registro sanitario extraído de tabla: {valor}")
-                        except Exception as e:
-                            logger.warning(f"Error al procesar fila de tabla: {e}")
-                except Exception as e:
-                    logger.warning(f"Error al buscar en tablas: {e}")
-            
-            # Método 3: Buscar específicamente por XPath con el texto exacto visto en la imagen
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                try:
-                    logger.info("Buscando con XPath específicos...")
-                    # Xpath para laboratorio
-                    if not info_producto["laboratorio"]:
-                        try:
-                            lab_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Laboratorio')]/following-sibling::dd[1] | //td[contains(text(), 'Laboratorio')]/following-sibling::td[1]")
-                            if lab_elements:
-                                info_producto["laboratorio"] = lab_elements[0].text.strip()
-                                logger.info(f"Laboratorio extraído por XPath: {info_producto['laboratorio']}")
-                        except:
-                            pass
-                    
-                    # Xpath para código de barras
-                    if not info_producto["codigo_barras"]:
-                        try:
-                            barcode_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]")
-                            if barcode_elements:
-                                info_producto["codigo_barras"] = barcode_elements[0].text.strip()
-                                logger.info(f"Código de barras extraído por XPath: {info_producto['codigo_barras']}")
-                        except:
-                            pass
-                    
-                    # Xpath para registro sanitario
-                    if not info_producto["registro_sanitario"]:
-                        try:
-                            reg_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Registro sanitario')]/following-sibling::dd[1] | //td[contains(text(), 'Registro sanitario')]/following-sibling::td[1]")
-                            if reg_elements:
-                                info_producto["registro_sanitario"] = reg_elements[0].text.strip()
-                                logger.info(f"Registro sanitario extraído por XPath: {info_producto['registro_sanitario']}")
-                        except:
-                            pass
-                except Exception as e:
-                    logger.warning(f"Error en búsqueda XPath: {e}")
-            
-            # Método 4: Buscar por texto en todo el HTML como último recurso
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                logger.info("Buscando información en el texto completo de la página...")
-                
-                # Obtener el texto completo de la página
-                page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-                
-                # Buscar por patrones específicos
-                if not info_producto["laboratorio"]:
-                    patrones_lab = ["laboratorio: ", "laboratorio ", "fabricante: ", "fabricante "]
-                    for patron in patrones_lab:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50  # Si no hay salto de línea, tomar 50 caracteres
-                            valor = page_text[inicio:fin].strip()
-                            if valor:
-                                info_producto["laboratorio"] = valor
-                                logger.info(f"Laboratorio extraído de texto: {valor}")
-                                break
-                                
-                if not info_producto["codigo_barras"]:
-                    patrones_codigo = ["código de barras: ", "codigo de barras: ", "ean: ", "código: "]
-                    for patron in patrones_codigo:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50
-                            valor = page_text[inicio:fin].strip()
-                            if valor and any(c.isdigit() for c in valor):  # Verificar que al menos contenga números
-                                info_producto["codigo_barras"] = valor
-                                logger.info(f"Código de barras extraído de texto: {valor}")
-                                break
-                                
-                if not info_producto["registro_sanitario"]:
-                    patrones_registro = ["registro sanitario: ", "registro: ", "reg. sanitario: ", "no. registro: "]
-                    for patron in patrones_registro:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50
-                            valor = page_text[inicio:fin].strip()
-                            if valor:
-                                info_producto["registro_sanitario"] = valor
-                                logger.info(f"Registro sanitario extraído de texto: {valor}")
-                                break
-            
-            # Verificar si se extrajo información válida
-            if info_producto["nombre"]:
-                logger.info("Información del producto extraída con éxito")
-                # Imprimir toda la información extraída para depuración
-                for campo, valor in info_producto.items():
-                    logger.info(f"{campo}: {valor}")
-                return info_producto
-            else:
-                logger.warning("No se pudo extraer información válida del producto")
-                return None
-        
-        except Exception as e:
-            logger.error(f"Error general al extraer información del producto: {e}")
-            return None
-    
-    def buscar_producto(self, nombre_producto):
-        """
-        Busca un producto en Sufarmed y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Información del producto o None si no se encuentra
-        """
-        driver = self.inicializar_navegador()
-        if not driver:
-            return None
-        
-        resultados = []
-        
-        try:
-            # Iniciar sesión primero para acceder a precios
-            login_exitoso = self.iniciar_sesion_sufarmed(driver)
-            logger.info(f"Resultado de inicio de sesión: {'Exitoso' if login_exitoso else 'Fallido'}")
-            
-            # Acceder al sitio web principal
-            logger.info(f"Accediendo al sitio web de Sufarmed...")
-            driver.get("https://sufarmed.com")
-            time.sleep(2)  # Dar tiempo para que cargue la página
-            
-            # Esperar a que cargue la página y buscar el campo de búsqueda
-            wait = WebDriverWait(driver, 15)  # Aumentar tiempo de espera
-            
-            try:
-                campo_busqueda = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
-                )
-                logger.info("Campo de búsqueda encontrado")
-            except TimeoutException:
-                # Intentar con otros selectores comunes
-                try:
-                    logger.info("Buscando campo de búsqueda con selectores alternativos")
-                    selectores_busqueda = [
-                        "input[type='search']",
-                        ".search-box input",
-                        "#search_query_top",
-                        ".search-input",
-                        "input.search",
-                        ".searchbox input"
-                    ]
-                    
-                    for selector in selectores_busqueda:
-                        try:
-                            campo_busqueda = driver.find_element(By.CSS_SELECTOR, selector)
-                            logger.info(f"Campo de búsqueda encontrado con selector alternativo: {selector}")
-                            break
-                        except NoSuchElementException:
-                            continue
-                    else:
-                        logger.error("No se pudo encontrar ningún campo de búsqueda")
-                        return None
-                except Exception as e:
-                    logger.error(f"Error al buscar campo de búsqueda alternativo: {e}")
-                    return None
-            
-            # Ingresar el término de búsqueda
-            logger.info(f"Buscando producto: {nombre_producto}")
-            campo_busqueda.clear()
-            time.sleep(0.5)
-            campo_busqueda.send_keys(nombre_producto)
-            time.sleep(0.5)
-            
-            # Hacer clic en el botón de búsqueda o enviar formulario
-            try:
-                # Método 1: Buscar botón específico
-                boton_busqueda = wait.until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn, button[type='submit'], .search-box button"))
-                )
-                logger.info("Botón de búsqueda encontrado, haciendo clic...")
-                boton_busqueda.click()
-            except TimeoutException:
-                try:
-                    # Método 2: Presionar Enter en el campo de búsqueda
-                    logger.info("No se encontró botón de búsqueda, presionando Enter...")
-                    from selenium.webdriver.common.keys import Keys
-                    campo_busqueda.send_keys(Keys.RETURN)
-                except Exception as e:
-                    logger.error(f"Error al enviar formulario: {e}")
-                    return None
-            
-            # Esperar más tiempo después de hacer clic para asegurar la carga
-            logger.info("Esperando resultados de búsqueda...")
-            time.sleep(3)
-            
-            # Capturar URL actual para debug
-            current_url = driver.current_url
-            logger.info(f"URL actual después de búsqueda: {current_url}")
-            
-            # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
-            all_links = driver.find_elements(By.TAG_NAME, "a")
-            logger.info(f"Total de enlaces encontrados: {len(all_links)}")
-            
-            # Dividir los términos de búsqueda para hacer una coincidencia más precisa
-            terminos_busqueda = [t.lower() for t in nombre_producto.split()]
-            logger.info(f"Términos de búsqueda: {terminos_busqueda}")
-            
-            # Sistema de puntuación para enlaces
-            link_scores = []
-            
-            for link in all_links:
-                try:
-                    href = link.get_attribute("href") or ""
-                    if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
-                        texto_link = link.text.lower()
-                        url_lower = href.lower()
-                        
-                        # Calcular puntaje de relevancia
-                        score = 0
-                        
-                        # Coincidencia exacta en la URL tiene prioridad máxima
-                        if nombre_producto.lower() in url_lower:
-                            score += 100
-                            
-                        # Coincidencia de todos los términos en URL
-                        if all(term in url_lower for term in terminos_busqueda):
-                            score += 50
-                        else:
-                            # Coincidencia parcial: sumar por cada término encontrado
-                            for term in terminos_busqueda:
-                                if term in url_lower:
-                                    score += 10
-                        
-                        # Coincidencia en el texto visible del enlace
-                        if nombre_producto.lower() in texto_link:
-                            score += 30
-                        elif all(term in texto_link for term in terminos_busqueda):
-                            score += 20
-                        else:
-                            for term in terminos_busqueda:
-                                if term in texto_link:
-                                    score += 5
-                        
-                        # Solo considerar enlaces con puntaje positivo
-                        if score > 0:
-                            link_scores.append((href, score))
-                            logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
-                except Exception as e:
-                    logger.warning(f"Error al procesar enlace: {e}")
-                    continue
-            
-            # Ordenar enlaces por puntaje (mayor a menor)
-            link_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Convertir a lista de URLs
-            product_links = [url for url, score in link_scores]
-            
-            # Eliminar duplicados preservando el orden
-            product_links = list(dict.fromkeys(product_links))
-            logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
-            
-            # Intentar navegar a cada enlace hasta encontrar una página de producto
-            for url in product_links:
-                try:
-                    logger.info(f"Navegando a URL potencial de producto: {url}")
-                    driver.get(url)
-                    time.sleep(3)
-                    
-                    if self.es_pagina_producto(driver):
-                        logger.info("Éxito! Página de producto encontrada.")
-                        info_producto = self.extraer_info_producto(driver)
-                        if info_producto:
-                            resultados.append(info_producto)
-                            
-                            # Si encontramos un producto con nombre que coincide exactamente, 
-                            # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
-                            nombre_producto_lower = nombre_producto.lower()
-                            info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
-                            
-                            if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
-                                logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
-                                return info_producto
-                            
-                            # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
-                            if len(resultados) >= 3:
-                                break
-                except Exception as e:
-                    logger.warning(f"Error al navegar a {url}: {e}")
-            
-            # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
-            if resultados:
-                logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
-                return resultados[0]
-                
-            # Si llegamos aquí, no encontramos una página de producto válida
-            logger.warning("No se pudieron encontrar enlaces de productos válidos.")
-            return None
-            
-        except TimeoutException:
-            logger.warning("Tiempo de espera agotado durante la navegación.")
-            # Verificar si aún así llegamos a una página de producto
-            if self.es_pagina_producto(driver):
-                logger.info("A pesar del timeout, se detectó página de producto.")
-                return self.extraer_info_producto(driver)
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda: {e}")
-        finally:
-            # Cerrar el navegador
-            try:
-                if driver:
-                    logger.info("Cerrando el navegador...")
-                    driver.quit()
-            except Exception as e:
-                logger.warning(f"Error al cerrar el navegador: {e}")
-        
-        # Si tenemos algún resultado, devolvemos el primero
-        if resultados:
-            return resultados[0]
-        return None
-) or contains(@class, 'price')]")
                             if elementos_disponible:
-                                for elem in elementos_disponible[:3]:  # Verificar solo los primeros 3 elementos siguientes
+                                for elem in elementos_disponible[:3]:
                                     texto = elem.text.strip()
-                                    if '
-            
-            # Cambiar a la pestaña de detalles del producto si existe
-            try:
-                # Encontrar y hacer clic en la pestaña de detalles
-                pestanas = driver.find_elements(By.CSS_SELECTOR, "a[href='#detalles-del-producto'], a[href='#product-details'], a[data-toggle='tab']")
-                detalles_clickeado = False
-                for pestana in pestanas:
-                    try:
-                        texto_pestana = pestana.text.lower()
-                        if "detalles" in texto_pestana or "características" in texto_pestana or "descripción" in texto_pestana:
-                            logger.info(f"Haciendo clic en pestaña: {pestana.text}")
-                            driver.execute_script("arguments[0].click();", pestana)
-                            time.sleep(1)  # Pequeña pausa para que cargue el contenido
-                            detalles_clickeado = True
-                            break
-                    except:
-                        pass
-                
-                if not detalles_clickeado:
-                    logger.info("No se encontró pestaña de detalles o no se pudo hacer clic en ella")
-            except Exception as e:
-                logger.warning(f"Error al intentar cambiar a la pestaña de detalles: {e}")
-            
-            # Método 1: Extraer información basada en estructura dt/dd como se ve en la imagen
-            try:
-                logger.info("Buscando información en estructura dt/dd...")
-                
-                # Buscar todos los dt (términos) y sus dd (definiciones) asociados
-                dt_elements = driver.find_elements(By.CSS_SELECTOR, "dt.name, dt")
-                
-                for dt in dt_elements:
-                    try:
-                        # Obtener el texto del término
-                        term_text = dt.text.strip().lower()
-                        logger.info(f"Término encontrado: {term_text}")
-                        
-                        # Buscar el dd asociado (puede ser el siguiente elemento hermano)
-                        dd = None
-                        
-                        # Método 1: Buscar el siguiente elemento hermano directamente
-                        try:
-                            dd = dt.find_element(By.XPATH, "./following-sibling::dd[1]")
-                        except:
-                            # Método 2: Buscar por JavaScript
-                            try:
-                                dd_script = """
-                                return arguments[0].nextElementSibling;
-                                """
-                                dd = driver.execute_script(dd_script, dt)
-                            except:
-                                pass
-                        
-                        if dd:
-                            value_text = dd.text.strip()
-                            logger.info(f"Valor asociado: {value_text}")
-                            
-                            # Mapear los términos a nuestros campos
-                            if "laboratorio" in term_text:
-                                info_producto["laboratorio"] = value_text
-                                logger.info(f"Laboratorio extraído: {value_text}")
-                            elif ("código" in term_text and "barras" in term_text) or "código de barras" in term_text:
-                                info_producto["codigo_barras"] = value_text
-                                logger.info(f"Código de barras extraído: {value_text}")
-                            elif "registro" in term_text and "sanitario" in term_text:
-                                info_producto["registro_sanitario"] = value_text
-                                logger.info(f"Registro sanitario extraído: {value_text}")
-                    except Exception as e:
-                        logger.warning(f"Error al procesar término dt: {e}")
-            except Exception as e:
-                logger.warning(f"Error al procesar estructura dt/dd: {e}")
-
-            # Método 2: Buscar en tablas específicas
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                try:
-                    logger.info("Buscando en tablas...")
-                    # Buscar filas de tabla con información
-                    filas = driver.find_elements(By.CSS_SELECTOR, "table tr, .table-data-sheet tr, .data-sheet tr")
-                    
-                    for fila in filas:
-                        try:
-                            # Obtener celdas
-                            celdas = fila.find_elements(By.TAG_NAME, "td")
-                            if len(celdas) >= 2:
-                                clave = celdas[0].text.strip().lower()
-                                valor = celdas[1].text.strip()
-                                
-                                # Mapear claves a nuestros campos
-                                if "laboratorio" in clave and not info_producto["laboratorio"]:
-                                    info_producto["laboratorio"] = valor
-                                    logger.info(f"Laboratorio extraído de tabla: {valor}")
-                                elif ("codigo" in clave and "barras" in clave) and not info_producto["codigo_barras"]:
-                                    info_producto["codigo_barras"] = valor
-                                    logger.info(f"Código de barras extraído de tabla: {valor}")
-                                elif "registro" in clave and "sanitario" in clave and not info_producto["registro_sanitario"]:
-                                    info_producto["registro_sanitario"] = valor
-                                    logger.info(f"Registro sanitario extraído de tabla: {valor}")
-                        except Exception as e:
-                            logger.warning(f"Error al procesar fila de tabla: {e}")
-                except Exception as e:
-                    logger.warning(f"Error al buscar en tablas: {e}")
-            
-            # Método 3: Buscar específicamente por XPath con el texto exacto visto en la imagen
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                try:
-                    logger.info("Buscando con XPath específicos...")
-                    # Xpath para laboratorio
-                    if not info_producto["laboratorio"]:
-                        try:
-                            lab_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Laboratorio')]/following-sibling::dd[1] | //td[contains(text(), 'Laboratorio')]/following-sibling::td[1]")
-                            if lab_elements:
-                                info_producto["laboratorio"] = lab_elements[0].text.strip()
-                                logger.info(f"Laboratorio extraído por XPath: {info_producto['laboratorio']}")
-                        except:
-                            pass
-                    
-                    # Xpath para código de barras
-                    if not info_producto["codigo_barras"]:
-                        try:
-                            barcode_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]")
-                            if barcode_elements:
-                                info_producto["codigo_barras"] = barcode_elements[0].text.strip()
-                                logger.info(f"Código de barras extraído por XPath: {info_producto['codigo_barras']}")
-                        except:
-                            pass
-                    
-                    # Xpath para registro sanitario
-                    if not info_producto["registro_sanitario"]:
-                        try:
-                            reg_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Registro sanitario')]/following-sibling::dd[1] | //td[contains(text(), 'Registro sanitario')]/following-sibling::td[1]")
-                            if reg_elements:
-                                info_producto["registro_sanitario"] = reg_elements[0].text.strip()
-                                logger.info(f"Registro sanitario extraído por XPath: {info_producto['registro_sanitario']}")
-                        except:
-                            pass
-                except Exception as e:
-                    logger.warning(f"Error en búsqueda XPath: {e}")
-            
-            # Método 4: Buscar por texto en todo el HTML como último recurso
-            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
-                logger.info("Buscando información en el texto completo de la página...")
-                
-                # Obtener el texto completo de la página
-                page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-                
-                # Buscar por patrones específicos
-                if not info_producto["laboratorio"]:
-                    patrones_lab = ["laboratorio: ", "laboratorio ", "fabricante: ", "fabricante "]
-                    for patron in patrones_lab:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50  # Si no hay salto de línea, tomar 50 caracteres
-                            valor = page_text[inicio:fin].strip()
-                            if valor:
-                                info_producto["laboratorio"] = valor
-                                logger.info(f"Laboratorio extraído de texto: {valor}")
-                                break
-                                
-                if not info_producto["codigo_barras"]:
-                    patrones_codigo = ["código de barras: ", "codigo de barras: ", "ean: ", "código: "]
-                    for patron in patrones_codigo:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50
-                            valor = page_text[inicio:fin].strip()
-                            if valor and any(c.isdigit() for c in valor):  # Verificar que al menos contenga números
-                                info_producto["codigo_barras"] = valor
-                                logger.info(f"Código de barras extraído de texto: {valor}")
-                                break
-                                
-                if not info_producto["registro_sanitario"]:
-                    patrones_registro = ["registro sanitario: ", "registro: ", "reg. sanitario: ", "no. registro: "]
-                    for patron in patrones_registro:
-                        if patron in page_text:
-                            inicio = page_text.find(patron) + len(patron)
-                            fin = page_text.find("\n", inicio)
-                            if fin == -1:
-                                fin = inicio + 50
-                            valor = page_text[inicio:fin].strip()
-                            if valor:
-                                info_producto["registro_sanitario"] = valor
-                                logger.info(f"Registro sanitario extraído de texto: {valor}")
-                                break
-            
-            # Verificar si se extrajo información válida
-            if info_producto["nombre"]:
-                logger.info("Información del producto extraída con éxito")
-                # Imprimir toda la información extraída para depuración
-                for campo, valor in info_producto.items():
-                    logger.info(f"{campo}: {valor}")
-                return info_producto
-            else:
-                logger.warning("No se pudo extraer información válida del producto")
-                return None
-        
-        except Exception as e:
-            logger.error(f"Error general al extraer información del producto: {e}")
-            return None
-    
-    def buscar_producto(self, nombre_producto):
-        """
-        Busca un producto en Sufarmed y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Información del producto o None si no se encuentra
-        """
-        driver = self.inicializar_navegador()
-        if not driver:
-            return None
-        
-        resultados = []
-        
-        try:
-            # Iniciar sesión primero para acceder a precios
-            self.iniciar_sesion_sufarmed(driver)
-            
-            # Acceder al sitio web principal
-            logger.info(f"Accediendo al sitio web de Sufarmed...")
-            driver.get("https://sufarmed.com")
-            
-            # Esperar a que cargue la página y buscar el campo de búsqueda
-            wait = WebDriverWait(driver, 10)
-            campo_busqueda = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
-            )
-            
-            # Ingresar el término de búsqueda
-            logger.info(f"Buscando producto: {nombre_producto}")
-            campo_busqueda.clear()
-            campo_busqueda.send_keys(nombre_producto)
-            
-            # Hacer clic en el botón de búsqueda
-            boton_busqueda = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
-            )
-            boton_busqueda.click()
-            
-            # Esperar un tiempo después de hacer clic para asegurar la carga
-            time.sleep(2)
-            
-            # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
-            time.sleep(2) # Esperar a que cargue la página de resultados
-            all_links = driver.find_elements(By.TAG_NAME, "a")
-            
-            # Dividir los términos de búsqueda para hacer una coincidencia más precisa
-            terminos_busqueda = [t.lower() for t in nombre_producto.split()]
-            logger.info(f"Términos de búsqueda: {terminos_busqueda}")
-            
-            # Sistema de puntuación para enlaces
-            link_scores = []
-            
-            for link in all_links:
-                try:
-                    href = link.get_attribute("href") or ""
-                    if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
-                        texto_link = link.text.lower()
-                        url_lower = href.lower()
-                        
-                        # Calcular puntaje de relevancia
-                        score = 0
-                        
-                        # Coincidencia exacta en la URL tiene prioridad máxima
-                        if nombre_producto.lower() in url_lower:
-                            score += 100
-                            
-                        # Coincidencia de todos los términos en URL
-                        if all(term in url_lower for term in terminos_busqueda):
-                            score += 50
-                        else:
-                            # Coincidencia parcial: sumar por cada término encontrado
-                            for term in terminos_busqueda:
-                                if term in url_lower:
-                                    score += 10
-                        
-                        # Coincidencia en el texto visible del enlace
-                        if nombre_producto.lower() in texto_link:
-                            score += 30
-                        elif all(term in texto_link for term in terminos_busqueda):
-                            score += 20
-                        else:
-                            for term in terminos_busqueda:
-                                if term in texto_link:
-                                    score += 5
-                        
-                        # Solo considerar enlaces con puntaje positivo
-                        if score > 0:
-                            link_scores.append((href, score))
-                            logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
-                except:
-                    continue
-            
-            # Ordenar enlaces por puntaje (mayor a menor)
-            link_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Convertir a lista de URLs
-            product_links = [url for url, score in link_scores]
-            
-            # Eliminar duplicados preservando el orden
-            product_links = list(dict.fromkeys(product_links))
-            logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
-            
-            # Intentar navegar a cada enlace hasta encontrar una página de producto
-            for url in product_links:
-                try:
-                    logger.info(f"Navegando a URL potencial de producto: {url}")
-                    driver.get(url)
-                    time.sleep(3)
-                    
-                    if self.es_pagina_producto(driver):
-                        logger.info("Éxito! Página de producto encontrada.")
-                        info_producto = self.extraer_info_producto(driver)
-                        if info_producto:
-                            resultados.append(info_producto)
-                            
-                            # Si encontramos un producto con nombre que coincide exactamente, 
-                            # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
-                            nombre_producto_lower = nombre_producto.lower()
-                            info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
-                            
-                            if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
-                                logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
-                                return info_producto
-                            
-                            # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
-                            if len(resultados) >= 3:
-                                break
-                except Exception as e:
-                    logger.warning(f"Error al navegar a {url}: {e}")
-            
-            # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
-            if resultados:
-                logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
-                return resultados[0]
-                
-            # Si llegamos aquí, no encontramos una página de producto válida
-            logger.warning("No se pudieron encontrar enlaces de productos válidos.")
-            return None
-            
-        except TimeoutException:
-            logger.warning("Tiempo de espera agotado durante la navegación.")
-            # Verificar si aún así llegamos a una página de producto
-            if self.es_pagina_producto(driver):
-                logger.info("A pesar del timeout, se detectó página de producto.")
-                return self.extraer_info_producto(driver)
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda: {e}")
-        finally:
-            # Cerrar el navegador
-            if driver:
-                driver.quit()
-        
-        # Si tenemos algún resultado, devolvemos el primero
-        if resultados:
-            return resultados[0]
-        return None
- in texto or 'MXN' in texto:
+                                    if '$' in texto or 'MXN' in texto:
                                         # Extraer dígitos y puntos
                                         precio_texto = ''.join(c for c in texto if c.isdigit() or c == '.' or c == ',')
                                         precio_limpio = precio_texto.replace(',', '.')
@@ -1382,32 +623,35 @@ class ScrapingService:
                     # Xpath para laboratorio
                     if not info_producto["laboratorio"]:
                         try:
-                            lab_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Laboratorio')]/following-sibling::dd[1] | //td[contains(text(), 'Laboratorio')]/following-sibling::td[1]")
+                            lab_xpath = "//dt[contains(text(), 'Laboratorio')]/following-sibling::dd[1] | //td[contains(text(), 'Laboratorio')]/following-sibling::td[1]"
+                            lab_elements = driver.find_elements(By.XPATH, lab_xpath)
                             if lab_elements:
                                 info_producto["laboratorio"] = lab_elements[0].text.strip()
                                 logger.info(f"Laboratorio extraído por XPath: {info_producto['laboratorio']}")
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Error al buscar laboratorio por XPath: {e}")
                     
                     # Xpath para código de barras
                     if not info_producto["codigo_barras"]:
                         try:
-                            barcode_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]")
+                            barcode_xpath = "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]"
+                            barcode_elements = driver.find_elements(By.XPATH, barcode_xpath)
                             if barcode_elements:
                                 info_producto["codigo_barras"] = barcode_elements[0].text.strip()
                                 logger.info(f"Código de barras extraído por XPath: {info_producto['codigo_barras']}")
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Error al buscar código de barras por XPath: {e}")
                     
                     # Xpath para registro sanitario
                     if not info_producto["registro_sanitario"]:
                         try:
-                            reg_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Registro sanitario')]/following-sibling::dd[1] | //td[contains(text(), 'Registro sanitario')]/following-sibling::td[1]")
+                            reg_xpath = "//dt[contains(text(), 'Registro sanitario')]/following-sibling::dd[1] | //td[contains(text(), 'Registro sanitario')]/following-sibling::td[1]"
+                            reg_elements = driver.find_elements(By.XPATH, reg_xpath)
                             if reg_elements:
                                 info_producto["registro_sanitario"] = reg_elements[0].text.strip()
                                 logger.info(f"Registro sanitario extraído por XPath: {info_producto['registro_sanitario']}")
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Error al buscar registro sanitario por XPath: {e}")
                 except Exception as e:
                     logger.warning(f"Error en búsqueda XPath: {e}")
             
@@ -1475,163 +719,3 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error general al extraer información del producto: {e}")
             return None
-    
-    def buscar_producto(self, nombre_producto):
-        """
-        Busca un producto en Sufarmed y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Información del producto o None si no se encuentra
-        """
-        driver = self.inicializar_navegador()
-        if not driver:
-            return None
-        
-        resultados = []
-        
-        try:
-            # Iniciar sesión primero para acceder a precios
-            self.iniciar_sesion_sufarmed(driver)
-            
-            # Acceder al sitio web principal
-            logger.info(f"Accediendo al sitio web de Sufarmed...")
-            driver.get("https://sufarmed.com")
-            
-            # Esperar a que cargue la página y buscar el campo de búsqueda
-            wait = WebDriverWait(driver, 10)
-            campo_busqueda = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
-            )
-            
-            # Ingresar el término de búsqueda
-            logger.info(f"Buscando producto: {nombre_producto}")
-            campo_busqueda.clear()
-            campo_busqueda.send_keys(nombre_producto)
-            
-            # Hacer clic en el botón de búsqueda
-            boton_busqueda = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
-            )
-            boton_busqueda.click()
-            
-            # Esperar un tiempo después de hacer clic para asegurar la carga
-            time.sleep(2)
-            
-            # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
-            time.sleep(2) # Esperar a que cargue la página de resultados
-            all_links = driver.find_elements(By.TAG_NAME, "a")
-            
-            # Dividir los términos de búsqueda para hacer una coincidencia más precisa
-            terminos_busqueda = [t.lower() for t in nombre_producto.split()]
-            logger.info(f"Términos de búsqueda: {terminos_busqueda}")
-            
-            # Sistema de puntuación para enlaces
-            link_scores = []
-            
-            for link in all_links:
-                try:
-                    href = link.get_attribute("href") or ""
-                    if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
-                        texto_link = link.text.lower()
-                        url_lower = href.lower()
-                        
-                        # Calcular puntaje de relevancia
-                        score = 0
-                        
-                        # Coincidencia exacta en la URL tiene prioridad máxima
-                        if nombre_producto.lower() in url_lower:
-                            score += 100
-                            
-                        # Coincidencia de todos los términos en URL
-                        if all(term in url_lower for term in terminos_busqueda):
-                            score += 50
-                        else:
-                            # Coincidencia parcial: sumar por cada término encontrado
-                            for term in terminos_busqueda:
-                                if term in url_lower:
-                                    score += 10
-                        
-                        # Coincidencia en el texto visible del enlace
-                        if nombre_producto.lower() in texto_link:
-                            score += 30
-                        elif all(term in texto_link for term in terminos_busqueda):
-                            score += 20
-                        else:
-                            for term in terminos_busqueda:
-                                if term in texto_link:
-                                    score += 5
-                        
-                        # Solo considerar enlaces con puntaje positivo
-                        if score > 0:
-                            link_scores.append((href, score))
-                            logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
-                except:
-                    continue
-            
-            # Ordenar enlaces por puntaje (mayor a menor)
-            link_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Convertir a lista de URLs
-            product_links = [url for url, score in link_scores]
-            
-            # Eliminar duplicados preservando el orden
-            product_links = list(dict.fromkeys(product_links))
-            logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
-            
-            # Intentar navegar a cada enlace hasta encontrar una página de producto
-            for url in product_links:
-                try:
-                    logger.info(f"Navegando a URL potencial de producto: {url}")
-                    driver.get(url)
-                    time.sleep(3)
-                    
-                    if self.es_pagina_producto(driver):
-                        logger.info("Éxito! Página de producto encontrada.")
-                        info_producto = self.extraer_info_producto(driver)
-                        if info_producto:
-                            resultados.append(info_producto)
-                            
-                            # Si encontramos un producto con nombre que coincide exactamente, 
-                            # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
-                            nombre_producto_lower = nombre_producto.lower()
-                            info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
-                            
-                            if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
-                                logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
-                                return info_producto
-                            
-                            # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
-                            if len(resultados) >= 3:
-                                break
-                except Exception as e:
-                    logger.warning(f"Error al navegar a {url}: {e}")
-            
-            # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
-            if resultados:
-                logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
-                return resultados[0]
-                
-            # Si llegamos aquí, no encontramos una página de producto válida
-            logger.warning("No se pudieron encontrar enlaces de productos válidos.")
-            return None
-            
-        except TimeoutException:
-            logger.warning("Tiempo de espera agotado durante la navegación.")
-            # Verificar si aún así llegamos a una página de producto
-            if self.es_pagina_producto(driver):
-                logger.info("A pesar del timeout, se detectó página de producto.")
-                return self.extraer_info_producto(driver)
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda: {e}")
-        finally:
-            # Cerrar el navegador
-            if driver:
-                driver.quit()
-        
-        # Si tenemos algún resultado, devolvemos el primero
-        if resultados:
-            return resultados[0]
-        return None
