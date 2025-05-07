@@ -1,7 +1,8 @@
 """
 Servicio de scraping para buscar información de productos farmacéuticos.
 Este servicio integra la funcionalidad de scraping ya implementada,
-pero ahora usa webdriver-manager para alinear ChromeDriver automáticamente.
+pero ahora usa webdriver-manager para alinear ChromeDriver automáticamente
+y agrega autenticación para acceder a precios de productos en Sufarmed.
 """
 import logging
 import time
@@ -14,6 +15,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from config.settings import HEADLESS_BROWSER
+
+# Credenciales para Sufarmed
+SUFARMED_URL = "https://sufarmed.com/sufarmed/iniciar-sesion?back=https%3A%2F%2Fsufarmed.com%2Fsufarmed%2F"
+SUFARMED_USERNAME = "laubec83@gmail.com"
+SUFARMED_PASSWORD = "Sr3ChK8pBoSEScZ"
 
 # Configurar logging
 logging.basicConfig(
@@ -29,6 +35,7 @@ class ScrapingService:
     
     def __init__(self, headless: bool = HEADLESS_BROWSER):
         self.headless = headless
+        self.sesion_iniciada = False
     
     def inicializar_navegador(self):
         """
@@ -54,6 +61,66 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error al inicializar el navegador: {e}")
             return None
+    
+    def iniciar_sesion_sufarmed(self, driver):
+        """
+        Inicia sesión en Sufarmed para acceder a información y precios.
+        
+        Args:
+            driver (webdriver.Chrome): Instancia del navegador
+            
+        Returns:
+            bool: True si la sesión se inició correctamente, False en caso contrario
+        """
+        try:
+            logger.info("Intentando iniciar sesión en Sufarmed...")
+            driver.get(SUFARMED_URL)
+            
+            # Esperar a que cargue la página de inicio de sesión
+            wait = WebDriverWait(driver, 10)
+            
+            # Buscar campos de inicio de sesión
+            campo_email = wait.until(
+                EC.presence_of_element_located((By.ID, "email"))
+            )
+            campo_password = driver.find_element(By.ID, "passwd")
+            
+            # Ingresar credenciales
+            campo_email.clear()
+            campo_email.send_keys(SUFARMED_USERNAME)
+            campo_password.clear()
+            campo_password.send_keys(SUFARMED_PASSWORD)
+            
+            # Hacer clic en el botón de inicio de sesión
+            boton_login = wait.until(
+                EC.element_to_be_clickable((By.ID, "SubmitLogin"))
+            )
+            boton_login.click()
+            
+            # Verificar si el inicio de sesión fue exitoso (puede variar según el sitio)
+            time.sleep(3)  # Dar tiempo para procesar el login
+            
+            # Verificar si hay elementos que indican inicio de sesión exitoso
+            # Por ejemplo, nombre de usuario visible, botón de cerrar sesión, etc.
+            elementos_sesion = driver.find_elements(By.CSS_SELECTOR, ".account, .logout, .user-info")
+            
+            if elementos_sesion:
+                logger.info("Inicio de sesión en Sufarmed exitoso")
+                self.sesion_iniciada = True
+                return True
+            else:
+                # Verificar también si estamos en la página de mi cuenta
+                if "my-account" in driver.current_url or "mi-cuenta" in driver.current_url:
+                    logger.info("Inicio de sesión en Sufarmed exitoso (verificado por URL)")
+                    self.sesion_iniciada = True
+                    return True
+                
+                logger.warning("No se pudo verificar el inicio de sesión en Sufarmed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error al iniciar sesión en Sufarmed: {e}")
+            return False
     
     def es_pagina_producto(self, driver):
         """
@@ -114,7 +181,7 @@ class ScrapingService:
                 "registro_sanitario": None,
                 "url": driver.current_url,
                 "imagen": None,
-                "precio": None  # No es necesario por ahora
+                "precio": None
             }
             
             logger.info(f"Extrayendo información del producto en URL: {info_producto['url']}")
@@ -167,6 +234,41 @@ class ScrapingService:
                         logger.warning("No se pudo encontrar la imagen del producto con ningún selector")
                 except Exception as e:
                     logger.warning(f"Error al buscar imagen alternativa: {e}")
+            
+            # Extraer el precio si se ha iniciado sesión
+            if self.sesion_iniciada:
+                try:
+                    # Intentar diferentes selectores para el precio
+                    selectores_precio = [
+                        "#our_price_display",
+                        ".product-price",
+                        ".current-price",
+                        ".price",
+                        ".product-price span",
+                        "#product-price",
+                        ".price-tag span",
+                        "span[itemprop='price']",
+                        ".new-price"
+                    ]
+                    
+                    for selector in selectores_precio:
+                        try:
+                            precio_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                            precio_texto = precio_elem.text.strip()
+                            # Limpiar el precio (eliminar símbolos y formateo)
+                            precio_limpio = ''.join(c for c in precio_texto if c.isdigit() or c == '.' or c == ',')
+                            # Convertir comas a puntos
+                            precio_limpio = precio_limpio.replace(',', '.')
+                            info_producto["precio"] = precio_limpio
+                            logger.info(f"Precio extraído ({selector}): {info_producto['precio']}")
+                            break
+                        except NoSuchElementException:
+                            continue
+                    
+                    if not info_producto["precio"]:
+                        logger.warning("No se pudo encontrar el precio del producto con ningún selector")
+                except Exception as e:
+                    logger.warning(f"Error al extraer precio: {e}")
             
             # Cambiar a la pestaña de detalles del producto si existe
             try:
@@ -386,6 +488,9 @@ class ScrapingService:
         resultados = []
         
         try:
+            # Iniciar sesión primero para acceder a precios
+            self.iniciar_sesion_sufarmed(driver)
+            
             # Acceder al sitio web principal
             logger.info(f"Accediendo al sitio web de Sufarmed...")
             driver.get("https://sufarmed.com")
