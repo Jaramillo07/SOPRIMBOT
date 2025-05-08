@@ -84,6 +84,7 @@ Información del producto encontrado:
 - Código de barras: {product_info.get('codigo_barras', 'No disponible')}
 - Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
 - URL del producto: {product_info.get('url', 'No disponible')}
+- Precio: {product_info.get('precio', 'No disponible')}
 """
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
@@ -93,8 +94,9 @@ Información del producto encontrado:
 Mensaje del cliente: {user_message}
 {product_details}
 Basándote en esta información, proporciona una respuesta útil y profesional al cliente sobre el producto solicitado.
-Si no tienes información específica sobre la disponibilidad actual, responde que verificarás si el producto está disponible
-y que el cliente puede consultar llamando a la farmacia o visitando la tienda.
+Incluye siempre el precio en tu respuesta cuando esté disponible.
+Si el precio está disponible, menciónalo claramente al cliente e indícale que puede confirmar la disponibilidad llamando a la farmacia o visitando la tienda.
+Si el precio no está disponible, indícale al cliente que puede consultar el precio y disponibilidad llamando a la farmacia o visitando la tienda.
 """
             logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
             logger.debug(f"Información del producto: {product_info}")
