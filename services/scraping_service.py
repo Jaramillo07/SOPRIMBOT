@@ -65,7 +65,6 @@ class ScrapingService:
         
         logger.info(f"ScrapingService inicializado (headless={headless}, difarmer_available={DIFARMER_AVAILABLE})")
     
-    # MANTENER TODOS LOS MÉTODOS ORIGINALES DE SUFARMED AQUÍ
     def find_one(self, driver, wait, candidates):
         """
         Prueba varios selectores y devuelve el primer elemento encontrado.
@@ -562,8 +561,7 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error general al extraer información del producto: {e}")
             return None
-            
-    # Mantener la implementación original de búsqueda en Sufarmed
+    
     def buscar_producto_sufarmed(self, nombre_producto):
         """
         Implementación original de búsqueda en Sufarmed.
@@ -667,7 +665,7 @@ class ScrapingService:
             # Convertir a lista de URLs
             product_links = [url for url, score in link_scores]
             
-            # Eliminar duplicados preservando el orden
+           # Eliminar duplicados preservando el orden
             product_links = list(dict.fromkeys(product_links))
             logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
             
@@ -725,7 +723,7 @@ class ScrapingService:
         if resultados:
             return resultados[0]
         return None
-
+    
     def buscar_producto_difarmer(self, nombre_producto):
         """
         Busca un producto en Difarmer y extrae su información.
