@@ -165,28 +165,40 @@ class ScrapingService:
             return 9999999.0  # Valor por defecto si no se puede extraer
     
     def _extract_numeric_existencia(self, existencia_str):
-        """
-        Extrae un valor numérico de existencia para comparación.
+    """
+    Extrae un valor numérico de existencia para comparación.
+    
+    Args:
+        existencia_str (str): Existencia en formato de texto (ej. "15", "1,500", "Si", "Disponible")
         
-        Args:
-            existencia_str (str): Existencia en formato de texto (ej. "15", "1,500")
-            
-        Returns:
-            int: Valor numérico de existencia o 0 si no se puede extraer
-        """
-        if not existencia_str:
-            return 0
-        
-        # Convertir a string y limpiar
-        clean_existencia = str(existencia_str).replace(',', '').replace(' ', '')
-        
-        # Extraer el número con regex
-        match = re.search(r'(\d+)', clean_existencia)
-        
-        if match:
-            return int(match.group(1))
-        else:
-            return 0
+    Returns:
+        int: Valor numérico de existencia o 0 si no se puede extraer
+    """
+    if not existencia_str:
+        return 0
+    
+    # Valores especiales que indican disponibilidad sin cantidad específica
+    valores_disponible = ["si", "sí", "disponible", "en stock", "hay"]
+    
+    # Verificar primero si es un valor especial que indica disponibilidad
+    if str(existencia_str).lower() in valores_disponible:
+        return 1  # Asignar valor positivo para indicar disponibilidad
+    
+    # Convertir a string y limpiar
+    clean_existencia = str(existencia_str).replace(',', '').replace(' ', '')
+    
+    # Extraer el número con regex
+    match = re.search(r'(\d+)', clean_existencia)
+    
+    if match:
+        return int(match.group(1))
+    
+    # Si no contiene números pero tiene palabras que indican disponibilidad
+    for palabra in valores_disponible:
+        if palabra in str(existencia_str).lower():
+            return 1  # Asignar valor positivo
+    
+    return 0  # No hay disponibilidad o no se puede determinar
     
     def _format_producto_difarmer(self, producto):
         """
