@@ -1,10 +1,10 @@
 """
-Servicio de scraping unificado para buscar información de productos farmacéuticos.
-Puede utilizar diferentes fuentes: Sufarmed (implementación actual) o Difarmer (nuevo scraper).
+Servicio de scraping para buscar información de productos farmacéuticos.
+Este servicio integra la funcionalidad de scraping ya implementada,
+pero ahora usa webdriver-manager para alinear ChromeDriver automáticamente
+y añade autenticación para obtener precios.
 """
 import logging
-import os
-import sys
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -27,29 +27,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Añadir la ruta del scraper de Difarmer al path
-SCRAPER_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scraper_difarmer')
-sys.path.append(SCRAPER_PATH)
-
-# Importar las funciones del scraper de Difarmer
-try:
-    from scraper_difarmer import buscar_info_medicamento
-    DIFARMER_AVAILABLE = True
-    logger.info("Scraper de Difarmer importado correctamente")
-except ImportError as e:
-    DIFARMER_AVAILABLE = False
-    logger.error(f"Error al importar el scraper de Difarmer: {e}")
-    logger.error(f"SCRAPER_PATH: {SCRAPER_PATH}")
-    logger.error(f"sys.path: {sys.path}")
-    # Si falla la importación, definimos una función dummy
-    def buscar_info_medicamento(nombre_medicamento, headless=True):
-        logger.error(f"Usando función dummy de buscar_info_medicamento para: {nombre_medicamento}")
-        return None
-
 class ScrapingService:
     """
     Clase que proporciona métodos para buscar información de productos farmacéuticos mediante scraping.
-    Puede utilizar diferentes fuentes: Sufarmed o Difarmer.
     """
     
     def __init__(self, headless: bool = HEADLESS_BROWSER, 
@@ -61,9 +41,6 @@ class ScrapingService:
         self.password = password
         self.login_url = login_url
         self.timeout = 15
-        self.difarmer_available = DIFARMER_AVAILABLE
-        
-        logger.info(f"ScrapingService inicializado (headless={headless}, difarmer_available={DIFARMER_AVAILABLE})")
     
     def find_one(self, driver, wait, candidates):
         """
@@ -562,11 +539,15 @@ class ScrapingService:
             logger.error(f"Error general al extraer información del producto: {e}")
             return None
     
-    def buscar_producto_sufarmed(self, nombre_producto):
+    def buscar_producto(self, nombre_producto):
         """
-        Implementación original de búsqueda en Sufarmed.
-        Este método es el mismo que el método buscar_producto original,
-        pero renombrado para diferenciar las fuentes.
+        Busca un producto en Sufarmed y extrae su información.
+        
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
+            
+        Returns:
+            dict: Información del producto o None si no se encuentra
         """
         driver = self.inicializar_navegador()
         if not driver:
@@ -665,7 +646,7 @@ class ScrapingService:
             # Convertir a lista de URLs
             product_links = [url for url, score in link_scores]
             
-           # Eliminar duplicados preservando el orden
+            # Eliminar duplicados preservando el orden
             product_links = list(dict.fromkeys(product_links))
             logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
             
@@ -723,86 +704,3 @@ class ScrapingService:
         if resultados:
             return resultados[0]
         return None
-    
-    def buscar_producto_difarmer(self, nombre_producto):
-        """
-        Busca un producto en Difarmer y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Información del producto o None si no se encuentra
-        """
-        if not self.difarmer_available:
-            logger.warning("Scraper de Difarmer no disponible")
-            return None
-            
-        logger.info(f"Buscando producto en Difarmer: {nombre_producto}")
-        try:
-            # Usar el scraper de Difarmer para buscar el producto
-            info_producto = buscar_info_medicamento(nombre_producto, headless=self.headless)
-            
-            if info_producto:
-                # Mapeo de campos para mantener consistencia con el formato
-                # esperado por el resto del sistema
-                producto_formateado = {
-                    "nombre": info_producto.get("nombre"),
-                    "laboratorio": info_producto.get("laboratorio"),
-                    "codigo_barras": info_producto.get("codigo_barras"),
-                    "registro_sanitario": info_producto.get("registro_sanitario"),
-                    "url": info_producto.get("url"),
-                    "imagen": info_producto.get("imagen"),
-                    "precio": info_producto.get("mi_precio") or info_producto.get("precio_publico")
-                }
-                
-                logger.info(f"Producto encontrado en Difarmer: {producto_formateado['nombre']}")
-                return producto_formateado
-            else:
-                logger.warning(f"No se encontró información para el producto '{nombre_producto}' en Difarmer")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error al buscar producto en Difarmer: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return None
-    
-    def buscar_producto(self, nombre_producto, fuente="sufarmed"):
-        """
-        Busca un producto en la fuente especificada y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            fuente (str): Fuente a utilizar ('sufarmed', 'difarmer', o 'ambos')
-            
-        Returns:
-            dict: Información del producto o None si no se encuentra
-        """
-        logger.info(f"Iniciando búsqueda de producto: {nombre_producto}, fuente: {fuente}")
-        
-        # Inicializar resultado
-        resultado = None
-        
-        # 1. Buscar en Difarmer si está habilitado y es la fuente seleccionada
-        if fuente in ["difarmer", "ambos"] and self.difarmer_available:
-            logger.info(f"Buscando producto en Difarmer: {nombre_producto}")
-            resultado = self.buscar_producto_difarmer(nombre_producto)
-            
-            # Si encontramos en Difarmer y solo queremos esa fuente, o si solo queremos ambos pero ya tenemos resultado
-            if resultado and fuente == "difarmer":
-                logger.info(f"Producto encontrado en Difarmer: {resultado['nombre']}")
-                return resultado
-        
-        # 2. Buscar en Sufarmed si es la fuente seleccionada o no se encontró en Difarmer
-        if fuente in ["sufarmed", "ambos"] and (not resultado or fuente == "ambos"):
-            logger.info(f"Buscando producto en Sufarmed: {nombre_producto}")
-            resultado_sufarmed = self.buscar_producto_sufarmed(nombre_producto)
-            
-            # Si encontramos en Sufarmed
-            if resultado_sufarmed:
-                logger.info(f"Producto encontrado en Sufarmed: {resultado_sufarmed['nombre']}")
-                return resultado_sufarmed
-        
-        # 3. Si llegamos aquí, retornamos el resultado de Difarmer (que podría ser None)
-        return resultado
