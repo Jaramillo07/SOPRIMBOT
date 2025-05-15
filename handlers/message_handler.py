@@ -189,8 +189,7 @@ class MessageHandler:
         if tipo_mensaje == "consulta_producto" and producto_detectado:
             logger.info(f"Iniciando búsqueda de información para: {producto_detectado}")
             try:
-                # MODIFICADO: Ahora especificamos que queremos usar el scraper de Difarmer
-                product_info = self.scraping_service.buscar_producto(producto_detectado, fuente="difarmer")
+                product_info = self.scraping_service.buscar_producto(producto_detectado)
                 
                 if product_info:
                     logger.info(f"Información encontrada para {producto_detectado}: {product_info}")
