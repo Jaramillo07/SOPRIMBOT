@@ -1,6 +1,7 @@
 """
 Manejador de mensajes para SOPRIM BOT.
 Orquesta la interacción entre los diferentes servicios.
+Actualizado para usar el scraper de Difarmer.
 """
 import logging
 import re
@@ -25,7 +26,7 @@ class MessageHandler:
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler")
+        logger.info("Inicializando MessageHandler con Scraper Difarmer")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
@@ -185,9 +186,9 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, hacemos scraping
+        # 3) Si es consulta de producto, hacemos scraping con Difarmer
         if tipo_mensaje == "consulta_producto" and producto_detectado:
-            logger.info(f"Iniciando búsqueda de información para: {producto_detectado}")
+            logger.info(f"Iniciando búsqueda de información para: {producto_detectado} con Difarmer")
             try:
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
                 
@@ -241,7 +242,7 @@ class MessageHandler:
                         "respuesta": respuesta
                     }
             except Exception as e:
-                logger.error(f"Error durante el scraping: {e}")
+                logger.error(f"Error durante el scraping con Difarmer: {e}")
                 # En caso de error, caer en respuesta general
         
         # 4) En cualquier otro caso, respuesta general
