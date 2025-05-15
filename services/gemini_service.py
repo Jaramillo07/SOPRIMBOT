@@ -1,6 +1,7 @@
 """
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
+Actualizado para incluir información sobre la fuente del producto.
 """
 import logging
 import google.generativeai as genai
@@ -63,13 +64,15 @@ class GeminiService:
             logger.error(f"Error en generate_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
     
-    def generate_product_response(self, user_message, product_info):
+    def generate_product_response(self, user_message, product_info, additional_context=""):
         """
         Genera una respuesta basada en el mensaje del usuario y la información del producto.
+        Ahora incluye información sobre la fuente del producto.
         
         Args:
             user_message (str): Mensaje del usuario para procesar
             product_info (dict): Información del producto obtenida mediante scraping
+            additional_context (str): Contexto adicional para el prompt
             
         Returns:
             str: Respuesta generada por Gemini
@@ -77,26 +80,34 @@ class GeminiService:
         try:
             # Formatear la información del producto
             if product_info:
+                # Identificar la fuente del producto
+                fuente = product_info.get('fuente', 'No especificada')
+                precio_campo = "precio" if "precio" in product_info else "precio_publico" if "precio_publico" in product_info else "mi_precio"
+                precio = product_info.get(precio_campo, 'No disponible')
+                
                 product_details = f"""
-Información del producto encontrado:
+Información del producto encontrado en {fuente}:
 - Nombre: {product_info.get('nombre', 'No disponible')}
 - Laboratorio: {product_info.get('laboratorio', 'No disponible')}
 - Código de barras: {product_info.get('codigo_barras', 'No disponible')}
 - Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
 - URL del producto: {product_info.get('url', 'No disponible')}
-- Precio: {product_info.get('precio', 'No disponible')}
+- Precio: {precio}
+- Existencia: {product_info.get('existencia', 'No disponible')}
 """
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
             
-            # Crear el prompt completo
+            # Crear el prompt completo con contexto adicional
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Mensaje del cliente: {user_message}
 {product_details}
+{additional_context}
 Basándote en esta información, proporciona una respuesta útil y profesional al cliente sobre el producto solicitado.
 Incluye siempre el precio en tu respuesta cuando esté disponible.
 Si el precio está disponible, menciónalo claramente al cliente e indícale que puede confirmar la disponibilidad llamando a la farmacia o visitando la tienda.
 Si el precio no está disponible, indícale al cliente que puede consultar el precio y disponibilidad llamando a la farmacia o visitando la tienda.
+Si el producto tiene información de existencia, menciona si está disponible o no.
 """
             logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
             logger.debug(f"Información del producto: {product_info}")
