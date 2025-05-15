@@ -1,16 +1,17 @@
 """
-Módulo de scraping específico para la farmacia Sufarmed.
-Este archivo contiene la lógica de scraping para buscar productos en Sufarmed.
+Servicio de scraping para buscar información de productos farmacéuticos.
+Este servicio integra la funcionalidad de scraping ya implementada,
+pero ahora usa webdriver-manager para alinear ChromeDriver automáticamente
+y añade autenticación para obtener precios.
 """
 import logging
-import time
 import re
+import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
@@ -29,190 +30,20 @@ logger = logging.getLogger(__name__)
 
 class ScrapingService:
     """
-    Clase que proporciona métodos para buscar información de productos farmacéuticos en Sufarmed.
+    Clase que proporciona métodos para buscar información de productos farmacéuticos mediante scraping.
     """
     
-    def __init__(self):
-        """
-        Inicializa el servicio de scraping configurando las rutas y opciones.
-        """
-        logger.info("Inicializando ScrapingService para Sufarmed")
-        
-        # Configuraciones iniciales
-        self.headless = HEADLESS_BROWSER
-        self.username = "laubec83@gmail.com"
-        self.password = "Sr3ChK8pBoSEScZ"
-        self.login_url = "https://sufarmed.com/sufarmed/iniciar-sesion"
+    def __init__(self, headless: bool = HEADLESS_BROWSER, 
+                username: str = "laubec83@gmail.com", 
+                password: str = "Sr3ChK8pBoSEScZ",
+                login_url: str = "https://sufarmed.com/sufarmed/iniciar-sesion"):
+        self.headless = headless
+        self.username = username
+        self.password = password
+        self.login_url = login_url
         self.timeout = 15
     
-    def buscar_producto(self, nombre_producto: str) -> dict:
-        """
-        Busca un producto en Sufarmed y extrae su información.
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Diccionario con la información del producto o None si no se encuentra
-        """
-        # Inicializar navegador
-        driver = self._inicializar_navegador()
-        if not driver:
-            return None
-        
-        resultados = []
-        
-        try:
-            # Realizar login primero para obtener precios
-            logger.info("Iniciando proceso de login antes de buscar productos")
-            login_exitoso = self._login(driver)
-            
-            if login_exitoso:
-                logger.info("Login exitoso, procediendo con la búsqueda de productos")
-            else:
-                logger.warning("Login fallido, continuando sin autenticación (no se obtendrán precios)")
-            
-            # Acceder al sitio web principal
-            logger.info(f"Accediendo al sitio web de Sufarmed...")
-            driver.get("https://sufarmed.com")
-            
-            # Esperar a que cargue la página y buscar el campo de búsqueda
-            wait = WebDriverWait(driver, 10)
-            campo_busqueda = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
-            )
-            
-            # Ingresar el término de búsqueda
-            logger.info(f"Buscando producto: {nombre_producto}")
-            campo_busqueda.clear()
-            campo_busqueda.send_keys(nombre_producto)
-            
-            # Hacer clic en el botón de búsqueda
-            boton_busqueda = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
-            )
-            boton_busqueda.click()
-            
-            # Esperar un tiempo después de hacer clic para asegurar la carga
-            time.sleep(3)
-            
-            # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
-            all_links = driver.find_elements(By.TAG_NAME, "a")
-            
-            # Dividir los términos de búsqueda para hacer una coincidencia más precisa
-            terminos_busqueda = [t.lower() for t in nombre_producto.split()]
-            logger.info(f"Términos de búsqueda: {terminos_busqueda}")
-            
-            # Sistema de puntuación para enlaces
-            link_scores = []
-            
-            for link in all_links:
-                try:
-                    href = link.get_attribute("href") or ""
-                    if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
-                        texto_link = link.text.lower()
-                        url_lower = href.lower()
-                        
-                        # Calcular puntaje de relevancia
-                        score = 0
-                        
-                        # Coincidencia exacta en la URL tiene prioridad máxima
-                        if nombre_producto.lower() in url_lower:
-                            score += 100
-                            
-                        # Coincidencia de todos los términos en URL
-                        if all(term in url_lower for term in terminos_busqueda):
-                            score += 50
-                        else:
-                            # Coincidencia parcial: sumar por cada término encontrado
-                            for term in terminos_busqueda:
-                                if term in url_lower:
-                                    score += 10
-                        
-                        # Coincidencia en el texto visible del enlace
-                        if nombre_producto.lower() in texto_link:
-                            score += 30
-                        elif all(term in texto_link for term in terminos_busqueda):
-                            score += 20
-                        else:
-                            for term in terminos_busqueda:
-                                if term in texto_link:
-                                    score += 5
-                        
-                        # Solo considerar enlaces con puntaje positivo
-                        if score > 0:
-                            link_scores.append((href, score))
-                            logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
-                except Exception as e:
-                    logger.warning(f"Error al procesar enlace: {e}")
-                    continue
-            
-            # Ordenar enlaces por puntaje (mayor a menor)
-            link_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Convertir a lista de URLs
-            product_links = [url for url, score in link_scores]
-            
-            # Eliminar duplicados preservando el orden
-            product_links = list(dict.fromkeys(product_links))
-            logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
-            
-            # Intentar navegar a cada enlace hasta encontrar una página de producto
-            for url in product_links:
-                try:
-                    logger.info(f"Navegando a URL potencial de producto: {url}")
-                    driver.get(url)
-                    time.sleep(3)
-                    
-                    if self._es_pagina_producto(driver):
-                        logger.info("Éxito! Página de producto encontrada.")
-                        info_producto = self._extraer_info_producto(driver)
-                        if info_producto:
-                            resultados.append(info_producto)
-                            
-                            # Si encontramos un producto con nombre que coincide exactamente, 
-                            # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
-                            nombre_producto_lower = nombre_producto.lower()
-                            info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
-
-                            if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
-                                logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
-                                return info_producto
-                            
-                            # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
-                            if len(resultados) >= 3:
-                                break
-                except Exception as e:
-                    logger.warning(f"Error al navegar a {url}: {e}")
-            
-            # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
-            if resultados:
-                logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
-                return resultados[0]
-                
-            # Si llegamos aquí, no encontramos una página de producto válida
-            logger.warning("No se pudieron encontrar enlaces de productos válidos.")
-            return None
-            
-        except TimeoutException:
-            logger.warning("Tiempo de espera agotado durante la navegación.")
-            # Verificar si aún así llegamos a una página de producto
-            if self._es_pagina_producto(driver):
-                logger.info("A pesar del timeout, se detectó página de producto.")
-                return self._extraer_info_producto(driver)
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda: {e}")
-        finally:
-            # Cerrar el navegador
-            if driver:
-                driver.quit()
-        
-        # Si tenemos algún resultado, devolvemos el primero
-        if resultados:
-            return resultados[0]
-        return None
-
-    def _find_one(self, driver, wait, candidates):
+    def find_one(self, driver, wait, candidates):
         """
         Prueba varios selectores y devuelve el primer elemento encontrado.
         candidates: [(By, selector), ...]
@@ -223,8 +54,8 @@ class ScrapingService:
             except TimeoutException:
                 continue
         raise NoSuchElementException(f"No se encontró ninguno de {candidates}")
-
-    def _inicializar_navegador(self):
+    
+    def inicializar_navegador(self):
         """
         Inicializa el navegador Chrome con webdriver-manager para
         bajar e instalar la versión correcta de ChromeDriver.
@@ -248,8 +79,8 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error al inicializar el navegador: {e}")
             return None
-
-    def _login(self, driver):
+    
+    def login(self, driver):
         """
         Realiza el inicio de sesión en Sufarmed
         
@@ -278,15 +109,16 @@ class ScrapingService:
                 time.sleep(1)
             except NoSuchElementException:
                 logger.info("No se encontró banner de cookies")
+                pass
 
             # 3) Inputs de email y contraseña
             logger.info("Buscando campos de login")
-            email = self._find_one(driver, wait, [
+            email = self.find_one(driver, wait, [
                 (By.ID,           "email"),
                 (By.NAME,         "email"),
                 (By.CSS_SELECTOR, "input[type='email']"),
             ])
-            pwd = self._find_one(driver, wait, [
+            pwd = self.find_one(driver, wait, [
                 (By.ID,           "passwd"),
                 (By.NAME,         "password"),
                 (By.CSS_SELECTOR, "input[type='password']"),
@@ -294,13 +126,11 @@ class ScrapingService:
 
             # 4) Ingresar credenciales
             logger.info(f"Ingresando credenciales para usuario: {self.username}")
-            email.clear()
-            email.send_keys(self.username)
-            pwd.clear()
-            pwd.send_keys(self.password)
+            email.clear(); email.send_keys(self.username)
+            pwd.clear();   pwd.send_keys(self.password)
 
             # 5) **Botón EXACTO de "Iniciar sesión" dentro del form**
-            login_button = self._find_one(driver, wait, [
+            login_button = self.find_one(driver, wait, [
                 # Selector puro dentro del form#login-form
                 (By.CSS_SELECTOR, "form#login-form button[type='submit']"),
                 # alternativo, por texto exacto
@@ -340,8 +170,8 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error durante el login: {e}")
             return False
-
-    def _es_pagina_producto(self, driver):
+    
+    def es_pagina_producto(self, driver):
         """
         Verifica si la página actual es una página de producto.
         
@@ -363,6 +193,9 @@ class ScrapingService:
                 
                 # Otras verificaciones posibles
                 bool(driver.find_elements(By.CSS_SELECTOR, ".product_header_container, .product-detail-name, .page-product-box")),
+                "Realdrax" in driver.title,
+                "Realdrax" in driver.page_source,
+                "/Ibuprofeno/" in current_url or "/Ibuprofeno-Hiosina/" in current_url,
                 "product-information" in driver.page_source,
                 "detalles-del-producto" in driver.page_source,
                 "detalles del producto" in driver.page_source.lower()
@@ -377,8 +210,8 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error al verificar si es página de producto: {e}")
             return False
-
-    def _extraer_info_producto(self, driver):
+    
+    def extraer_info_producto(self, driver):
         """
         Extrae la información relevante del producto desde la página actual.
         
@@ -397,9 +230,9 @@ class ScrapingService:
                 "registro_sanitario": None,
                 "url": driver.current_url,
                 "imagen": None,
-                "precio": None,
-                "existencia": "0",
-                "disponible": False  # Por defecto
+                "precio": None,  # Agregado para capturar el precio
+                "existencia": "0",  # Valor por defecto
+                "disponible": False  # Valor por defecto
             }
             
             logger.info(f"Extrayendo información del producto en URL: {info_producto['url']}")
@@ -432,7 +265,11 @@ class ScrapingService:
                     ".price",
                     "[itemprop='price']",
                     ".product-price-and-shipping span.price",
-                    ".product-price .current-price"
+                    ".product-price .current-price",
+                    ".price-container .price",
+                    "#content-wrapper .current-price",
+                    ".price-wrapper .price",
+                    ".price-box .price"
                 ]
                 
                 for selector in precio_selectores:
@@ -525,8 +362,23 @@ class ScrapingService:
                     logger.info("No se encontró pestaña de detalles o no se pudo hacer clic en ella")
             except Exception as e:
                 logger.warning(f"Error al intentar cambiar a la pestaña de detalles: {e}")
+
+            # AÑADIDO: Verificar disponibilidad
+            try:
+                disponibilidad_elementos = driver.find_elements(By.CSS_SELECTOR, 
+                    ".disponible, .stock-disponible, #availability_value, .product-availability")
+                
+                for elem in disponibilidad_elementos:
+                    texto = elem.text.strip().lower()
+                    if "disponible" in texto and not "no disponible" in texto:
+                        info_producto["disponible"] = True
+                        info_producto["existencia"] = "1"  # Al menos hay una unidad
+                        logger.info(f"Producto disponible: {texto}")
+                        break
+            except Exception as e:
+                logger.warning(f"Error al verificar disponibilidad: {e}")
             
-            # Extraer información basada en estructura dt/dd
+            # Método 1: Extraer información basada en estructura dt/dd como se ve en la imagen
             try:
                 logger.info("Buscando información en estructura dt/dd...")
                 
@@ -569,6 +421,21 @@ class ScrapingService:
                             elif "registro" in term_text and "sanitario" in term_text:
                                 info_producto["registro_sanitario"] = value_text
                                 logger.info(f"Registro sanitario extraído: {value_text}")
+                            # Verificar disponibilidad/existencias en dd
+                            elif "disponib" in term_text or "stock" in term_text or "existencia" in term_text:
+                                if any(char.isdigit() for char in value_text):
+                                    # Intenta encontrar dígitos en el valor
+                                    digits = ''.join(filter(str.isdigit, value_text))
+                                    if digits:
+                                        info_producto["existencia"] = digits
+                                        info_producto["disponible"] = int(digits) > 0
+                                        logger.info(f"Existencias extraídas: {digits}")
+                                # Verificación adicional por texto
+                                if not info_producto["disponible"] and "disponible" in value_text.lower() and "no disponible" not in value_text.lower():
+                                    info_producto["disponible"] = True
+                                    if info_producto["existencia"] == "0":
+                                        info_producto["existencia"] = "1"
+                                    logger.info("Producto disponible según texto")
                     except Exception as e:
                         logger.warning(f"Error al procesar término dt: {e}")
             except Exception as e:
@@ -599,62 +466,354 @@ class ScrapingService:
                                 elif "registro" in clave and "sanitario" in clave and not info_producto["registro_sanitario"]:
                                     info_producto["registro_sanitario"] = valor
                                     logger.info(f"Registro sanitario extraído de tabla: {valor}")
+                                # Verificar disponibilidad/existencias en tabla
+                                elif ("disponib" in clave or "stock" in clave or "existencia" in clave) and not info_producto["disponible"]:
+                                    if any(char.isdigit() for char in valor):
+                                        # Intenta encontrar dígitos en el valor
+                                        digits = ''.join(filter(str.isdigit, valor))
+                                        if digits:
+                                            info_producto["existencia"] = digits
+                                            info_producto["disponible"] = int(digits) > 0
+                                            logger.info(f"Existencias extraídas de tabla: {digits}")
+                                    # Verificación adicional por texto
+                                    if not info_producto["disponible"] and "disponible" in valor.lower() and "no disponible" not in valor.lower():
+                                        info_producto["disponible"] = True
+                                        if info_producto["existencia"] == "0":
+                                            info_producto["existencia"] = "1"
+                                        logger.info("Producto disponible según texto de tabla")
                         except Exception as e:
                             logger.warning(f"Error al procesar fila de tabla: {e}")
                 except Exception as e:
                     logger.warning(f"Error al buscar en tablas: {e}")
             
-            # Verificar disponibilidad
-            disponibilidad_elementos = driver.find_elements(By.CSS_SELECTOR, 
-                ".disponible, .stock-disponible, #availability_value, .product-availability")
+            # Método 3: Buscar específicamente por XPath con el texto exacto visto en la imagen
+            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"]):
+                try:
+                    logger.info("Buscando con XPath específicos...")
+                    # Xpath para laboratorio
+                    if not info_producto["laboratorio"]:
+                        try:
+                            lab_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Laboratorio')]/following-sibling::dd[1] | //td[contains(text(), 'Laboratorio')]/following-sibling::td[1]")
+                            if lab_elements:
+                                info_producto["laboratorio"] = lab_elements[0].text.strip()
+                                logger.info(f"Laboratorio extraído por XPath: {info_producto['laboratorio']}")
+                        except:
+                            pass
+                    
+                    # Xpath para código de barras
+                    if not info_producto["codigo_barras"]:
+                        try:
+                            barcode_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Código de barras')]/following-sibling::dd[1] | //td[contains(text(), 'Código de barras')]/following-sibling::td[1]")
+                            if barcode_elements:
+                                info_producto["codigo_barras"] = barcode_elements[0].text.strip()
+                                logger.info(f"Código de barras extraído por XPath: {info_producto['codigo_barras']}")
+                        except:
+                            pass
+                    
+                    # Xpath para registro sanitario
+                    if not info_producto["registro_sanitario"]:
+                        try:
+                            reg_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Registro sanitario')]/following-sibling::dd[1] | //td[contains(text(), 'Registro sanitario')]/following-sibling::td[1]")
+                            if reg_elements:
+                                info_producto["registro_sanitario"] = reg_elements[0].text.strip()
+                                logger.info(f"Registro sanitario extraído por XPath: {info_producto['registro_sanitario']}")
+                        except:
+                            pass
+                        
+                    # Xpath para disponibilidad/existencias
+                    if not info_producto["disponible"]:
+                        try:
+                            disp_elements = driver.find_elements(By.XPATH, "//dt[contains(text(), 'Disponibilidad')]/following-sibling::dd[1] | //td[contains(text(), 'Disponibilidad')]/following-sibling::td[1] | //dt[contains(text(), 'Stock')]/following-sibling::dd[1] | //td[contains(text(), 'Stock')]/following-sibling::td[1] | //dt[contains(text(), 'Existencia')]/following-sibling::dd[1] | //td[contains(text(), 'Existencia')]/following-sibling::td[1]")
+                            for elem in disp_elements:
+                                texto = elem.text.strip().lower()
+                                if "disponible" in texto and "no disponible" not in texto:
+                                    info_producto["disponible"] = True
+                                    if info_producto["existencia"] == "0":
+                                        info_producto["existencia"] = "1"
+                                    logger.info(f"Disponibilidad extraída por XPath: {texto}")
+                                    # Buscar números en el texto
+                                    digits = ''.join(filter(str.isdigit, texto))
+                                    if digits:
+                                        info_producto["existencia"] = digits
+                                        logger.info(f"Existencias extraídas por XPath: {digits}")
+                                    break
+                        except:
+                            pass
+                except Exception as e:
+                    logger.warning(f"Error en búsqueda XPath: {e}")
             
-            for elem in disponibilidad_elementos:
-                texto = elem.text.strip().lower()
-                if "disponible" in texto and not "no disponible" in texto:
-                    info_producto["disponible"] = True
-                    info_producto["existencia"] = "1"  # Al menos hay una unidad
-                    logger.info(f"Producto disponible: {texto}")
-                    break
-            
-            # Verificar si se extrajo información válida
-            if info_producto["nombre"]:
-                logger.info("Información del producto extraída con éxito")
-                # Imprimir toda la información extraída para depuración
-                for campo, valor in info_producto.items():
-                    logger.info(f"{campo}: {valor}")
-                return info_producto
-            else:
-                logger.warning("No se pudo extraer información válida del producto")
-                return None
-        
-        except Exception as e:
-            logger.error(f"Error general al extraer información del producto: {e}")
-            return None
+            # Método 4: Buscar por texto en todo el HTML como último recurso
+            if not (info_producto["laboratorio"] and info_producto["codigo_barras"] and info_producto["registro_sanitario"] or not info_producto["disponible"]):
+                logger.info("Buscando información en el texto completo de la página...")
+                
+                # Obtener el texto completo de la página
+                page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+                
+                # Buscar por patrones específicos
+                if not info_producto["laboratorio"]:
+                    patrones_lab = ["laboratorio: ", "laboratorio ", "fabricante: ", "fabricante "]
+                    for patron in patrones_lab:
+                        if patron in page_text:
+                            inicio = page_text.find(patron) + len(patron)
+                            fin = page_text.find("\n", inicio)
+                            if fin == -1:
+                                fin = inicio + 50  # Si no hay salto de línea, tomar 50 caracteres
+                            valor = page_text[inicio:fin].strip()
+                            if valor:
+                                info_producto["laboratorio"] = valor
+                                logger.info(f"Laboratorio extraído de texto: {valor}")
+                                break
+                                
+                if not info_producto["codigo_barras"]:
+                    patrones_codigo = ["código de barras: ", "codigo de barras: ", "ean: ", "código: "]
+                    for patron in patrones_codigo:
+                        if patron in page_text:
+                            inicio = page_text.find(patron) + len(patron)
+                            fin = page_text.find("\n", inicio)
+                            if fin == -1:
+                                fin = inicio + 50
+                            valor = page_text[inicio:fin].strip()
+                            if valor and any(c.isdigit() for c in valor):  # Verificar que al menos contenga números
+                                info_producto["codigo_barras"] = valor
+                                logger.info(f"Código de barras extraído de texto: {valor}")
+                                break
+                                
+                if not info_producto["registro_sanitario"]:
+                    patrones_registro = ["registro sanitario: ", "registro: ", "reg. sanitario: ", "no. registro: "]
+                    for patron in patrones_registro:
+                        if patron in page_text:
+                            inicio = page_text.find(patron) + len(patron)
+                            fin = page_text.find("\n", inicio)
+                            if fin == -1:
+                                fin = inicio + 50
+                            valor = page_text[inicio:fin].strip()
+                            if valor:
+                                info_producto["registro_sanitario"] = valor
+                                logger.info(f"Registro sanitario extraído de texto: {valor}")
+                                break
+                
+                # Verificar disponibilidad/existencias en el texto
+                if not info_producto["disponible"]:
+                    patrones_disp = ["disponible: ", "disponibilidad: ", "en stock: ", "stock: ", "existencia: "]
+                    for patron in patrones_disp:
+                        if patron in page_text:
+                            inicio = page_text.find(patron) + len(patron)
+                            fin = page_text.find("\n", inicio)
+                            if fin == -1:
+                                fin = inicio + 50
+                            valor = page_text[inicio:fin].strip()
+                            if valor and "no disponible" not in valor:
+                                info_producto["disponible"] = True
+                                if info_producto["existencia"] == "0":
+                                    info_producto["existencia"] = "1"
+                                logger.info(f"Disponibilidad extraída de texto: {valor}")
+                                # Buscar números en el texto
+                                digits = ''.join(filter(str.isdigit, valor))
+                                if digits:
+                                    info_producto["existencia"] = digits
+                                    logger.info(f"Existencias extraídas de texto: {digits}")
+                                break
+                    
+                    # Verificación adicional por frases comunes
+                   if not info_producto["disponible"] and ("en stock" in page_text or "hay disponibilidad" in page_text or "producto disponible" in page_text):
+                       info_producto["disponible"] = True
+                       if info_producto["existencia"] == "0":
+                           info_producto["existencia"] = "1"
+                       logger.info("Producto disponible según texto general")
+                       
+                   # Buscar patrones específicos de existencias con regex
+                   existencias_patterns = [
+                       r"(\d+)\s*(?:unidades|piezas|artículos) disponibles",
+                       r"(?:stock|existencia):\s*(\d+)",
+                       r"(?:disponibilidad|disponible):\s*(\d+)"
+                   ]
+                   
+                   for pattern in existencias_patterns:
+                       match = re.search(pattern, page_text)
+                       if match:
+                           info_producto["existencia"] = match.group(1)
+                           info_producto["disponible"] = True
+                           logger.info(f"Existencias encontradas con regex: {info_producto['existencia']}")
+                           break
+           
+           # Verificar si se extrajo información válida
+           if info_producto["nombre"]:
+               logger.info("Información del producto extraída con éxito")
+               # Imprimir toda la información extraída para depuración
+               for campo, valor in info_producto.items():
+                   logger.info(f"{campo}: {valor}")
+               return info_producto
+           else:
+               logger.warning("No se pudo extraer información válida del producto")
+               return None
+       
+       except Exception as e:
+           logger.error(f"Error general al extraer información del producto: {e}")
+           return None
+   
+   def buscar_producto(self, nombre_producto):
+       """
+       Busca un producto en Sufarmed y extrae su información.
+       Ahora con autenticación para obtener también precios.
+       
+       Args:
+           nombre_producto (str): Nombre del producto a buscar
+           
+       Returns:
+           dict: Información del producto o None si no se encuentra
+       """
+       driver = self.inicializar_navegador()
+       if not driver:
+           return None
+       
+       resultados = []
+       
+       try:
+           # NUEVO: Realizar login primero para obtener precios
+           logger.info("Iniciando proceso de login antes de buscar productos")
+           login_exitoso = self.login(driver)
+           
+           if login_exitoso:
+               logger.info("Login exitoso, procediendo con la búsqueda de productos")
+           else:
+               logger.warning("Login fallido, continuando sin autenticación (no se obtendrán precios)")
+           
+           # Acceder al sitio web principal
+           logger.info(f"Accediendo al sitio web de Sufarmed...")
+           driver.get("https://sufarmed.com")
+           
+           # Esperar a que cargue la página y buscar el campo de búsqueda
+           wait = WebDriverWait(driver, 10)
+           campo_busqueda = wait.until(
+               EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
+           )
+           
+           # Ingresar el término de búsqueda
+           logger.info(f"Buscando producto: {nombre_producto}")
+           campo_busqueda.clear()
+           campo_busqueda.send_keys(nombre_producto)
+           
+           # Hacer clic en el botón de búsqueda
+           boton_busqueda = wait.until(
+               EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
+           )
+           boton_busqueda.click()
+           
+           # Esperar un tiempo después de hacer clic para asegurar la carga
+           time.sleep(2)
+           
+           # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
+           time.sleep(2) # Esperar a que cargue la página de resultados
+           all_links = driver.find_elements(By.TAG_NAME, "a")
+           
+           # Dividir los términos de búsqueda para hacer una coincidencia más precisa
+           terminos_busqueda = [t.lower() for t in nombre_producto.split()]
+           logger.info(f"Términos de búsqueda: {terminos_busqueda}")
+           
+           # Sistema de puntuación para enlaces
+           link_scores = []
+           
+           for link in all_links:
+               try:
+                   href = link.get_attribute("href") or ""
+                   if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
+                       texto_link = link.text.lower()
+                       url_lower = href.lower()
+                       
+                       # Calcular puntaje de relevancia
+                       score = 0
+                       
+                       # Coincidencia exacta en la URL tiene prioridad máxima
+                       if nombre_producto.lower() in url_lower:
+                           score += 100
+                           
+                       # Coincidencia de todos los términos en URL
+                       if all(term in url_lower for term in terminos_busqueda):
+                           score += 50
+                       else:
+                           # Coincidencia parcial: sumar por cada término encontrado
+                           for term in terminos_busqueda:
+                               if term in url_lower:
+                                   score += 10
+                       
+                       # Coincidencia en el texto visible del enlace
+                       if nombre_producto.lower() in texto_link:
+                           score += 30
+                       elif all(term in texto_link for term in terminos_busqueda):
+                           score += 20
+                       else:
+                           for term in terminos_busqueda:
+                               if term in texto_link:
+                                   score += 5
+                       
+                       # Solo considerar enlaces con puntaje positivo
+                       if score > 0:
+                           link_scores.append((href, score))
+                           logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
+               except:
+                   continue
+           
+           # Ordenar enlaces por puntaje (mayor a menor)
+           link_scores.sort(key=lambda x: x[1], reverse=True)
+           
+           # Convertir a lista de URLs
+           product_links = [url for url, score in link_scores]
+           
+           # Eliminar duplicados preservando el orden
+           product_links = list(dict.fromkeys(product_links))
+           logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
+           
+           # Intentar navegar a cada enlace hasta encontrar una página de producto
+           for url in product_links:
+               try:
+                   logger.info(f"Navegando a URL potencial de producto: {url}")
+                   driver.get(url)
+                   time.sleep(3)
+                   
+                   if self.es_pagina_producto(driver):
+                       logger.info("Éxito! Página de producto encontrada.")
+                       info_producto = self.extraer_info_producto(driver)
+                       if info_producto:
+                           resultados.append(info_producto)
+                           
+                           # Si encontramos un producto con nombre que coincide exactamente, 
+                           # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
+                           nombre_producto_lower = nombre_producto.lower()
+                           info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
 
-# Para pruebas directas del módulo
-if __name__ == "__main__":
-    import sys
-    
-    # Si se proporciona un argumento, usarlo como nombre del producto
-    if len(sys.argv) > 1:
-        nombre_producto = " ".join(sys.argv[1:])
-    else:
-        # Solicitar nombre del producto al usuario
-        nombre_producto = input("Ingrese el nombre del producto a buscar: ")
-    
-    # Crear instancia del servicio y buscar información del producto
-    servicio = ScrapingService()
-    info = servicio.buscar_producto(nombre_producto)
-    
-    if info:
-        print("\n=== INFORMACIÓN DEL PRODUCTO ===")
-        print(f"Nombre: {info['nombre']}")
-        print(f"Precio: {info['precio']}")
-        print(f"Disponible: {'Sí' if info['disponible'] else 'No'}")
-        print(f"Laboratorio: {info['laboratorio']}")
-        print(f"Código de barras: {info['codigo_barras']}")
-        print(f"Registro sanitario: {info['registro_sanitario']}")
-        print(f"URL: {info['url']}")
-        print(f"Imagen: {info['imagen']}")
-    else:
-        print(f"No se pudo encontrar información para el producto: {nombre_producto}")
+                           if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
+                               logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
+                               return info_producto
+                           
+                           # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
+                           if len(resultados) >= 3:
+                               break
+               except Exception as e:
+                   logger.warning(f"Error al navegar a {url}: {e}")
+           
+           # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
+           if resultados:
+               logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
+               return resultados[0]
+               
+           # Si llegamos aquí, no encontramos una página de producto válida
+           logger.warning("No se pudieron encontrar enlaces de productos válidos.")
+           return None
+           
+       except TimeoutException:
+           logger.warning("Tiempo de espera agotado durante la navegación.")
+           # Verificar si aún así llegamos a una página de producto
+           if self.es_pagina_producto(driver):
+               logger.info("A pesar del timeout, se detectó página de producto.")
+               return self.extraer_info_producto(driver)
+       except Exception as e:
+           logger.error(f"Error durante la búsqueda: {e}")
+       finally:
+           # Cerrar el navegador
+           if driver:
+               driver.quit()
+       
+       # Si tenemos algún resultado, devolvemos el primero
+       if resultados:
+           return resultados[0]
+       return None
