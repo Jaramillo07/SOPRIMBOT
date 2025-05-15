@@ -1,3 +1,4 @@
+"""
 Módulo de scraping específico para la farmacia Sufarmed.
 Este archivo contiene la lógica de scraping para buscar productos en Sufarmed,
 optimizado para extraer correctamente precios y disponibilidad.
@@ -368,6 +369,173 @@ class ScrapingService:
         except Exception as e:
             logger.error(f"Error general al extraer información del producto: {e}")
             return None
+    
+    def buscar_producto(self, nombre_producto):
+        """
+        Busca un producto en Sufarmed y extrae su información.
+        Ahora con autenticación para obtener también precios.
+        
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
+            
+        Returns:
+            dict: Información del producto o None si no se encuentra
+        """
+        driver = self.inicializar_navegador()
+        if not driver:
+            return None
+        
+        resultados = []
+        
+        try:
+            # NUEVO: Realizar login primero para obtener precios
+            logger.info("Iniciando proceso de login antes de buscar productos")
+            login_exitoso = self.login(driver)
+            
+            if login_exitoso:
+                logger.info("Login exitoso, procediendo con la búsqueda de productos")
+            else:
+                logger.warning("Login fallido, continuando sin autenticación (no se obtendrán precios)")
+            
+            # Acceder al sitio web principal
+            logger.info(f"Accediendo al sitio web de Sufarmed...")
+            driver.get("https://sufarmed.com")
+            
+            # Esperar a que cargue la página y buscar el campo de búsqueda
+            wait = WebDriverWait(driver, 10)
+            campo_busqueda = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='s']"))
+            )
+            
+            # Ingresar el término de búsqueda
+            logger.info(f"Buscando producto: {nombre_producto}")
+            campo_busqueda.clear()
+            campo_busqueda.send_keys(nombre_producto)
+            
+            # Hacer clic en el botón de búsqueda
+            boton_busqueda = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.search-btn"))
+            )
+            boton_busqueda.click()
+            
+            # Esperar un tiempo después de hacer clic para asegurar la carga
+            time.sleep(2)
+            
+            # Extraer y almacenar todos los enlaces que contienen el nombre del producto en su href
+            time.sleep(2) # Esperar a que cargue la página de resultados
+            all_links = driver.find_elements(By.TAG_NAME, "a")
+            
+            # Dividir los términos de búsqueda para hacer una coincidencia más precisa
+            terminos_busqueda = [t.lower() for t in nombre_producto.split()]
+            logger.info(f"Términos de búsqueda: {terminos_busqueda}")
+            
+            # Sistema de puntuación para enlaces
+            link_scores = []
+            
+            for link in all_links:
+                try:
+                    href = link.get_attribute("href") or ""
+                    if href and not "/module/" in href.lower() and not "javascript:" in href.lower():
+                        texto_link = link.text.lower()
+                        url_lower = href.lower()
+                        
+                        # Calcular puntaje de relevancia
+                        score = 0
+                        
+                        # Coincidencia exacta en la URL tiene prioridad máxima
+                        if nombre_producto.lower() in url_lower:
+                            score += 100
+                            
+                        # Coincidencia de todos los términos en URL
+                        if all(term in url_lower for term in terminos_busqueda):
+                            score += 50
+                        else:
+                            # Coincidencia parcial: sumar por cada término encontrado
+                            for term in terminos_busqueda:
+                                if term in url_lower:
+                                    score += 10
+                        
+                        # Coincidencia en el texto visible del enlace
+                        if nombre_producto.lower() in texto_link:
+                            score += 30
+                        elif all(term in texto_link for term in terminos_busqueda):
+                            score += 20
+                        else:
+                            for term in terminos_busqueda:
+                                if term in texto_link:
+                                    score += 5
+                        
+                        # Solo considerar enlaces con puntaje positivo
+                        if score > 0:
+                            link_scores.append((href, score))
+                            logger.info(f"Enlace encontrado: {href}, Texto: {texto_link}, Puntaje: {score}")
+                except:
+                    continue
+            
+            # Ordenar enlaces por puntaje (mayor a menor)
+            link_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # Convertir a lista de URLs
+            product_links = [url for url, score in link_scores]
+            
+            # Eliminar duplicados preservando el orden
+            product_links = list(dict.fromkeys(product_links))
+            logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
+            
+            # Intentar navegar a cada enlace hasta encontrar una página de producto
+            for url in product_links:
+                try:
+                    logger.info(f"Navegando a URL potencial de producto: {url}")
+                    driver.get(url)
+                    time.sleep(3)
+                    
+                    if self.es_pagina_producto(driver):
+                        logger.info("Éxito! Página de producto encontrada.")
+                        info_producto = self.extraer_info_producto(driver)
+                        if info_producto:
+                            resultados.append(info_producto)
+                            
+                            # Si encontramos un producto con nombre que coincide exactamente, 
+                            # o contiene todos los términos de búsqueda, podemos devolverlo inmediatamente
+                            nombre_producto_lower = nombre_producto.lower()
+                            info_nombre_lower = info_producto["nombre"].lower() if info_producto["nombre"] else ""
+
+                            if nombre_producto_lower == info_nombre_lower or all(term in info_nombre_lower for term in terminos_busqueda):
+                                logger.info(f"Encontrado producto con coincidencia exacta: {info_producto['nombre']}")
+                                return info_producto
+                            
+                            # Limitar a 3 resultados para no hacer la búsqueda demasiado lenta
+                            if len(resultados) >= 3:
+                                break
+                except Exception as e:
+                    logger.warning(f"Error al navegar a {url}: {e}")
+            
+            # Si llegamos aquí y tenemos resultados, devolvemos el primero (mejor puntuado)
+            if resultados:
+                logger.info(f"Retornando el mejor producto de {len(resultados)} encontrados")
+                return resultados[0]
+                
+            # Si llegamos aquí, no encontramos una página de producto válida
+            logger.warning("No se pudieron encontrar enlaces de productos válidos.")
+            return None
+            
+        except TimeoutException:
+            logger.warning("Tiempo de espera agotado durante la navegación.")
+            # Verificar si aún así llegamos a una página de producto
+            if self.es_pagina_producto(driver):
+                logger.info("A pesar del timeout, se detectó página de producto.")
+                return self.extraer_info_producto(driver)
+        except Exception as e:
+            logger.error(f"Error durante la búsqueda: {e}")
+        finally:
+            # Cerrar el navegador
+            if driver:
+                driver.quit()
+        
+        # Si tenemos algún resultado, devolvemos el primero
+        if resultados:
+            return resultados[0]
+        return None
     
     def buscar_producto(self, nombre_producto):
         """
