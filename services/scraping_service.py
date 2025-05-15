@@ -165,40 +165,40 @@ class ScrapingService:
             return 9999999.0  # Valor por defecto si no se puede extraer
     
     def _extract_numeric_existencia(self, existencia_str):
-    """
-    Extrae un valor numérico de existencia para comparación.
-    
-    Args:
-        existencia_str (str): Existencia en formato de texto (ej. "15", "1,500", "Si", "Disponible")
+        """
+        Extrae un valor numérico de existencia para comparación.
         
-    Returns:
-        int: Valor numérico de existencia o 0 si no se puede extraer
-    """
-    if not existencia_str:
-        return 0
-    
-    # Valores especiales que indican disponibilidad sin cantidad específica
-    valores_disponible = ["si", "sí", "disponible", "en stock", "hay"]
-    
-    # Verificar primero si es un valor especial que indica disponibilidad
-    if str(existencia_str).lower() in valores_disponible:
-        return 1  # Asignar valor positivo para indicar disponibilidad
-    
-    # Convertir a string y limpiar
-    clean_existencia = str(existencia_str).replace(',', '').replace(' ', '')
-    
-    # Extraer el número con regex
-    match = re.search(r'(\d+)', clean_existencia)
-    
-    if match:
-        return int(match.group(1))
-    
-    # Si no contiene números pero tiene palabras que indican disponibilidad
-    for palabra in valores_disponible:
-        if palabra in str(existencia_str).lower():
-            return 1  # Asignar valor positivo
-    
-    return 0  # No hay disponibilidad o no se puede determinar
+        Args:
+            existencia_str (str): Existencia en formato de texto (ej. "15", "1,500", "Si", "Disponible")
+            
+        Returns:
+            int: Valor numérico de existencia o 0 si no se puede extraer
+        """
+        if not existencia_str:
+            return 0
+        
+        # Valores especiales que indican disponibilidad sin cantidad específica
+        valores_disponible = ["si", "sí", "disponible", "en stock", "hay"]
+        
+        # Verificar primero si es un valor especial que indica disponibilidad
+        if str(existencia_str).lower() in valores_disponible:
+            return 1  # Asignar valor positivo para indicar disponibilidad
+        
+        # Convertir a string y limpiar
+        clean_existencia = str(existencia_str).replace(',', '').replace(' ', '')
+        
+        # Extraer el número con regex
+        match = re.search(r'(\d+)', clean_existencia)
+        
+        if match:
+            return int(match.group(1))
+        
+        # Si no contiene números pero tiene palabras que indican disponibilidad
+        for palabra in valores_disponible:
+            if palabra in str(existencia_str).lower():
+                return 1  # Asignar valor positivo
+        
+        return 0  # No hay disponibilidad o no se puede determinar
     
     def _format_producto_difarmer(self, producto):
         """
@@ -245,6 +245,16 @@ class ScrapingService:
         
         # El precio en Sufarmed generalmente está en 'precio'
         precio = producto.get('precio', "0")
+        existencia = producto.get('existencia', '0')
+        
+        # Manejo especial para valores de existencia
+        existencia_numerica = 0
+        
+        # Si stock indica que está disponible pero no tenemos un valor numérico claro
+        if producto.get('disponible', False) or producto.get('stock', '').lower() in ['disponible', 'en stock']:
+            existencia_numerica = 1
+        else:
+            existencia_numerica = self._extract_numeric_existencia(existencia)
         
         return {
             "nombre": producto.get('nombre', ''),
@@ -254,9 +264,9 @@ class ScrapingService:
             "url": producto.get('url', ''),
             "imagen": producto.get('imagen', ''),
             "precio": precio,
-            "existencia": producto.get('existencia', '0'),
+            "existencia": existencia,
             "precio_numerico": self._extract_numeric_price(precio),
-            "existencia_numerica": self._extract_numeric_existencia(producto.get('existencia', '0')),
+            "existencia_numerica": existencia_numerica,
             "fuente": "Sufarmed"
         }
     
@@ -286,7 +296,7 @@ class ScrapingService:
                 logger.info("Utilizando navegador con interfaz gráfica (modo desarrollo)")
             
             # Llamar a la función de búsqueda del scraper de Difarmer
-            info_producto = self.buscar_difarmer(nombre_producto)
+            info_producto = self.buscar_difarmer(nombre_producto, headless=headless)
             
             # Formatear el producto al estándar común
             if info_producto:
@@ -323,7 +333,7 @@ class ScrapingService:
             # Formatear el producto al estándar común
             if info_producto:
                 resultado = self._format_producto_sufarmed(info_producto)
-                logger.info(f"Producto encontrado en Sufarmed: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
+                logger.info(f"Producto encontrado en Sufarmed: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']} (Valor numérico: {resultado['existencia_numerica']})")
                 return resultado
             else:
                 logger.warning(f"No se encontró información en Sufarmed para: {nombre_producto}")
