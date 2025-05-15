@@ -7,7 +7,7 @@ import logging
 import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
-from services.integrated_scraping_service import IntegratedScrapingService
+from services.scraping_service import ScrapingService  # Mantenemos el nombre original
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -29,7 +29,7 @@ class MessageHandler:
         logger.info("Inicializando MessageHandler con Scraping Service Integrado")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
-        self.scraping_service = IntegratedScrapingService()
+        self.scraping_service = ScrapingService()  # Mantenemos el nombre original
         logger.info("MessageHandler inicializado correctamente")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
@@ -186,18 +186,17 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, hacemos scraping con el servicio integrado
+        # 3) Si es consulta de producto, hacemos scraping con el scraper
         if tipo_mensaje == "consulta_producto" and producto_detectado:
-            logger.info(f"Iniciando búsqueda integrada para: {producto_detectado}")
+            logger.info(f"Iniciando búsqueda para: {producto_detectado}")
             try:
-                # El servicio integrado buscará en ambas fuentes y seleccionará el mejor resultado
+                # Llamar al servicio de scraping
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
                 
                 if product_info:
-                    logger.info(f"Información encontrada para {producto_detectado} en {product_info.get('fuente', 'desconocido')}")
-                    # Generar respuesta con Gemini incluyendo la fuente del producto
-                    prompt_adicional = f"Este producto fue encontrado en {product_info.get('fuente', 'nuestra base de datos')}. "
-                    respuesta = self.gemini_service.generate_product_response(mensaje, product_info, prompt_adicional)
+                    logger.info(f"Información encontrada para {producto_detectado}")
+                    # Generar respuesta con Gemini
+                    respuesta = self.gemini_service.generate_product_response(mensaje, product_info)
                     
                     # Intentar enviar respuesta
                     result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
@@ -217,7 +216,6 @@ class MessageHandler:
                         "success": True,
                         "message_type": "producto",
                         "producto": producto_detectado,
-                        "fuente": product_info.get("fuente"),
                         "tiene_imagen": bool(product_info.get("imagen")),
                         "respuesta": respuesta
                     }
@@ -246,7 +244,7 @@ class MessageHandler:
                         "respuesta": respuesta
                     }
             except Exception as e:
-                logger.error(f"Error durante el scraping integrado: {e}")
+                logger.error(f"Error durante el scraping: {e}")
                 # En caso de error, caer en respuesta general
         
         # 4) En cualquier otro caso, respuesta general
