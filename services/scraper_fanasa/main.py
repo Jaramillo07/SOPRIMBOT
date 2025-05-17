@@ -696,13 +696,6 @@ def extraer_info_producto(driver):
             for element in precio_neto_elements:
                 if element.is_displayed():
                     texto_precio = element.text.strip()
-                    precio_match = re.search(r'\$\s*([\d,]+\.?\d*)', texto
-                    precio_neto_elements = driver.find_elements(By.XPATH, 
-                "//*[contains(text(), 'Precio Neto')]/following::*[contains(text(), '$')]")
-            
-            for element in precio_neto_elements:
-                if element.is_displayed():
-                    texto_precio = element.text.strip()
                     precio_match = re.search(r'\$\s*([\d,]+\.?\d*)', texto_precio)
                     if precio_match:
                         info_producto['precio_neto'] = f"${precio_match.group(1)}"
