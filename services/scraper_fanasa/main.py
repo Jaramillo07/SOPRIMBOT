@@ -309,105 +309,358 @@ def buscar_producto(driver, nombre_producto):
         logger.info(f"Buscando producto: {nombre_producto}")
         
         # Esperar un momento para que la página se cargue completamente
-        time.sleep(5)
+        time.sleep(10)  # Aumentamos el tiempo de espera inicial
         
-        # Buscar específicamente por la clase identificada
-        search_field = None
-        try:
-            search_field = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "input.search_input"))
-            )
-            logger.info("Campo de búsqueda encontrado por clase 'search_input'")
-        except:
-            logger.warning("No se pudo encontrar el campo con clase 'search_input'")
+        # Guardar HTML de la página principal para análisis
+        with open("pagina_principal.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info("HTML de la página principal guardado para análisis")
         
-        # Si no funciona, intentar con otros selectores
-        if not search_field:
-            specific_selectors = [
-                "input[placeholder='Nombre, laboratorio, sal, código de barras o Categoria']",
-                "input.ng-untouched.ng-pristine.ng-valid[type='text']",
-                ".search_input",
-                "input.input-src"
-            ]
-            
-            for selector in specific_selectors:
-                try:
-                    search_field = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    if search_field and search_field.is_displayed():
-                        logger.info(f"Campo de búsqueda encontrado con selector: {selector}")
-                        break
-                except:
-                    logger.warning(f"No se encontró el campo con selector: {selector}")
+        # Capturar la página principal
+        driver.save_screenshot("pagina_principal.png")
         
-        # Si encontramos el campo, intentar interactuar con él
-        if search_field and search_field.is_displayed():
-            logger.info("Campo de búsqueda encontrado y visible")
-            
-            # Enfocarse en el campo antes de interactuar
-            driver.execute_script("arguments[0].focus();", search_field)
-            time.sleep(1)
-            
-            # Limpiar el campo primero
-            driver.execute_script("arguments[0].value = '';", search_field)
-            time.sleep(0.5)
-            
-            # Escribir el texto usando JavaScript
-            driver.execute_script(f"arguments[0].value = '{nombre_producto}';", search_field)
-            logger.info(f"Texto '{nombre_producto}' ingresado con JavaScript")
-            time.sleep(0.5)
-            
-            # Intentar enviar la búsqueda con Enter
+        # MÉTODO 1: Buscar directamente por clase específica de la imagen
+        max_retries = 3
+        for retry in range(max_retries):
             try:
-                # Presionar Enter con JavaScript/Action Chains
-                search_field.send_keys(Keys.RETURN)
-                logger.info("Tecla Enter enviada al campo")
-            except:
-                logger.warning("Error al enviar Enter, intentando alternativa...")
-                # Alternativa: buscar y hacer clic en el botón de búsqueda (lupa)
-                try:
-                    # Buscar botón de búsqueda por su posición junto al campo
-                    buscar_btns = driver.find_elements(By.CSS_SELECTOR, ".btn-buscar, button.search-btn, button[type='submit'], button.btn-search")
-                    if buscar_btns:
-                        for btn in buscar_btns:
-                            if btn.is_displayed():
-                                logger.info("Botón de búsqueda encontrado, haciendo clic...")
-                                btn.click()
-                                break
-                    else:
-                        # Si no hay botón específico, intentar presionar Enter con Action Chains
-                        logger.info("Intentando buscar con Action Chains...")
-                        actions = webdriver.ActionChains(driver)
-                        actions.send_keys(Keys.RETURN).perform()
-                except Exception as e:
-                    logger.warning(f"Error al hacer clic en botón de búsqueda: {e}")
-            
-            # Esperar a que se procese la búsqueda
-            time.sleep(5)
-            
-            # Verificar si se procesó la búsqueda
-            page_source = driver.page_source
-            if nombre_producto.lower() in page_source.lower():
-                logger.info(f"Texto de búsqueda '{nombre_producto}' encontrado en la página")
+                logger.info(f"Intento #{retry+1} de buscar el campo de búsqueda")
                 
-                # Comprobar si hay resultados
-                if "No se pudo encontrar el producto" in page_source:
-                    logger.warning(f"No se encontraron resultados para: '{nombre_producto}'")
-                    return False
+                # Refrescar la lista de inputs para evitar referencia obsoleta
+                inputs = driver.find_elements(By.TAG_NAME, "input")
+                logger.info(f"Número de inputs encontrados: {len(inputs)}")
+                
+                # Imprimir info de inputs para debug
+                for i, inp in enumerate(inputs):
+                    try:
+                        tipo = inp.get_attribute("type")
+                        placeholder = inp.get_attribute("placeholder")
+                        id_elem = inp.get_attribute("id")
+                        clase = inp.get_attribute("class")
+                        visible = inp.is_displayed()
+                        logger.info(f"Input {i}: type={tipo}, placeholder={placeholder}, id={id_elem}, class={clase}, visible={visible}")
+                    except:
+                        logger.warning(f"No se pudo obtener atributos del input {i}")
+                
+                # Buscar específicamente por la clase identificada en la imagen
+                search_field = None
+                try:
+                    # Usar el selector específico basado en el input #1 que vimos en los logs
+                    search_field = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "input.search_input"))
+                    )
+                    logger.info("Campo de búsqueda encontrado por clase 'search_input'")
+                except:
+                    logger.warning("No se pudo encontrar el campo con clase 'search_input'")
+                
+                # Si no funciona, intentar con otros selectores más específicos
+                if not search_field:
+                    specific_selectors = [
+                        "input[placeholder='Nombre, laboratorio, sal, código de barras o Categoria']",
+                        "input.ng-untouched.ng-pristine.ng-valid[type='text']",
+                        ".search_input",
+                        "input.input-src"
+                    ]
+                    
+                    for selector in specific_selectors:
+                        try:
+                            search_field = WebDriverWait(driver, 5).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                            )
+                            if search_field and search_field.is_displayed():
+                                logger.info(f"Campo de búsqueda encontrado con selector: {selector}")
+                                break
+                        except:
+                            logger.warning(f"No se encontró el campo con selector: {selector}")
+                
+                # Si encontramos el campo, intentar interactuar con él
+                if search_field and search_field.is_displayed():
+                    logger.info("Campo de búsqueda encontrado y visible")
+                    
+                    # Tomar una captura antes de interactuar
+                    driver.save_screenshot(f"campo_busqueda_encontrado_intento{retry+1}.png")
+                    
+                    # Enfocarse en el campo antes de interactuar
+                    driver.execute_script("arguments[0].focus();", search_field)
+                    time.sleep(1)
+                    
+                    # Resaltar para verificación visual
+                    driver.execute_script("arguments[0].style.border='3px solid red';", search_field)
+                    driver.save_screenshot(f"campo_resaltado_intento{retry+1}.png")
+                    
+                    # CRÍTICO: Interactuar con JavaScript para evitar errores de stale element
+                    # Limpiar el campo primero
+                    driver.execute_script("arguments[0].value = '';", search_field)
+                    time.sleep(0.5)
+                    
+                    # Escribir el texto usando JavaScript
+                    driver.execute_script(f"arguments[0].value = '{nombre_producto}';", search_field)
+                    logger.info(f"Texto '{nombre_producto}' ingresado con JavaScript")
+                    time.sleep(0.5)
+                    
+                    # Verificar el valor ingresado
+                    valor_ingresado = driver.execute_script("return arguments[0].value;", search_field)
+                    logger.info(f"Valor en el campo: '{valor_ingresado}'")
+                    
+                    # Intentar enviar la búsqueda con Enter
+                    try:
+                        # Presionar Enter con JavaScript/Action Chains
+                        search_field.send_keys(Keys.RETURN)
+                        logger.info("Tecla Enter enviada al campo")
+                    except:
+                        logger.warning("Error al enviar Enter, intentando alternativa...")
+                        # Alternativa: buscar y hacer clic en el botón de búsqueda (lupa)
+                        try:
+                            # Buscar botón de búsqueda por su posición junto al campo
+                            buscar_btns = driver.find_elements(By.CSS_SELECTOR, ".btn-buscar, button.search-btn, button[type='submit'], button.btn-search")
+                            if buscar_btns:
+                                for btn in buscar_btns:
+                                    if btn.is_displayed():
+                                        logger.info("Botón de búsqueda encontrado, haciendo clic...")
+                                        btn.click()
+                                        break
+                            else:
+                                # Si no hay botón específico, intentar presionar Enter con Action Chains
+                                logger.info("Intentando buscar con Action Chains...")
+                                actions = webdriver.ActionChains(driver)
+                                actions.send_keys(Keys.RETURN).perform()
+                        except Exception as e:
+                            logger.warning(f"Error al hacer clic en botón de búsqueda: {e}")
+                    
+                    # Esperar a que se procese la búsqueda
+                    time.sleep(5)
+                    
+                    # Tomar captura después de la búsqueda
+                    driver.save_screenshot(f"resultados_busqueda_intento{retry+1}.png")
+                    
+                    # Verificar si se procesó la búsqueda
+                    page_source = driver.page_source
+                    if nombre_producto.lower() in page_source.lower():
+                        logger.info(f"Texto de búsqueda '{nombre_producto}' encontrado en la página")
+                        
+                        # Comprobar si hay resultados
+                        if "No se pudo encontrar el producto" in page_source:
+                            logger.warning(f"No se encontraron resultados para: '{nombre_producto}'")
+                            return False
+                        else:
+                            logger.info(f"Búsqueda exitosa para: '{nombre_producto}'")
+                            
+                            # Intentar hacer clic en algún resultado de producto
+                            try:
+                                # Buscar específicamente botones "Ver detalle" como en la imagen
+                                ver_detalle_selectors = [
+                                    "button:contains('Ver detalle')",
+                                    "a:contains('Ver detalle')",
+                                    ".btn:contains('Ver detalle')",
+                                    "button.btn-outline-primary", 
+                                    "a.ver-detalle",
+                                    ".btn-outline-primary",
+                                    "button.ver-detalle"
+                                ]
+                                
+                                detail_button_found = False
+                                for selector in ver_detalle_selectors:
+                                    try:
+                                        # Usar FindElements para no causar excepción si no hay resultados
+                                        detail_buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                                        for btn in detail_buttons:
+                                            if btn.is_displayed():
+                                                logger.info(f"Botón 'Ver detalle' encontrado con selector: {selector}")
+                                                # Tomar captura antes de hacer clic
+                                                driver.execute_script("arguments[0].style.border='3px solid red';", btn)
+                                                driver.save_screenshot("boton_ver_detalle_encontrado.png")
+                                                
+                                                # Hacer scroll hasta el botón
+                                                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                                                time.sleep(1)
+                                                
+                                                # Intentar hacer clic con JavaScript (más confiable)
+                                                try:
+                                                    driver.execute_script("arguments[0].click();", btn)
+                                                    logger.info("Clic en 'Ver detalle' realizado con JavaScript")
+                                                    detail_button_found = True
+                                                except Exception as e:
+                                                    logger.warning(f"Error al hacer clic con JS: {e}, intentando método normal")
+                                                    btn.click()
+                                                    detail_button_found = True
+                                                
+                                                # Esperar a que cargue la página de detalle
+                                                time.sleep(3)
+                                                driver.save_screenshot("pagina_detalle_producto.png")
+                                                # Guardar HTML para análisis
+                                                with open("detalle_producto.html", "w", encoding="utf-8") as f:
+                                                    f.write(driver.page_source)
+                                                return True
+                                    except Exception as e:
+                                        logger.warning(f"Error con selector {selector}: {e}")
+                                
+                                # Si no encontramos botones específicos de detalle, buscar por texto
+                                if not detail_button_found:
+                                    try:
+                                        # Intentar encontrar por XPath texto exacto "Ver detalle"
+                                        xpath_buttons = driver.find_elements(By.XPATH, "//*[text()='Ver detalle']")
+                                        for btn in xpath_buttons:
+                                            if btn.is_displayed():
+                                                logger.info("Botón 'Ver detalle' encontrado por XPath texto exacto")
+                                                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                                                time.sleep(1)
+                                                driver.execute_script("arguments[0].click();", btn)
+                                                time.sleep(3)
+                                                driver.save_screenshot("detalle_xpath_texto.png")
+                                                return True
+                                    except Exception as e:
+                                        logger.warning(f"Error al buscar por XPath texto: {e}")
+                                
+                                # Si llegamos hasta aquí, intentar interactuar con la tarjeta del producto
+                                product_card_selectors = [
+                                    ".product-item", ".product-card", ".col-lg-12", 
+                                    ".owl-item", ".producto", ".card"
+                                ]
+                                
+                                for selector in product_card_selectors:
+                                    try:
+                                        cards = driver.find_elements(By.CSS_SELECTOR, selector)
+                                        for card in cards:
+                                            if card.is_displayed():
+                                                # Buscar el botón "Ver detalle" dentro de la tarjeta
+                                                detail_btns = card.find_elements(By.CSS_SELECTOR, "button, a")
+                                                ver_detalle_btn = None
+                                                
+                                                for btn in detail_btns:
+                                                    try:
+                                                        if btn.is_displayed() and "detalle" in btn.text.lower():
+                                                            ver_detalle_btn = btn
+                                                            break
+                                                    except:
+                                                        pass
+                                                
+                                                if ver_detalle_btn:
+                                                    logger.info("Botón 'Ver detalle' encontrado dentro de tarjeta de producto")
+                                                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", ver_detalle_btn)
+                                                    time.sleep(1)
+                                                    driver.execute_script("arguments[0].click();", ver_detalle_btn)
+                                                    time.sleep(3)
+                                                    driver.save_screenshot("detalle_desde_tarjeta.png")
+                                                    return True
+                                                else:
+                                                    # Si no encontramos el botón específico, guardar una lista de todos los elementos interactivos
+                                                    clickable_elements = card.find_elements(By.CSS_SELECTOR, "a, button")
+                                                    for i, elem in enumerate(clickable_elements):
+                                                        try:
+                                                            if elem.is_displayed():
+                                                                logger.info(f"Elemento clickeable {i} en tarjeta: texto='{elem.text}', clase='{elem.get_attribute('class')}'")
+                                                        except:
+                                                            pass
+                                                    
+                                                    # Intentar hacer clic en el último botón visible (suele ser "Ver detalle")
+                                                    visible_buttons = [btn for btn in detail_btns if btn.is_displayed()]
+                                                    if visible_buttons:
+                                                        last_button = visible_buttons[-1]
+                                                        logger.info(f"Haciendo clic en último botón visible: '{last_button.text}'")
+                                                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", last_button)
+                                                        time.sleep(1)
+                                                        driver.execute_script("arguments[0].click();", last_button)
+                                                        time.sleep(3)
+                                                        driver.save_screenshot("detalle_ultimo_boton.png")
+                                                        return True
+                                    except Exception as e:
+                                        logger.warning(f"Error al interactuar con tarjeta de producto {selector}: {e}")
+                            except Exception as e:
+                                logger.warning(f"Error al intentar hacer clic en resultados: {e}")
+                            
+                            # Incluso si no podemos hacer clic, consideramos exitosa la búsqueda si hay resultados
+                            return True
+                    else:
+                        logger.warning(f"No se encontró evidencia de que la búsqueda '{nombre_producto}' se procesara")
+                        
+                    # Si llegamos aquí, intentamos otra vez con otro enfoque
+                    logger.info("Intentando otro enfoque para la búsqueda...")
                 else:
-                    logger.info(f"Búsqueda exitosa para: '{nombre_producto}'")
-                    return True
+                    logger.warning("Campo de búsqueda no encontrado o no visible en este intento")
+            
+            except Exception as e:
+                logger.error(f"Error en intento #{retry+1}: {e}")
+                driver.save_screenshot(f"error_intento_{retry+1}.png")
+            
+            # Esperar antes del siguiente intento
+            time.sleep(2)
+        
+        # PLAN B: Si todos los intentos anteriores fallaron, intentar con un enfoque completamente diferente
+        logger.info("Intentando enfoque alternativo de búsqueda...")
+        
+        try:
+            # Verificar si estamos en la página principal
+            if "carrito.fanasa.com" in driver.current_url and "/login" not in driver.current_url:
+                logger.info("Estamos en la página principal, intentando interactuar directamente")
+                
+                # Método 1: Ejecutar JavaScript para simular una búsqueda directa
+                try:
+                    logger.info("Intentando buscar con JavaScript directo...")
+                    # Este script busca el primer campo de texto visible y lo usa para buscar
+                    js_script = """
+                    let inputs = document.querySelectorAll('input[type="text"], input[type="search"]');
+                    for (let i = 0; i < inputs.length; i++) {
+                        if (inputs[i].offsetParent !== null) {  // Es visible
+                            inputs[i].value = arguments[0];
+                            inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
+                            inputs[i].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                            return true;
+                        }
+                    }
+                    return false;
+                    """
+                    result = driver.execute_script(js_script, nombre_producto)
+                    logger.info(f"Resultado de búsqueda JS: {result}")
+                    time.sleep(3)
+                    driver.save_screenshot("busqueda_js_directa.png")
+                except Exception as e:
+                    logger.warning(f"Error en búsqueda JS: {e}")
+                
+                # Método 2: Usar coordenadas basadas en la imagen
+                try:
+                    logger.info("Intentando clic en coordenadas específicas del campo de búsqueda...")
+                    # Basado en la imagen, el campo está aproximadamente en estas coordenadas
+                    actions = webdriver.ActionChains(driver)
+                    actions.move_by_offset(500, 100).click().perform()
+                    time.sleep(1)
+                    actions.send_keys(nombre_producto).perform()
+                    time.sleep(1)
+                    actions.send_keys(Keys.RETURN).perform()
+                    logger.info("Búsqueda enviada por coordenadas")
+                    time.sleep(3)
+                    driver.save_screenshot("busqueda_por_coordenadas.png")
+                except Exception as e:
+                    logger.warning(f"Error en búsqueda por coordenadas: {e}")
+                
+                # Método 3: Intentar navegar directamente a la URL de búsqueda
+                try:
+                    logger.info("Navegando directamente a URL de búsqueda...")
+                    # Intentar construir una URL de búsqueda basada en patrones comunes
+                    base_url = driver.current_url.split('?')[0]
+                    search_url = f"{base_url}?q={nombre_producto}"
+                    logger.info(f"Navegando a: {search_url}")
+                    driver.get(search_url)
+                    time.sleep(3)
+                    driver.save_screenshot("busqueda_directa_url.png")
+                except Exception as e:
+                    logger.warning(f"Error en navegación directa: {e}")
+            
+            # Verificar si alguno de los métodos funcionó
+            if nombre_producto.lower() in driver.page_source.lower() and "No se pudo encontrar el producto" not in driver.page_source:
+                logger.info("¡Alguno de los métodos alternativos funcionó!")
+                return True
             else:
-                logger.warning(f"No se encontró evidencia de que la búsqueda '{nombre_producto}' se procesara")
+                logger.error("Todos los métodos alternativos fallaron")
                 return False
-        else:
-            logger.warning("Campo de búsqueda no encontrado o no visible")
+                
+        except Exception as e:
+            logger.error(f"Error en enfoque alternativo: {e}")
             return False
         
     except Exception as e:
         logger.error(f"Error general durante la búsqueda: {e}")
+        driver.save_screenshot("error_busqueda_general.png")
         return False
+        
 
 def extraer_info_producto(driver):
     """
