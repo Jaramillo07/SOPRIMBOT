@@ -9,6 +9,7 @@ Proporciona funcionalidad para buscar información de productos en el portal FAN
 import time
 import logging
 import re
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -42,7 +43,7 @@ def inicializar_navegador(headless=True):
     """
     options = Options()
     if headless:
-        options.add_argument("--headless")
+        options.add_argument("--headless=new")  # Usar la nueva sintaxis para Chrome reciente
     
     # Configuración adicional para mejorar la estabilidad
     options.add_argument("--window-size=1920,1080")
@@ -50,6 +51,7 @@ def inicializar_navegador(headless=True):
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")  # Importante para entornos headless
     
     try:
         # Inicializar el navegador Chrome
@@ -311,14 +313,6 @@ def buscar_producto(driver, nombre_producto):
         # Esperar un momento para que la página se cargue completamente
         time.sleep(10)  # Aumentamos el tiempo de espera inicial
         
-        # Guardar HTML de la página principal para análisis
-        with open("pagina_principal.html", "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        logger.info("HTML de la página principal guardado para análisis")
-        
-        # Capturar la página principal
-        driver.save_screenshot("pagina_principal.png")
-        
         # MÉTODO 1: Buscar directamente por clase específica de la imagen
         max_retries = 3
         for retry in range(max_retries):
@@ -376,16 +370,9 @@ def buscar_producto(driver, nombre_producto):
                 if search_field and search_field.is_displayed():
                     logger.info("Campo de búsqueda encontrado y visible")
                     
-                    # Tomar una captura antes de interactuar
-                    driver.save_screenshot(f"campo_busqueda_encontrado_intento{retry+1}.png")
-                    
                     # Enfocarse en el campo antes de interactuar
                     driver.execute_script("arguments[0].focus();", search_field)
                     time.sleep(1)
-                    
-                    # Resaltar para verificación visual
-                    driver.execute_script("arguments[0].style.border='3px solid red';", search_field)
-                    driver.save_screenshot(f"campo_resaltado_intento{retry+1}.png")
                     
                     # CRÍTICO: Interactuar con JavaScript para evitar errores de stale element
                     # Limpiar el campo primero
@@ -429,9 +416,6 @@ def buscar_producto(driver, nombre_producto):
                     # Esperar a que se procese la búsqueda
                     time.sleep(5)
                     
-                    # Tomar captura después de la búsqueda
-                    driver.save_screenshot(f"resultados_busqueda_intento{retry+1}.png")
-                    
                     # Verificar si se procesó la búsqueda
                     page_source = driver.page_source
                     if nombre_producto.lower() in page_source.lower():
@@ -465,9 +449,6 @@ def buscar_producto(driver, nombre_producto):
                                         for btn in detail_buttons:
                                             if btn.is_displayed():
                                                 logger.info(f"Botón 'Ver detalle' encontrado con selector: {selector}")
-                                                # Tomar captura antes de hacer clic
-                                                driver.execute_script("arguments[0].style.border='3px solid red';", btn)
-                                                driver.save_screenshot("boton_ver_detalle_encontrado.png")
                                                 
                                                 # Hacer scroll hasta el botón
                                                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
@@ -485,10 +466,6 @@ def buscar_producto(driver, nombre_producto):
                                                 
                                                 # Esperar a que cargue la página de detalle
                                                 time.sleep(3)
-                                                driver.save_screenshot("pagina_detalle_producto.png")
-                                                # Guardar HTML para análisis
-                                                with open("detalle_producto.html", "w", encoding="utf-8") as f:
-                                                    f.write(driver.page_source)
                                                 return True
                                     except Exception as e:
                                         logger.warning(f"Error con selector {selector}: {e}")
@@ -505,7 +482,6 @@ def buscar_producto(driver, nombre_producto):
                                                 time.sleep(1)
                                                 driver.execute_script("arguments[0].click();", btn)
                                                 time.sleep(3)
-                                                driver.save_screenshot("detalle_xpath_texto.png")
                                                 return True
                                     except Exception as e:
                                         logger.warning(f"Error al buscar por XPath texto: {e}")
@@ -539,7 +515,6 @@ def buscar_producto(driver, nombre_producto):
                                                     time.sleep(1)
                                                     driver.execute_script("arguments[0].click();", ver_detalle_btn)
                                                     time.sleep(3)
-                                                    driver.save_screenshot("detalle_desde_tarjeta.png")
                                                     return True
                                                 else:
                                                     # Si no encontramos el botón específico, guardar una lista de todos los elementos interactivos
@@ -560,7 +535,6 @@ def buscar_producto(driver, nombre_producto):
                                                         time.sleep(1)
                                                         driver.execute_script("arguments[0].click();", last_button)
                                                         time.sleep(3)
-                                                        driver.save_screenshot("detalle_ultimo_boton.png")
                                                         return True
                                     except Exception as e:
                                         logger.warning(f"Error al interactuar con tarjeta de producto {selector}: {e}")
@@ -579,7 +553,6 @@ def buscar_producto(driver, nombre_producto):
             
             except Exception as e:
                 logger.error(f"Error en intento #{retry+1}: {e}")
-                driver.save_screenshot(f"error_intento_{retry+1}.png")
             
             # Esperar antes del siguiente intento
             time.sleep(2)
@@ -611,7 +584,6 @@ def buscar_producto(driver, nombre_producto):
                     result = driver.execute_script(js_script, nombre_producto)
                     logger.info(f"Resultado de búsqueda JS: {result}")
                     time.sleep(3)
-                    driver.save_screenshot("busqueda_js_directa.png")
                 except Exception as e:
                     logger.warning(f"Error en búsqueda JS: {e}")
                 
@@ -627,7 +599,6 @@ def buscar_producto(driver, nombre_producto):
                     actions.send_keys(Keys.RETURN).perform()
                     logger.info("Búsqueda enviada por coordenadas")
                     time.sleep(3)
-                    driver.save_screenshot("busqueda_por_coordenadas.png")
                 except Exception as e:
                     logger.warning(f"Error en búsqueda por coordenadas: {e}")
                 
@@ -640,7 +611,6 @@ def buscar_producto(driver, nombre_producto):
                     logger.info(f"Navegando a: {search_url}")
                     driver.get(search_url)
                     time.sleep(3)
-                    driver.save_screenshot("busqueda_directa_url.png")
                 except Exception as e:
                     logger.warning(f"Error en navegación directa: {e}")
             
@@ -658,13 +628,12 @@ def buscar_producto(driver, nombre_producto):
         
     except Exception as e:
         logger.error(f"Error general durante la búsqueda: {e}")
-        driver.save_screenshot("error_busqueda_general.png")
         return False
-        
 
 def extraer_info_producto(driver):
     """
     Extrae información detallada del producto de la página actual.
+    Enfocado principalmente en precio y disponibilidad.
     
     Args:
         driver: Instancia del navegador con la página de detalle abierta
@@ -727,6 +696,13 @@ def extraer_info_producto(driver):
             for element in precio_neto_elements:
                 if element.is_displayed():
                     texto_precio = element.text.strip()
+                    precio_match = re.search(r'\$\s*([\d,]+\.?\d*)', texto
+                    precio_neto_elements = driver.find_elements(By.XPATH, 
+                "//*[contains(text(), 'Precio Neto')]/following::*[contains(text(), '$')]")
+            
+            for element in precio_neto_elements:
+                if element.is_displayed():
+                    texto_precio = element.text.strip()
                     precio_match = re.search(r'\$\s*([\d,]+\.?\d*)', texto_precio)
                     if precio_match:
                         info_producto['precio_neto'] = f"${precio_match.group(1)}"
@@ -751,28 +727,31 @@ def extraer_info_producto(driver):
         except Exception as e:
             logger.warning(f"Error extrayendo laboratorio: {e}")
 
-        # IMAGEN DEL PRODUCTO
+        # DISPONIBILIDAD / STOCK
         try:
-            all_images = driver.find_elements(By.TAG_NAME, "img")
-            for img in all_images:
-                if img.is_displayed():
-                    src = img.get_attribute("src")
-                    # Excluir logos e íconos pequeños
-                    if src and ('http' in src) and "logo" not in src.lower():
-                        # Comprobar tamaño mínimo
-                        if img.size['width'] > 50 and img.size['height'] > 50:
-                            info_producto['imagen'] = src
-                            logger.info(f"URL de imagen: {info_producto['imagen']}")
-                            break
+            # Buscar elementos que contengan explícitamente "Stock"
+            stock_elements = driver.find_elements(By.XPATH, 
+                "//*[contains(text(), 'Stock') or contains(text(), 'Disponibilidad') or contains(text(), 'Existencias')]")
+            
+            for element in stock_elements:
+                if element.is_displayed():
+                    texto = element.text.strip()
+                    if texto:
+                        # Buscar un patrón como "Stock (366)"
+                        stock_match = re.search(r'[Ss]tock\s*\((\d+)\)', texto)
+                        if stock_match:
+                            info_producto['disponibilidad'] = f"Stock ({stock_match.group(1)})"
+                        else:
+                            # Si no sigue el patrón específico, usar el texto completo
+                            info_producto['disponibilidad'] = texto
+                        
+                        logger.info(f"Disponibilidad: {info_producto['disponibilidad']}")
+                        break
         except Exception as e:
-            logger.warning(f"Error extrayendo imagen: {e}")
+            logger.warning(f"Error extrayendo disponibilidad: {e}")
             
         return info_producto
             
-    except Exception as e:
-        logger.error(f"Error general durante la extracción de información: {e}")
-        return None
-
 def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
     Función principal que busca información de un medicamento en FANASA.
@@ -861,123 +840,50 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
             logger.info("Cerrando navegador...")
             driver.quit()
 
-# Función para enviar mensajes a WhatsApp a través de Twilio
-def enviar_whatsapp(mensaje, numero_destino="+5214778150806"):
-    """
-    Envía un mensaje a WhatsApp usando la API de Twilio.
-    
-    Args:
-        mensaje (str): Mensaje a enviar
-        numero_destino (str): Número de teléfono de destino con código de país
-        
-    Returns:
-        bool: True si el mensaje se envió correctamente, False si hubo error
-    """
-    try:
-        from twilio.rest import Client
-        
-        # Credenciales de Twilio (asegúrate de tenerlas configuradas en variables de entorno)
-        account_sid = os.environ.get('TWILIO_ACCOUNT_SID', 'AC82a4a1a2fcfb6c6eb8bae97258424166')
-        auth_token = os.environ.get('TWILIO_AUTH_TOKEN', '1df91deab6d73e7ef8cace26d50cd9a8')
-        twilio_whatsapp = os.environ.get('TWILIO_WHATSAPP', 'whatsapp:+14155238886')
-        
-        # Asegurarse de que el número de destino tenga el formato correcto
-        if not numero_destino.startswith('whatsapp:'):
-            numero_destino = f'whatsapp:{numero_destino}'
-        
-        # Inicializar cliente de Twilio
-        client = Client(account_sid, auth_token)
-        
-        # Enviar mensaje
-        message = client.messages.create(
-            body=mensaje,
-            from_=twilio_whatsapp,
-            to=numero_destino
-        )
-        
-        logger.info(f"Mensaje enviado a whatsapp:{numero_destino}. SID: {message.sid}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error al enviar mensaje WhatsApp: {e}")
-        return False
-
-# Para ejecutar como script independiente o como parte de un servicio
-def main():
-    import argparse
+# Para ejecución directa como script independiente
+if __name__ == "__main__":
+    import sys
     import json
-    import os
     
-    # Configuración de argumentos de línea de comandos
-    parser = argparse.ArgumentParser(description='Buscar información de medicamentos en FANASA')
-    parser.add_argument('--medicamento', type=str, help='Nombre del medicamento a buscar')
-    parser.add_argument('--output', type=str, help='Archivo de salida para los resultados (JSON)')
-    parser.add_argument('--headless', action='store_true', help='Ejecutar en modo headless (sin interfaz gráfica)')
-    parser.add_argument('--whatsapp', type=str, help='Número de WhatsApp para enviar resultados (+521XXXXXXXXXX)')
+    print("=== Sistema de Búsqueda de Medicamentos en FANASA ===")
     
-    args = parser.parse_args()
-    
-    # Si no se especifica medicamento, solicitar entrada manual
-    if not args.medicamento:
-        medicamento = input("Ingrese el nombre del medicamento a buscar: ")
+    # Si se proporciona un argumento por línea de comandos, usarlo como nombre del medicamento
+    if len(sys.argv) > 1:
+        medicamento = " ".join(sys.argv[1:])
     else:
-        medicamento = args.medicamento
+        # De lo contrario, pedir al usuario
+        medicamento = input("Ingrese el nombre del medicamento a buscar: ")
     
-    # Buscar información del medicamento
     print(f"\nBuscando información sobre: {medicamento}")
     print("Espere un momento...\n")
     
-    info = buscar_info_medicamento(medicamento, headless=args.headless)
+    # Buscar información del medicamento
+    info = buscar_info_medicamento(medicamento)
     
-    # Determinar estado del resultado
+    # Verificar el estado del resultado
     estado = info.get('estado', 'desconocido')
     
-    # Crear mensaje según el estado
     if estado == 'encontrado':
-        mensaje = f"✅ Producto encontrado en FANASA: {info.get('nombre', medicamento)}\n"
-        mensaje += f"💊 Precio Neto: {info.get('precio_neto', 'No disponible')}\n"
-        mensaje += f"📦 Disponibilidad: {info.get('disponibilidad', 'No especificada')}\n"
-        mensaje += f"🏭 Laboratorio: {info.get('laboratorio', 'No especificado')}\n"
-        
-        # Mostrar en consola
         print("\n=== INFORMACIÓN DEL PRODUCTO ===")
         print(f"Nombre: {info.get('nombre', 'No disponible')}")
         print(f"Precio Neto: {info.get('precio_neto', 'No disponible')}")
         print(f"PMP: {info.get('pmp', 'No disponible')}")
         print(f"Laboratorio: {info.get('laboratorio', 'No disponible')}")
-        print(f"SKU: {info.get('sku', 'No disponible')}")
         print(f"Disponibilidad: {info.get('disponibilidad', 'No disponible')}")
-        if info.get('imagen'):
-            print(f"Imagen: {info['imagen']}")
+        print(f"Existencia: {info.get('existencia', 'No disponible')}")
         print(f"URL: {info.get('url', 'No disponible')}")
-        
-        # Resultado para procesamiento
-        resultado = "producto_encontrado"
+        print("\nResultado: Producto encontrado")
     else:
-        # Casos de error o producto no encontrado
-        mensaje = f"❌ {info.get('mensaje', f'No se encontró información para {medicamento} en FANASA')}"
-        
-        # Mostrar en consola
-        print("\n⚠️ " + mensaje)
-        
-        # Resultado para procesamiento
-        resultado = "producto_no_encontrado"
+        print(f"\n{info.get('mensaje', 'No se pudo obtener información del producto')}")
+        print(f"\nEstado: {estado}")
     
-    # Guardar resultados en archivo JSON si se especificó
-    if args.output:
-        try:
-            with open(args.output, 'w', encoding='utf-8') as f:
-                json.dump(info, f, ensure_ascii=False, indent=4)
-            print(f"\nResultados guardados en: {args.output}")
-        except Exception as e:
-            print(f"\n❌ Error al guardar resultados: {e}")
-    
-    # Enviar notificación por WhatsApp si se especificó un número
-    if args.whatsapp:
-        print(f"\nEnviando notificación a WhatsApp: {args.whatsapp}")
-        enviar_whatsapp(mensaje, args.whatsapp)
-    
-    return resultado, info
+    # Guardar resultado como JSON para procesamiento externo
+    try:
+        output_file = f"{medicamento.replace(' ', '_')}_resultado.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=4)
+        print(f"\nResultado guardado en: {output_file}")
+    except Exception as e:
+        print(f"\nError al guardar resultado: {e}")
 
-if __name__ == "__main__":
-    main()
+    sys.exit(0 if estado == 'encontrado' else 1)
