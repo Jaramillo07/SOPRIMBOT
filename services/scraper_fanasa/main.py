@@ -763,7 +763,7 @@ def extraer_info_producto(driver):
             # Si no encontramos PMP específico pero tenemos precio neto, buscar el precio más alto
             if not info_producto['pmp'] and info_producto['precio_neto']:
                 try:
-                    precio_neto_valor = float(info_producto['precio_neto'].replace(', '').replace(',', ''))
+                    precio_neto_valor = float(info_producto['precio_neto'].replace('$', '').replace(',', ''))
                     precio_alto = None
                     precio_elements = driver.find_elements(By.XPATH, "//*[contains(text(), ')]")
                     
