@@ -1,7 +1,0 @@
-# Selenium en entornos sin interfaz gráfica
-
-selenium==4.12.0
-webdriver-manager==4.0.0
-
-# Otras dependencias
-requests==2.31.0
