@@ -1,0 +1,422 @@
+"""
+Servicio de scraping integrado para buscar información de productos farmacéuticos.
+Este servicio orquesta los scrapers de Difarmer y Sufarmed, comparando resultados
+y seleccionando el mejor en función de existencias y precio.
+"""
+import logging
+import os
+import sys
+import time
+import re
+import concurrent.futures
+from pathlib import Path
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class ScrapingService:
+    """
+    Clase que coordina la búsqueda de productos en múltiples fuentes,
+    comparando resultados y seleccionando la mejor opción.
+    """
+    
+    def __init__(self):
+        """
+        Inicializa el servicio de scraping integrado configurando cada scraper individual.
+        """
+        logger.info("Inicializando ScrapingService integrado con múltiples scrapers")
+        
+        # Verificar qué servicios están disponibles
+        self.difarmer_available = self._check_difarmer_available()
+        self.sufarmed_available = self._check_sufarmed_available()
+        
+        # Inicializar scrapers solo si están disponibles
+        if self.difarmer_available:
+            try:
+                # Añadir el directorio actual al path para facilitar las importaciones
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                parent_dir = os.path.dirname(current_dir)
+                if parent_dir not in sys.path:
+                    sys.path.insert(0, parent_dir)
+                    logger.info(f"Directorio añadido al path: {parent_dir}")
+                
+                # Importar el módulo scraper_difarmer
+                from services.scraper_difarmer import buscar_info_medicamento as buscar_difarmer
+                self.buscar_difarmer = buscar_difarmer
+                logger.info("Scraper Difarmer inicializado correctamente")
+            except ImportError as e:
+                logger.error(f"Error al importar scraper_difarmer: {e}")
+                self.difarmer_available = False
+                # Intentar import alternativo
+                try:
+                    scraper_path = os.path.join('services', 'scraper_difarmer')
+                    sys.path.insert(0, scraper_path)
+                    from main import buscar_info_medicamento
+                    self.buscar_difarmer = buscar_info_medicamento
+                    self.difarmer_available = True
+                    logger.info("Scraper Difarmer inicializado mediante ruta alternativa")
+                except ImportError as e2:
+                    logger.error(f"Error en importación alternativa de Difarmer: {e2}")
+        
+        if self.sufarmed_available:
+            try:
+                # Importar el servicio original de Sufarmed
+                # Asumimos que este es el que está en scraping_service_sufarmed.py
+                from services.scraping_service_sufarmed import ScrapingService as SufarmedService
+                self.sufarmed_service = SufarmedService()
+                logger.info("Scraper Sufarmed inicializado correctamente")
+            except ImportError as e:
+                logger.error(f"Error al importar scraping_service_sufarmed: {e}")
+                # Búsqueda alternativa del servicio de Sufarmed
+                try:
+                    # Comprobar si existe como módulo independiente
+                    if os.path.exists(os.path.join('services', 'sufarmed_service.py')):
+                        from services.sufarmed_service import ScrapingService as SufarmedService
+                        self.sufarmed_service = SufarmedService()
+                        self.sufarmed_available = True
+                        logger.info("Scraper Sufarmed inicializado desde ruta alternativa")
+                except ImportError:
+                    self.sufarmed_available = False
+        
+        # Verificar que al menos un scraper esté disponible
+        if not self.difarmer_available and not self.sufarmed_available:
+            logger.critical("ALERTA: Ningún scraper está disponible. La funcionalidad estará limitada.")
+        else:
+            servicios_activos = []
+            if self.difarmer_available:
+                servicios_activos.append("Difarmer")
+            if self.sufarmed_available:
+                servicios_activos.append("Sufarmed")
+            logger.info(f"Scrapers activos: {', '.join(servicios_activos)}")
+    
+    def _check_difarmer_available(self):
+        """Verifica si el scraper de Difarmer está disponible"""
+        try:
+            # Verificar que existe el directorio
+            scraper_path = os.path.join('services', 'scraper_difarmer')
+            if not os.path.isdir(scraper_path):
+                logger.warning(f"Directorio {scraper_path} no encontrado")
+                return False
+            
+            # Verificar que existen los archivos principales
+            required_files = ['__init__.py', 'main.py', 'login.py']
+            for file in required_files:
+                if not os.path.exists(os.path.join(scraper_path, file)):
+                    logger.warning(f"Archivo {file} no encontrado en {scraper_path}")
+                    return False
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Error al verificar disponibilidad de Difarmer: {e}")
+            return False
+    
+    def _check_sufarmed_available(self):
+        """Verifica si el scraper de Sufarmed está disponible"""
+        try:
+            # Verificar que existe el archivo de servicio
+            sufarmed_file = os.path.join('services', 'scraping_service_sufarmed.py')
+            if os.path.exists(sufarmed_file):
+                return True
+            
+            # Alternativa: verificar si existe como otro archivo
+            alt_file = os.path.join('services', 'sufarmed_service.py')
+            if os.path.exists(alt_file):
+                return True
+            
+            logger.warning("Archivos de Sufarmed no encontrados")
+            return False
+        except Exception as e:
+            logger.warning(f"Error al verificar disponibilidad de Sufarmed: {e}")
+            return False
+    
+    def _extract_numeric_price(self, price_str):
+        """
+        Extrae un valor numérico del precio para comparación.
+        
+        Args:
+            price_str (str): Precio en formato de texto (ej. "$120.50", "120,50", "120")
+            
+        Returns:
+            float: Valor numérico del precio o 9999999.0 si no se puede extraer
+        """
+        if not price_str:
+            return 9999999.0  # Valor alto para que tenga prioridad baja
+        
+        # Eliminar símbolos de moneda y espacios
+        clean_price = str(price_str).replace('$', '').replace(' ', '')
+        
+        # Convertir comas a puntos si es necesario
+        if ',' in clean_price and '.' not in clean_price:
+            clean_price = clean_price.replace(',', '.')
+        elif ',' in clean_price and '.' in clean_price:
+            # Formato como "$1,234.56"
+            clean_price = clean_price.replace(',', '')
+        
+        # Extraer el número con regex
+        match = re.search(r'(\d+(\.\d+)?)', clean_price)
+        
+        if match:
+            return float(match.group(1))
+        else:
+            return 9999999.0  # Valor por defecto si no se puede extraer
+    
+    def _extract_numeric_existencia(self, existencia_str):
+        """
+        Extrae un valor numérico de existencia para comparación.
+        
+        Args:
+            existencia_str (str): Existencia en formato de texto (ej. "15", "1,500", "Si", "Disponible")
+            
+        Returns:
+            int: Valor numérico de existencia o 0 si no se puede extraer
+        """
+        if not existencia_str:
+            return 0
+        
+        # Valores especiales que indican disponibilidad sin cantidad específica
+        valores_disponible = ["si", "sí", "disponible", "en stock", "hay"]
+        
+        # Verificar primero si es un valor especial que indica disponibilidad
+        if str(existencia_str).lower() in valores_disponible:
+            return 1  # Asignar valor positivo para indicar disponibilidad
+        
+        # Convertir a string y limpiar
+        clean_existencia = str(existencia_str).replace(',', '').replace(' ', '')
+        
+        # Extraer el número con regex
+        match = re.search(r'(\d+)', clean_existencia)
+        
+        if match:
+            return int(match.group(1))
+        
+        # Si no contiene números pero tiene palabras que indican disponibilidad
+        for palabra in valores_disponible:
+            if palabra in str(existencia_str).lower():
+                return 1  # Asignar valor positivo
+        
+        return 0  # No hay disponibilidad o no se puede determinar
+    
+    def _format_producto_difarmer(self, producto):
+        """
+        Formatea los datos del producto de Difarmer al formato estandarizado.
+        
+        Args:
+            producto (dict): Información del producto en formato Difarmer
+            
+        Returns:
+            dict: Producto formateado al estándar común
+        """
+        if not producto:
+            return None
+        
+        # Obtener el precio (puede estar en mi_precio o precio_publico)
+        precio = producto.get('mi_precio') or producto.get('precio_publico') or "0"
+        
+        return {
+            "nombre": producto.get('nombre', ''),
+            "laboratorio": producto.get('laboratorio', ''),
+            "codigo_barras": producto.get('codigo_barras', ''),
+            "registro_sanitario": producto.get('registro_sanitario', ''),
+            "url": producto.get('url', ''),
+            "imagen": producto.get('imagen', ''),
+            "precio": precio,
+            "existencia": producto.get('existencia', '0'),
+            "precio_numerico": self._extract_numeric_price(precio),
+            "existencia_numerica": self._extract_numeric_existencia(producto.get('existencia', '0')),
+            "fuente": "Difarmer"
+        }
+    
+    def _format_producto_sufarmed(self, producto):
+        """
+        Formatea los datos del producto de Sufarmed al formato estandarizado.
+        
+        Args:
+            producto (dict): Información del producto en formato Sufarmed
+            
+        Returns:
+            dict: Producto formateado al estándar común
+        """
+        if not producto:
+            return None
+        
+        # El precio en Sufarmed generalmente está en 'precio'
+        precio = producto.get('precio', "0")
+        existencia = producto.get('existencia', '0')
+        
+        # Manejo especial para valores de existencia
+        existencia_numerica = 0
+        
+        # Si stock indica que está disponible pero no tenemos un valor numérico claro
+        if producto.get('disponible', False) or producto.get('stock', '').lower() in ['disponible', 'en stock']:
+            existencia_numerica = 1
+        else:
+            existencia_numerica = self._extract_numeric_existencia(existencia)
+        
+        return {
+            "nombre": producto.get('nombre', ''),
+            "laboratorio": producto.get('laboratorio', ''),
+            "codigo_barras": producto.get('codigo_barras', ''),
+            "registro_sanitario": producto.get('registro_sanitario', ''),
+            "url": producto.get('url', ''),
+            "imagen": producto.get('imagen', ''),
+            "precio": precio,
+            "existencia": existencia,
+            "precio_numerico": self._extract_numeric_price(precio),
+            "existencia_numerica": existencia_numerica,
+            "fuente": "Sufarmed"
+        }
+    
+    def buscar_producto_difarmer(self, nombre_producto):
+        """
+        Busca un producto en Difarmer y formatea el resultado.
+        
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
+            
+        Returns:
+            dict: Producto formateado o None si no se encuentra
+        """
+        if not self.difarmer_available:
+            logger.warning("Scraper Difarmer no disponible. No se realizará búsqueda.")
+            return None
+        
+        try:
+            logger.info(f"Buscando producto en Difarmer: {nombre_producto}")
+            
+            # Configuración para entorno de producción (sin interfaz gráfica)
+            headless = True
+            
+            # Verificar si estamos en entorno de desarrollo
+            if os.environ.get('ENVIRONMENT', 'production').lower() == 'development':
+                headless = False
+                logger.info("Utilizando navegador con interfaz gráfica (modo desarrollo)")
+            
+            # Llamar a la función de búsqueda del scraper de Difarmer
+            info_producto = self.buscar_difarmer(nombre_producto, headless=headless)
+            
+            # Formatear el producto al estándar común
+            if info_producto:
+                resultado = self._format_producto_difarmer(info_producto)
+                logger.info(f"Producto encontrado en Difarmer: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
+                return resultado
+            else:
+                logger.warning(f"No se encontró información en Difarmer para: {nombre_producto}")
+                return None
+        except Exception as e:
+            logger.error(f"Error al buscar producto en Difarmer: {e}")
+            return None
+    
+    def buscar_producto_sufarmed(self, nombre_producto):
+        """
+        Busca un producto en Sufarmed y formatea el resultado.
+        
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
+            
+        Returns:
+            dict: Producto formateado o None si no se encuentra
+        """
+        if not self.sufarmed_available:
+            logger.warning("Scraper Sufarmed no disponible. No se realizará búsqueda.")
+            return None
+        
+        try:
+            logger.info(f"Buscando producto en Sufarmed: {nombre_producto}")
+            
+            # Llamar a la función de búsqueda del scraper de Sufarmed
+            info_producto = self.sufarmed_service.buscar_producto(nombre_producto)
+            
+            # Formatear el producto al estándar común
+            if info_producto:
+                resultado = self._format_producto_sufarmed(info_producto)
+                logger.info(f"Producto encontrado en Sufarmed: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']} (Valor numérico: {resultado['existencia_numerica']})")
+                return resultado
+            else:
+                logger.warning(f"No se encontró información en Sufarmed para: {nombre_producto}")
+                return None
+        except Exception as e:
+            logger.error(f"Error al buscar producto en Sufarmed: {e}")
+            return None
+    
+    def buscar_producto(self, nombre_producto):
+        """
+        Busca un producto en todas las fuentes disponibles, compara resultados
+        y selecciona el mejor basado en existencia y precio.
+        
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
+            
+        Returns:
+            dict: El mejor producto encontrado o None si no se encuentra en ninguna fuente
+        """
+        logger.info(f"Iniciando búsqueda integrada para: {nombre_producto}")
+        
+        # Lista para almacenar resultados de todas las fuentes
+        resultados = []
+        
+        # Verificar qué scrapers podemos usar
+        scrapers_disponibles = []
+        if self.difarmer_available:
+            scrapers_disponibles.append(('difarmer', self.buscar_producto_difarmer))
+        if self.sufarmed_available:
+            scrapers_disponibles.append(('sufarmed', self.buscar_producto_sufarmed))
+        
+        if not scrapers_disponibles:
+            logger.error("No hay scrapers disponibles para realizar la búsqueda")
+            return None
+        
+        # Para más eficiencia, usar ThreadPoolExecutor para búsquedas en paralelo
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(scrapers_disponibles)) as executor:
+            # Crear tareas de búsqueda
+            futures = {}
+            for source_name, search_func in scrapers_disponibles:
+                future = executor.submit(search_func, nombre_producto)
+                futures[future] = source_name
+            
+            # Recopilar resultados a medida que se completan
+            for future in concurrent.futures.as_completed(futures):
+                source_name = futures[future]
+                try:
+                    resultado = future.result()
+                    if resultado:
+                        logger.info(f"Resultado obtenido de {source_name}")
+                        resultados.append(resultado)
+                except Exception as e:
+                    logger.error(f"Error en búsqueda de {source_name}: {e}")
+        
+        # Si no hay resultados, terminar
+        if not resultados:
+            logger.warning(f"No se encontraron resultados para: {nombre_producto}")
+            return None
+        
+        # Imprimir resultados para diagnóstico
+        for i, resultado in enumerate(resultados):
+            logger.info(f"Resultado #{i+1}: {resultado['fuente']} - "
+                       f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
+                       f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
+        
+        # Filtrar productos sin existencia 
+        productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
+        
+        # Si hay productos con existencia, usarlos, sino usar todos los resultados
+        productos_a_comparar = productos_con_existencia if productos_con_existencia else resultados
+        
+        # Ordenar por precio (menor a mayor)
+        productos_ordenados = sorted(productos_a_comparar, key=lambda x: x['precio_numerico'])
+        
+        # Elegir el de menor precio
+        mejor_producto = productos_ordenados[0] if productos_ordenados else None
+        
+        if mejor_producto:
+            logger.info(f"Mejor resultado seleccionado: {mejor_producto['nombre']} de {mejor_producto['fuente']} "
+                       f"- Precio: {mejor_producto['precio']} - Existencia: {mejor_producto['existencia']}")
+            
+            # Eliminar campos auxiliares de comparación antes de devolver
+            del mejor_producto['precio_numerico']
+            del mejor_producto['existencia_numerica']
+        
+        return mejor_producto
