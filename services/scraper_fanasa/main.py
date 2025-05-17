@@ -67,12 +67,13 @@ def login_fanasa_carrito():
     Returns:
         webdriver.Chrome: Instancia del navegador con sesión iniciada o None si falla
     """
-    driver = inicializar_navegador(headless=True)  # Usar True para entorno de producción
-    if not driver:
-        logger.error("No se pudo inicializar el navegador. Abortando.")
-        return None
-    
+    driver = None
     try:
+        driver = inicializar_navegador(headless=True)  # Usar True para entorno de producción
+        if not driver:
+            logger.error("No se pudo inicializar el navegador. Abortando.")
+            return None
+        
         # 1. Navegar a la página de login
         logger.info(f"Navegando a la página de login: {LOGIN_URL}")
         driver.get(LOGIN_URL)
@@ -185,7 +186,6 @@ def login_fanasa_carrito():
         button_selectors = [
             "button.btn-primary",  # Clase probable basada en la captura
             "button[type='submit']",
-            "button:contains('Iniciar sesión')",
             ".btn-primary",
             ".btn-login"
         ]
@@ -194,7 +194,7 @@ def login_fanasa_carrito():
             try:
                 buttons = driver.find_elements(By.CSS_SELECTOR, selector)
                 for button in buttons:
-                    if button.is_displayed() and "iniciar sesión" in button.text.lower():
+                    if button.is_displayed():
                         login_button = button
                         logger.info(f"Botón 'Iniciar sesión' encontrado con selector: {selector}")
                         break
@@ -213,18 +213,6 @@ def login_fanasa_carrito():
                             login_button = button
                             logger.info("Botón 'Iniciar sesión' encontrado por texto")
                             break
-            except:
-                pass
-        
-        # Si no se encuentra un botón específico, buscar cualquier botón visible
-        if not login_button:
-            try:
-                all_buttons = driver.find_elements(By.TAG_NAME, "button")
-                for button in all_buttons:
-                    if button.is_displayed() and button.is_enabled():
-                        login_button = button
-                        logger.info("Usando primer botón visible como botón de login")
-                        break
             except:
                 pass
         
@@ -302,30 +290,235 @@ def login_fanasa_carrito():
             driver.quit()
         return None
 
-# SKU / CÓDIGO DE PRODUCTO
+def buscar_producto(driver, nombre_producto):
+    """
+    Busca un producto en el sitio una vez que estamos logueados.
+    
+    Args:
+        driver: Instancia del navegador con sesión iniciada
+        nombre_producto: Nombre del producto a buscar
+        
+    Returns:
+        bool: True si se encontró y accedió al detalle del producto, False en caso contrario
+    """
+    if not driver:
+        logger.error("No se proporcionó un navegador válido para buscar producto")
+        return False
+    
+    try:
+        logger.info(f"Buscando producto: {nombre_producto}")
+        
+        # Esperar un momento para que la página se cargue completamente
+        time.sleep(5)
+        
+        # Buscar específicamente por la clase identificada
+        search_field = None
         try:
-            # Buscar elementos que contengan "SKU" o "Código"
+            search_field = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "input.search_input"))
+            )
+            logger.info("Campo de búsqueda encontrado por clase 'search_input'")
+        except:
+            logger.warning("No se pudo encontrar el campo con clase 'search_input'")
+        
+        # Si no funciona, intentar con otros selectores
+        if not search_field:
+            specific_selectors = [
+                "input[placeholder='Nombre, laboratorio, sal, código de barras o Categoria']",
+                "input.ng-untouched.ng-pristine.ng-valid[type='text']",
+                ".search_input",
+                "input.input-src"
+            ]
+            
+            for selector in specific_selectors:
+                try:
+                    search_field = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    if search_field and search_field.is_displayed():
+                        logger.info(f"Campo de búsqueda encontrado con selector: {selector}")
+                        break
+                except:
+                    logger.warning(f"No se encontró el campo con selector: {selector}")
+        
+        # Si encontramos el campo, intentar interactuar con él
+        if search_field and search_field.is_displayed():
+            logger.info("Campo de búsqueda encontrado y visible")
+            
+            # Enfocarse en el campo antes de interactuar
+            driver.execute_script("arguments[0].focus();", search_field)
+            time.sleep(1)
+            
+            # Limpiar el campo primero
+            driver.execute_script("arguments[0].value = '';", search_field)
+            time.sleep(0.5)
+            
+            # Escribir el texto usando JavaScript
+            driver.execute_script(f"arguments[0].value = '{nombre_producto}';", search_field)
+            logger.info(f"Texto '{nombre_producto}' ingresado con JavaScript")
+            time.sleep(0.5)
+            
+            # Intentar enviar la búsqueda con Enter
             try:
-                sku_elements = driver.find_elements(By.XPATH, 
-                    "//*[contains(text(), 'SKU') or contains(text(), 'Código') or contains(text(), 'Codigo')]/following::*")
-                
-                for element in sku_elements:
-                    if element.is_displayed():
-                        texto = element.text.strip()
-                        # Los SKUs generalmente son números largos
-                        sku_match = re.search(r'\b(\d{7,})\b', texto)
-                        if sku_match:
-                            info_producto['sku'] = sku_match.group(1)
-                            logger.info(f"SKU: {info_producto['sku']}")
-                            break
-                        # Si no hay número largo pero contiene un patrón alfanumérico que podría ser un código
-                        elif re.match(r'^[A-Za-z0-9-]+', texto) and len(texto) >= 5:
-                            info_producto['sku'] = texto
-                            logger.info(f"SKU (alfanumérico): {info_producto['sku']}")
-                            break
+                # Presionar Enter con JavaScript/Action Chains
+                search_field.send_keys(Keys.RETURN)
+                logger.info("Tecla Enter enviada al campo")
             except:
-                pass
+                logger.warning("Error al enviar Enter, intentando alternativa...")
+                # Alternativa: buscar y hacer clic en el botón de búsqueda (lupa)
+                try:
+                    # Buscar botón de búsqueda por su posición junto al campo
+                    buscar_btns = driver.find_elements(By.CSS_SELECTOR, ".btn-buscar, button.search-btn, button[type='submit'], button.btn-search")
+                    if buscar_btns:
+                        for btn in buscar_btns:
+                            if btn.is_displayed():
+                                logger.info("Botón de búsqueda encontrado, haciendo clic...")
+                                btn.click()
+                                break
+                    else:
+                        # Si no hay botón específico, intentar presionar Enter con Action Chains
+                        logger.info("Intentando buscar con Action Chains...")
+                        actions = webdriver.ActionChains(driver)
+                        actions.send_keys(Keys.RETURN).perform()
+                except Exception as e:
+                    logger.warning(f"Error al hacer clic en botón de búsqueda: {e}")
+            
+            # Esperar a que se procese la búsqueda
+            time.sleep(5)
+            
+            # Verificar si se procesó la búsqueda
+            page_source = driver.page_source
+            if nombre_producto.lower() in page_source.lower():
+                logger.info(f"Texto de búsqueda '{nombre_producto}' encontrado en la página")
+                
+                # Comprobar si hay resultados
+                if "No se pudo encontrar el producto" in page_source:
+                    logger.warning(f"No se encontraron resultados para: '{nombre_producto}'")
+                    return False
+                else:
+                    logger.info(f"Búsqueda exitosa para: '{nombre_producto}'")
+                    return True
+            else:
+                logger.warning(f"No se encontró evidencia de que la búsqueda '{nombre_producto}' se procesara")
+                return False
+        else:
+            logger.warning("Campo de búsqueda no encontrado o no visible")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Error general durante la búsqueda: {e}")
+        return False
 
+def extraer_info_producto(driver):
+    """
+    Extrae información detallada del producto de la página actual.
+    
+    Args:
+        driver: Instancia del navegador con la página de detalle abierta
+        
+    Returns:
+        dict: Diccionario con la información del producto o None si hay error
+    """
+    if not driver:
+        logger.error("No se proporcionó un navegador válido")
+        return None
+    
+    try:
+        logger.info("Extrayendo información del producto...")
+        # Esperar a que la página cargue completamente
+        time.sleep(3)
+        
+        # Inicializar diccionario con todas las claves (incluso vacías)
+        info_producto = {
+            'url': driver.current_url,
+            'nombre': '',
+            'precio_neto': '',
+            'pmp': '',
+            'sku': '',
+            'laboratorio': '',
+            'disponibilidad': 'Stock disponible',
+            'imagen': '',
+            'descripcion': ''
+        }
+
+        # NOMBRE DEL PRODUCTO
+        try:
+            nombre_selectors = [
+                "h1", "h2", "h3", ".product-name", ".product-title", "h1.product-name", 
+                ".name-product", "strong.name", ".product-header h1", "[itemprop='name']"
+            ]
+            
+            for selector in nombre_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        if element.is_displayed() and element.text.strip():
+                            text = element.text.strip()
+                            # Verificar si el texto parece un nombre de producto
+                            if len(text) > 5 and not text.lower() in ["detalle", "detalle de producto"]:
+                                info_producto['nombre'] = text
+                                logger.info(f"Nombre del producto: {info_producto['nombre']}")
+                                break
+                    if info_producto['nombre']:
+                        break
+                except:
+                    continue
+        except Exception as e:
+            logger.warning(f"Error extrayendo nombre: {e}")
+
+        # PRECIO NETO
+        try:
+            precio_neto_elements = driver.find_elements(By.XPATH, 
+                "//*[contains(text(), 'Precio Neto')]/following::*[contains(text(), '$')]")
+            
+            for element in precio_neto_elements:
+                if element.is_displayed():
+                    texto_precio = element.text.strip()
+                    precio_match = re.search(r'\$\s*([\d,]+\.?\d*)', texto_precio)
+                    if precio_match:
+                        info_producto['precio_neto'] = f"${precio_match.group(1)}"
+                        logger.info(f"Precio Neto: {info_producto['precio_neto']}")
+                        break
+        except Exception as e:
+            logger.warning(f"Error extrayendo precio: {e}")
+
+        # LABORATORIO / FABRICANTE
+        try:
+            lab_elements = driver.find_elements(By.XPATH, 
+                "//*[contains(text(), 'Laboratorio') or contains(text(), 'Fabricante')]/following::*")
+            
+            for element in lab_elements:
+                if element.is_displayed() and element.text.strip():
+                    texto = element.text.strip()
+                    # Verificar que no sea un texto genérico o un precio
+                    if len(texto) > 3 and "$" not in texto:
+                        info_producto['laboratorio'] = texto
+                        logger.info(f"Laboratorio: {info_producto['laboratorio']}")
+                        break
+        except Exception as e:
+            logger.warning(f"Error extrayendo laboratorio: {e}")
+
+        # IMAGEN DEL PRODUCTO
+        try:
+            all_images = driver.find_elements(By.TAG_NAME, "img")
+            for img in all_images:
+                if img.is_displayed():
+                    src = img.get_attribute("src")
+                    # Excluir logos e íconos pequeños
+                    if src and ('http' in src) and "logo" not in src.lower():
+                        # Comprobar tamaño mínimo
+                        if img.size['width'] > 50 and img.size['height'] > 50:
+                            info_producto['imagen'] = src
+                            logger.info(f"URL de imagen: {info_producto['imagen']}")
+                            break
+        except Exception as e:
+            logger.warning(f"Error extrayendo imagen: {e}")
+            
+        return info_producto
+            
+    except Exception as e:
+        logger.error(f"Error general durante la extracción de información: {e}")
+        return None
 
 def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
@@ -400,12 +593,8 @@ if __name__ == "__main__":
     print(f"\nBuscando información sobre: {medicamento}")
     print("Espere un momento...\n")
     
-    # Definir el modo headless basado en entorno
-    import os
-    headless = os.environ.get('ENVIRONMENT', 'production').lower() != 'development'
-    
     # Buscar información del medicamento
-    info = buscar_info_medicamento(medicamento, headless=headless)
+    info = buscar_info_medicamento(medicamento)
     
     if info:
         print("\n=== INFORMACIÓN DEL PRODUCTO ===")
@@ -418,22 +607,5 @@ if __name__ == "__main__":
         if info.get('imagen'):
             print(f"Imagen: {info['imagen']}")
         print(f"URL: {info['url']}")
-        
-        # Preguntar si desea guardar la información en un archivo
-        guardar = input("\n¿Deseas guardar esta información en un archivo? (s/n): ").lower()
-        if guardar == 's':
-            try:
-                import json
-                from datetime import datetime
-                
-                fecha_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-                nombre_archivo = f"{info['nombre']}_{fecha_hora}.json".replace(" ", "_").replace("/", "_")
-                
-                with open(nombre_archivo, "w", encoding="utf-8") as f:
-                    json.dump(info, f, ensure_ascii=False, indent=4)
-                
-                print(f"\n✅ Información guardada en el archivo: {nombre_archivo}")
-            except Exception as e:
-                print(f"\n❌ Error al guardar información: {e}")
     else:
         print("No se pudo encontrar información sobre el medicamento solicitado")
