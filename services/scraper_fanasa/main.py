@@ -782,7 +782,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         headless (bool): Si es True, el navegador se ejecuta en modo headless
         
     Returns:
-        dict: Diccionario con la información del medicamento o None si no se encuentra
+        dict: Diccionario con la información del medicamento o diccionario con error si no se encuentra
     """
     driver = None
     try:
@@ -792,7 +792,12 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         driver = login_fanasa_carrito()
         if not driver:
             logger.error("No se pudo iniciar sesión en FANASA. Abortando búsqueda.")
-            return None
+            return {
+                "error": "error_login", 
+                "mensaje": "No se pudo iniciar sesión en FANASA",
+                "estado": "error",
+                "fuente": "FANASA"
+            }
         
         # 2. Buscar el producto
         logger.info(f"Sesión iniciada. Buscando producto: '{nombre_medicamento}'")
@@ -801,7 +806,15 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         
         if not resultado_busqueda:
             logger.warning(f"No se pudo encontrar o acceder al producto: '{nombre_medicamento}'")
-            return None
+            # Crear una respuesta estructurada para productos no encontrados
+            return {
+                "nombre": nombre_medicamento,
+                "mensaje": f"No se encontró información para {nombre_medicamento} en FANASA",
+                "estado": "no_encontrado",
+                "fuente": "FANASA",
+                "disponibilidad": "No disponible",
+                "existencia": "0"
+            }
         
         # 3. Extraer información del producto
         logger.info("Extrayendo información del producto...")
@@ -810,6 +823,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         # Añadir la fuente para integración con el servicio principal
         if info_producto:
             info_producto['fuente'] = 'FANASA'
+            info_producto['estado'] = 'encontrado'
             # Compatibilidad para trabajar con el servicio de orquestación
             info_producto['existencia'] = '0'
             if info_producto['disponibilidad']:
@@ -819,37 +833,113 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                     info_producto['existencia'] = stock_match.group(1)
                 elif 'disponible' in info_producto['disponibilidad'].lower():
                     info_producto['existencia'] = 'Si'
-        
-        return info_producto
+            
+            return info_producto
+        else:
+            # Si no se pudo extraer información, devolver respuesta estructurada
+            return {
+                "nombre": nombre_medicamento,
+                "mensaje": f"No se pudo extraer información para {nombre_medicamento} en FANASA",
+                "estado": "error_extraccion",
+                "fuente": "FANASA",
+                "disponibilidad": "Desconocida",
+                "existencia": "0"
+            }
         
     except Exception as e:
         logger.error(f"Error general durante el proceso: {e}")
-        return None
+        return {
+            "nombre": nombre_medicamento,
+            "mensaje": f"Error al buscar {nombre_medicamento}: {str(e)}",
+            "estado": "error",
+            "fuente": "FANASA",
+            "disponibilidad": "Error",
+            "existencia": "0"
+        }
     finally:
         if driver:
             logger.info("Cerrando navegador...")
             driver.quit()
 
-# Para ejecución directa como script independiente
-if __name__ == "__main__":
-    import sys
+# Función para enviar mensajes a WhatsApp a través de Twilio
+def enviar_whatsapp(mensaje, numero_destino="+5214778150806"):
+    """
+    Envía un mensaje a WhatsApp usando la API de Twilio.
     
-    print("=== Sistema de Búsqueda de Medicamentos en FANASA ===")
+    Args:
+        mensaje (str): Mensaje a enviar
+        numero_destino (str): Número de teléfono de destino con código de país
+        
+    Returns:
+        bool: True si el mensaje se envió correctamente, False si hubo error
+    """
+    try:
+        from twilio.rest import Client
+        
+        # Credenciales de Twilio (asegúrate de tenerlas configuradas en variables de entorno)
+        account_sid = os.environ.get('TWILIO_ACCOUNT_SID', 'AC82a4a1a2fcfb6c6eb8bae97258424166')
+        auth_token = os.environ.get('TWILIO_AUTH_TOKEN', '1df91deab6d73e7ef8cace26d50cd9a8')
+        twilio_whatsapp = os.environ.get('TWILIO_WHATSAPP', 'whatsapp:+14155238886')
+        
+        # Asegurarse de que el número de destino tenga el formato correcto
+        if not numero_destino.startswith('whatsapp:'):
+            numero_destino = f'whatsapp:{numero_destino}'
+        
+        # Inicializar cliente de Twilio
+        client = Client(account_sid, auth_token)
+        
+        # Enviar mensaje
+        message = client.messages.create(
+            body=mensaje,
+            from_=twilio_whatsapp,
+            to=numero_destino
+        )
+        
+        logger.info(f"Mensaje enviado a whatsapp:{numero_destino}. SID: {message.sid}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error al enviar mensaje WhatsApp: {e}")
+        return False
+
+# Para ejecutar como script independiente o como parte de un servicio
+def main():
+    import argparse
+    import json
+    import os
     
-    # Si se proporciona un argumento por línea de comandos, usarlo como nombre del medicamento
-    if len(sys.argv) > 1:
-        medicamento = " ".join(sys.argv[1:])
-    else:
-        # De lo contrario, pedir al usuario
+    # Configuración de argumentos de línea de comandos
+    parser = argparse.ArgumentParser(description='Buscar información de medicamentos en FANASA')
+    parser.add_argument('--medicamento', type=str, help='Nombre del medicamento a buscar')
+    parser.add_argument('--output', type=str, help='Archivo de salida para los resultados (JSON)')
+    parser.add_argument('--headless', action='store_true', help='Ejecutar en modo headless (sin interfaz gráfica)')
+    parser.add_argument('--whatsapp', type=str, help='Número de WhatsApp para enviar resultados (+521XXXXXXXXXX)')
+    
+    args = parser.parse_args()
+    
+    # Si no se especifica medicamento, solicitar entrada manual
+    if not args.medicamento:
         medicamento = input("Ingrese el nombre del medicamento a buscar: ")
+    else:
+        medicamento = args.medicamento
     
+    # Buscar información del medicamento
     print(f"\nBuscando información sobre: {medicamento}")
     print("Espere un momento...\n")
     
-    # Buscar información del medicamento
-    info = buscar_info_medicamento(medicamento)
+    info = buscar_info_medicamento(medicamento, headless=args.headless)
     
-    if info:
+    # Determinar estado del resultado
+    estado = info.get('estado', 'desconocido')
+    
+    # Crear mensaje según el estado
+    if estado == 'encontrado':
+        mensaje = f"✅ Producto encontrado en FANASA: {info.get('nombre', medicamento)}\n"
+        mensaje += f"💊 Precio Neto: {info.get('precio_neto', 'No disponible')}\n"
+        mensaje += f"📦 Disponibilidad: {info.get('disponibilidad', 'No especificada')}\n"
+        mensaje += f"🏭 Laboratorio: {info.get('laboratorio', 'No especificado')}\n"
+        
+        # Mostrar en consola
         print("\n=== INFORMACIÓN DEL PRODUCTO ===")
         print(f"Nombre: {info.get('nombre', 'No disponible')}")
         print(f"Precio Neto: {info.get('precio_neto', 'No disponible')}")
@@ -859,6 +949,35 @@ if __name__ == "__main__":
         print(f"Disponibilidad: {info.get('disponibilidad', 'No disponible')}")
         if info.get('imagen'):
             print(f"Imagen: {info['imagen']}")
-        print(f"URL: {info['url']}")
+        print(f"URL: {info.get('url', 'No disponible')}")
+        
+        # Resultado para procesamiento
+        resultado = "producto_encontrado"
     else:
-        print("No se pudo encontrar información sobre el medicamento solicitado")
+        # Casos de error o producto no encontrado
+        mensaje = f"❌ {info.get('mensaje', f'No se encontró información para {medicamento} en FANASA')}"
+        
+        # Mostrar en consola
+        print("\n⚠️ " + mensaje)
+        
+        # Resultado para procesamiento
+        resultado = "producto_no_encontrado"
+    
+    # Guardar resultados en archivo JSON si se especificó
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                json.dump(info, f, ensure_ascii=False, indent=4)
+            print(f"\nResultados guardados en: {args.output}")
+        except Exception as e:
+            print(f"\n❌ Error al guardar resultados: {e}")
+    
+    # Enviar notificación por WhatsApp si se especificó un número
+    if args.whatsapp:
+        print(f"\nEnviando notificación a WhatsApp: {args.whatsapp}")
+        enviar_whatsapp(mensaje, args.whatsapp)
+    
+    return resultado, info
+
+if __name__ == "__main__":
+    main()
