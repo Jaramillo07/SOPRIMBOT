@@ -1,13 +1,12 @@
 """
 Manejador de mensajes para SOPRIM BOT.
-Orquesta la interacción entre los diferentes servicios.
-Actualizado para usar el servicio de scraping integrado.
+MODIFICADO TEMPORALMENTE para usar solo el scraper de FANASA para validación.
 """
 import logging
 import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
-from services.scraping_service import ScrapingService  # Mantenemos el nombre original
+from services.scraping_service import ScrapingService  # Servicio modificado solo para FANASA
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -20,17 +19,18 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """
     Clase que maneja los mensajes entrantes y coordina las respuestas.
+    MODIFICADA temporalmente para validación de FANASA.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler con Scraping Service Integrado")
+        logger.info("Inicializando MessageHandler MODIFICADO para validación de FANASA")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
-        self.scraping_service = ScrapingService()  # Mantenemos el nombre original
-        logger.info("MessageHandler inicializado correctamente")
+        self.scraping_service = ScrapingService()  # Servicio modificado que solo usa FANASA
+        logger.info("MessageHandler inicializado correctamente para validación")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
@@ -137,6 +137,7 @@ class MessageHandler:
     async def procesar_mensaje(self, mensaje: str, phone_number: str) -> dict:
         """
         Procesa un mensaje entrante y genera una respuesta.
+        MODIFICADO para validación de FANASA.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
@@ -145,7 +146,7 @@ class MessageHandler:
         Returns:
             dict: Resultado de la operación
         """
-        logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
+        logger.info(f"Procesando mensaje (validación FANASA): '{mensaje}' de {phone_number}")
         
         # 0) Verificar si el número está en la lista de permitidos
         formatted_number = self.whatsapp_service.format_phone_number(phone_number)
@@ -186,20 +187,28 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, hacemos scraping con el scraper
+        # 3) Si es consulta de producto, hacemos scraping con el scraper de FANASA
         if tipo_mensaje == "consulta_producto" and producto_detectado:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
             try:
-                # Llamar al servicio de scraping
+                # Llamar al servicio de scraping (modificado para usar solo FANASA)
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
                 
                 if product_info:
-                    logger.info(f"Información encontrada para {producto_detectado}")
+                    logger.info(f"Información encontrada para {producto_detectado} en FANASA")
                     # Generar respuesta con Gemini
-                    respuesta = self.gemini_service.generate_product_response(mensaje, product_info)
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context="Esta información proviene de FANASA."
+                    )
+                    
+                    # Añadir prefijo de FANASA TEST para identificar claramente
+                    respuesta_prefijo = "[⚠️ TEST FANASA] "
+                    respuesta_completa = respuesta_prefijo + respuesta
                     
                     # Intentar enviar respuesta
-                    result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
+                    result = self.whatsapp_service.send_product_response(phone_number, respuesta_completa, product_info)
                     
                     # Verificar si hubo error de sandbox
                     if result.get("text", {}).get("sandbox_restriction"):
@@ -209,7 +218,7 @@ class MessageHandler:
                             "message_type": "error_sandbox",
                             "error": result["text"].get("error"),
                             "suggestion": result["text"].get("suggestion"),
-                            "respuesta": respuesta
+                            "respuesta": respuesta_completa
                         }
                     
                     return {
@@ -217,14 +226,19 @@ class MessageHandler:
                         "message_type": "producto",
                         "producto": producto_detectado,
                         "tiene_imagen": bool(product_info.get("imagen")),
-                        "respuesta": respuesta
+                        "respuesta": respuesta_completa
                     }
                 else:
-                    logger.info(f"No se encontró información para {producto_detectado}")
+                    logger.info(f"No se encontró información para {producto_detectado} en FANASA")
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado}. {mensaje}"
+                        f"No encontré información específica sobre {producto_detectado} en FANASA. {mensaje}"
                     )
-                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Añadir prefijo de FANASA TEST para identificar claramente
+                    respuesta_prefijo = "[⚠️ TEST FANASA - No encontrado] "
+                    respuesta_completa = respuesta_prefijo + respuesta
+                    
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta_completa)
                     
                     # Verificar si hubo error de sandbox
                     if result.get("sandbox_restriction"):
@@ -234,14 +248,14 @@ class MessageHandler:
                             "message_type": "error_sandbox",
                             "error": result.get("error"),
                             "suggestion": result.get("suggestion"),
-                            "respuesta": respuesta
+                            "respuesta": respuesta_completa
                         }
                     
                     return {
                         "success": True,
                         "message_type": "producto_no_encontrado",
                         "producto": producto_detectado,
-                        "respuesta": respuesta
+                        "respuesta": respuesta_completa
                     }
             except Exception as e:
                 logger.error(f"Error durante el scraping: {e}")
@@ -250,7 +264,12 @@ class MessageHandler:
         # 4) En cualquier otro caso, respuesta general
         logger.info("Generando respuesta general con Gemini")
         respuesta = self.gemini_service.generate_response(mensaje)
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+        
+        # Añadir prefijo de FANASA TEST para identificar claramente
+        respuesta_prefijo = "[⚠️ TEST FANASA - General] "
+        respuesta_completa = respuesta_prefijo + respuesta
+        
+        result = self.whatsapp_service.send_text_message(phone_number, respuesta_completa)
         
         # Verificar si hubo error de sandbox
         if result.get("sandbox_restriction"):
@@ -260,11 +279,11 @@ class MessageHandler:
                 "message_type": "error_sandbox",
                 "error": result.get("error"),
                 "suggestion": result.get("suggestion"),
-                "respuesta": respuesta
+                "respuesta": respuesta_completa
             }
         
         return {
             "success": True,
             "message_type": "general",
-            "respuesta": respuesta
+            "respuesta": respuesta_completa
         }
