@@ -131,9 +131,18 @@ class GeminiService:
                 fuente_original = product_info.get('fuente', '')
                 codigo_fuente = fuente_mapping.get(fuente_original, fuente_original.upper()[:2] if fuente_original else '')
                 
+                # Detectar cantidad en el mensaje del usuario
+                import re
+                cantidad = 1  # Valor por defecto
+                cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
+                if cantidad_match:
+                    cantidad = int(cantidad_match.group(1))
+                    logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
+                
                 # Calcular precio con margen del 45%
                 precio_original = product_info.get('precio', 'No disponible')
-                precio_mostrar = "No disponible"
+                precio_unitario = "No disponible"
+                precio_total = "No disponible"
                 
                 if precio_original != 'No disponible':
                     try:
@@ -144,11 +153,18 @@ class GeminiService:
                         # Aplicar margen del 45%
                         precio_con_margen = precio_float * 1.45
                         
+                        # Calcular precio total basado en la cantidad
+                        precio_total_float = precio_con_margen * cantidad
+                        
                         # Formatear de vuelta a string con formato de moneda
-                        precio_mostrar = f"${precio_con_margen:.2f}"
+                        precio_unitario = f"${precio_con_margen:.2f}"
+                        precio_total = f"${precio_total_float:.2f}"
+                        
+                        logger.info(f"Precio unitario con margen: {precio_unitario}, Cantidad: {cantidad}, Precio total: {precio_total}")
                     except ValueError:
                         logger.warning(f"No se pudo convertir el precio: {precio_original}")
-                        precio_mostrar = precio_original
+                        precio_unitario = precio_original
+                        precio_total = precio_original
                 
                 # Determinar mensaje de entrega según el código de fuente
                 if codigo_fuente == "SF":
@@ -164,16 +180,18 @@ Información del producto:
 - Código de barras: {product_info.get('codigo_barras', 'No disponible')}
 - Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
 - URL del producto: {product_info.get('url', 'No disponible')}
-- Precio: {precio_mostrar}
+- Precio unitario: {precio_unitario}
+- Precio total (cantidad: {cantidad}): {precio_total}
 - Existencia: {product_info.get('existencia', 'No disponible')}
 - Código fuente: {codigo_fuente}
 - Información de entrega: {mensaje_entrega}
 """
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
-                precio_mostrar = "No disponible"
+                precio_total = "No disponible"
                 codigo_fuente = ""
                 mensaje_entrega = ""
+                cantidad = 1
             
             # Crear el prompt completo
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
@@ -183,13 +201,13 @@ Mensaje del cliente: {user_message}
 {additional_context}
 IMPORTANTE: Genera una respuesta EXTREMADAMENTE BREVE Y DIRECTA siguiendo estas reglas:
 1. NO menciones el nombre del producto en tu respuesta
-2. Informa SOLO el precio total
+2. Informa SOLO el precio total (ya calculado con la cantidad de {cantidad})
 3. Indica claramente el tiempo de entrega (mismo día o día siguiente)
 4. Sugiere contacto directo para confirmar stock o programar entrega
 5. Si es necesario mencionar la fuente, colócala AL FINAL entre paréntesis como: (Origen: XX)
 
 FORMATO OBLIGATORIO:
-"El precio total sería de [PRECIO]. [INFO ENTREGA]. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: [CÓDIGO])"
+"El precio total sería de {precio_total}. [INFO ENTREGA]. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: {codigo_fuente})"
 
 Tu respuesta debe tener MÁXIMO 3 FRASES, ser concisa y directa.
 """
