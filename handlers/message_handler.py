@@ -1,12 +1,12 @@
 """
 Manejador de mensajes para SOPRIM BOT.
-MODIFICADO para usar exclusivamente el scraper de NADRO para pruebas.
+Adaptado para trabajar con múltiples scrapers (Difarmer, Sufarmed, FANASA y NADRO).
 """
 import logging
 import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
-from services.scraping_service import ScrapingService  # Servicio modificado solo para NADRO
+from services.scraping_service import ScrapingService  # Servicio integrado con 4 scrapers
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -19,18 +19,18 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """
     Clase que maneja los mensajes entrantes y coordina las respuestas.
-    MODIFICADA temporalmente para pruebas con NADRO.
+    Adaptada para trabajar con múltiples scrapers.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler MODIFICADO para pruebas con NADRO")
+        logger.info("Inicializando MessageHandler con soporte para múltiples scrapers")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
-        self.scraping_service = ScrapingService()  # Servicio modificado que solo usa NADRO
-        logger.info("MessageHandler inicializado correctamente para pruebas")
+        self.scraping_service = ScrapingService()  # Servicio integrado con 4 scrapers
+        logger.info("MessageHandler inicializado correctamente")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
@@ -137,7 +137,7 @@ class MessageHandler:
     async def procesar_mensaje(self, mensaje: str, phone_number: str) -> dict:
         """
         Procesa un mensaje entrante y genera una respuesta.
-        MODIFICADO para pruebas con NADRO.
+        Adaptado para trabajar con múltiples scrapers.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
@@ -146,9 +146,9 @@ class MessageHandler:
         Returns:
             dict: Resultado de la operación
         """
-        logger.info(f"Procesando mensaje (pruebas NADRO): '{mensaje}' de {phone_number}")
+        logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
         
-        # 0) Verificar si el número está en la lista de permitidos
+        # 0) Verificar si el número está en la lista de permitidos (solo en pruebas)
         formatted_number = self.whatsapp_service.format_phone_number(phone_number)
         logger.info(f"Número formateado: {formatted_number}")
         if ALLOWED_TEST_NUMBERS and formatted_number not in ALLOWED_TEST_NUMBERS:
@@ -160,7 +160,7 @@ class MessageHandler:
                 "respuesta": None
             }
         else:
-            logger.info(f"Número {formatted_number} está permitido para pruebas")
+            logger.info(f"Número {formatted_number} está permitido para interacción")
         
         # 1) Ignorar saludos y mensajes personales
         if self.es_mensaje_a_ignorar(mensaje):
@@ -187,73 +187,71 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, hacemos scraping con el scraper de NADRO
+        # 3) Si es consulta de producto, hacemos scraping con los scrapers disponibles
         if tipo_mensaje == "consulta_producto" and producto_detectado:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
             try:
-                # Llamar al servicio de scraping (modificado para usar solo NADRO)
+                # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
                 
                 if product_info:
-                    logger.info(f"Información encontrada para {producto_detectado} en NADRO")
+                    logger.info(f"Información encontrada para {producto_detectado} en {product_info.get('fuente', 'farmacia')}")
+                    
+                    # Añadir información sobre la farmacia para inclusión en la respuesta
+                    farmacia_nombre = product_info.get('nombre_farmacia', product_info.get('fuente', 'farmacia'))
+                    additional_context = f"Esta información proviene de {farmacia_nombre}."
+                    
                     # Generar respuesta con Gemini
                     respuesta = self.gemini_service.generate_product_response(
                         mensaje, 
                         product_info,
-                        additional_context="Esta información proviene de NADRO."
+                        additional_context=additional_context
                     )
                     
-                    # Añadir prefijo de NADRO TEST para identificar claramente
-                    respuesta_prefijo = "[⚠️ TEST NADRO] "
-                    respuesta_completa = respuesta_prefijo + respuesta
-                    
                     # Intentar enviar respuesta
-                    result = self.whatsapp_service.send_product_response(phone_number, respuesta_completa, product_info)
+                    result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
                     
                     # Verificar si hubo error de sandbox
                     if result.get("text", {}).get("status") == "error":
-                        logger.error("Error de sandbox al enviar respuesta de producto")
+                        logger.error("Error al enviar respuesta de producto")
                         return {
                             "success": False,
                             "message_type": "error_sandbox",
                             "error": result["text"].get("message", "Error al enviar mensaje"),
-                            "respuesta": respuesta_completa
+                            "respuesta": respuesta
                         }
                     
                     return {
                         "success": True,
                         "message_type": "producto",
                         "producto": producto_detectado,
+                        "fuente": product_info.get('fuente', 'farmacia'),
                         "tiene_imagen": bool(product_info.get("imagen")),
-                        "respuesta": respuesta_completa
+                        "respuesta": respuesta
                     }
                 else:
-                    logger.info(f"No se encontró información para {producto_detectado} en NADRO")
+                    logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado} en NADRO. {mensaje}"
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}"
                     )
                     
-                    # Añadir prefijo de NADRO TEST para identificar claramente
-                    respuesta_prefijo = "[⚠️ TEST NADRO - No encontrado] "
-                    respuesta_completa = respuesta_prefijo + respuesta
-                    
-                    result = self.whatsapp_service.send_text_message(phone_number, respuesta_completa)
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
                     
                     # Verificar si hubo error de sandbox
                     if result.get("status") == "error":
-                        logger.error("Error de sandbox al enviar respuesta de producto no encontrado")
+                        logger.error("Error al enviar respuesta de producto no encontrado")
                         return {
                             "success": False,
                             "message_type": "error_sandbox",
                             "error": result.get("message", "Error al enviar mensaje"),
-                            "respuesta": respuesta_completa
+                            "respuesta": respuesta
                         }
                     
                     return {
                         "success": True,
                         "message_type": "producto_no_encontrado",
                         "producto": producto_detectado,
-                        "respuesta": respuesta_completa
+                        "respuesta": respuesta
                     }
             except Exception as e:
                 logger.error(f"Error durante el scraping: {e}")
@@ -263,24 +261,20 @@ class MessageHandler:
         logger.info("Generando respuesta general con Gemini")
         respuesta = self.gemini_service.generate_response(mensaje)
         
-        # Añadir prefijo de NADRO TEST para identificar claramente
-        respuesta_prefijo = "[⚠️ TEST NADRO - General] "
-        respuesta_completa = respuesta_prefijo + respuesta
-        
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta_completa)
+        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
         
         # Verificar si hubo error de sandbox
         if result.get("status") == "error":
-            logger.error("Error de sandbox al enviar respuesta general")
+            logger.error("Error al enviar respuesta general")
             return {
                 "success": False,
                 "message_type": "error_sandbox",
                 "error": result.get("message", "Error al enviar mensaje"),
-                "respuesta": respuesta_completa
+                "respuesta": respuesta
             }
         
         return {
             "success": True,
             "message_type": "general",
-            "respuesta": respuesta_completa
+            "respuesta": respuesta
         }
