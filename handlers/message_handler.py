@@ -7,6 +7,7 @@ import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService  # Servicio integrado con 4 scrapers
+from services.firestore_service import obtener_historial, guardar_interaccion  # Importación de Firestore
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -19,14 +20,14 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """
     Clase que maneja los mensajes entrantes y coordina las respuestas.
-    Adaptada para trabajar con múltiples scrapers.
+    Adaptada para trabajar con múltiples scrapers y almacenar historial en Firestore.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler con soporte para múltiples scrapers")
+        logger.info("Inicializando MessageHandler con soporte para múltiples scrapers y Firestore")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()  # Servicio integrado con 4 scrapers
@@ -137,7 +138,7 @@ class MessageHandler:
     async def procesar_mensaje(self, mensaje: str, phone_number: str) -> dict:
         """
         Procesa un mensaje entrante y genera una respuesta.
-        Adaptado para trabajar con múltiples scrapers.
+        Adaptado para trabajar con múltiples scrapers y mantener historial en Firestore.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
@@ -147,6 +148,9 @@ class MessageHandler:
             dict: Resultado de la operación
         """
         logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
+        
+        # Limpiar el número de teléfono para Firestore
+        clean_phone = phone_number.replace("whatsapp:", "")
         
         # 0) Verificar si el número está en la lista de permitidos (solo en pruebas)
         formatted_number = self.whatsapp_service.format_phone_number(phone_number)
@@ -170,6 +174,10 @@ class MessageHandler:
                 "message_type": "ignorado",
                 "respuesta": None
             }
+        
+        # Obtener historial de conversación de Firestore (10 turnos por defecto)
+        historial = obtener_historial(clean_phone)
+        logger.info(f"Recuperado historial para {clean_phone}: {len(historial)} turnos")
         
         # 2) Detectar tipo de mensaje localmente primero
         tipo_mensaje, producto_detectado = self.detectar_tipo_mensaje(mensaje)
@@ -201,12 +209,17 @@ class MessageHandler:
                     farmacia_nombre = product_info.get('nombre_farmacia', product_info.get('fuente', 'farmacia'))
                     additional_context = f"Esta información proviene de {farmacia_nombre}."
                     
-                    # Generar respuesta con Gemini
+                    # Generar respuesta con Gemini incluyendo el historial
                     respuesta = self.gemini_service.generate_product_response(
                         mensaje, 
                         product_info,
-                        additional_context=additional_context
+                        additional_context=additional_context,
+                        conversation_history=historial
                     )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
                     
                     # Intentar enviar respuesta
                     result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
@@ -231,9 +244,16 @@ class MessageHandler:
                     }
                 else:
                     logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}"
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}",
+                        conversation_history=historial
                     )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
                     
                     result = self.whatsapp_service.send_text_message(phone_number, respuesta)
                     
@@ -259,7 +279,16 @@ class MessageHandler:
         
         # 4) En cualquier otro caso, respuesta general
         logger.info("Generando respuesta general con Gemini")
-        respuesta = self.gemini_service.generate_response(mensaje)
+        
+        # Generar respuesta con Gemini incluyendo el historial
+        respuesta = self.gemini_service.generate_response(
+            mensaje,
+            conversation_history=historial
+        )
+        
+        # Guardar la interacción en Firestore
+        guardar_interaccion(clean_phone, mensaje, respuesta)
+        logger.info(f"Guardada interacción en Firestore para {clean_phone}")
         
         result = self.whatsapp_service.send_text_message(phone_number, respuesta)
         
