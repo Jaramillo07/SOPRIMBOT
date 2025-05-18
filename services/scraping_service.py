@@ -226,6 +226,7 @@ class ScrapingService:
     def _extract_numeric_price(self, price_str):
     """
     Extrae un valor numérico del precio para comparación.
+    
     Modificado para tratar los precios de cero como valores muy altos (baja prioridad).
     
     Args:
