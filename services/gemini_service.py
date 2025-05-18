@@ -181,13 +181,17 @@ Contexto de conversación previa: {context}
 Mensaje del cliente: {user_message}
 {product_details}
 {additional_context}
-Basándote en esta información, proporciona una respuesta útil y profesional al cliente sobre el producto solicitado.
-Responde de forma clara y evitando tecnicismos.
-Incluye siempre el precio en tu respuesta cuando esté disponible.
-Si el precio está disponible, menciónalo claramente al cliente e indícale que puede confirmar la disponibilidad llamando o visitando la tienda.
-Si el precio no está disponible, indícale al cliente que puede consultar el precio y disponibilidad llamando o visitando la tienda.
-Incluye la información sobre el tiempo de entrega en tu respuesta.
-IMPORTANTE: Nunca menciones el nombre real de la farmacia, solo usa el código interno si es necesario referirte a la fuente.
+IMPORTANTE: Genera una respuesta EXTREMADAMENTE BREVE Y DIRECTA siguiendo estas reglas:
+1. NO menciones el nombre del producto en tu respuesta
+2. Informa SOLO el precio total
+3. Indica claramente el tiempo de entrega (mismo día o día siguiente)
+4. Sugiere contacto directo para confirmar stock o programar entrega
+5. Si es necesario mencionar la fuente, colócala AL FINAL entre paréntesis como: (Origen: XX)
+
+FORMATO OBLIGATORIO:
+"El precio total sería de [PRECIO]. [INFO ENTREGA]. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: [CÓDIGO])"
+
+Tu respuesta debe tener MÁXIMO 3 FRASES, ser concisa y directa.
 """
             logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
             logger.debug(f"Información del producto: {product_info}")
