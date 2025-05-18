@@ -34,51 +34,51 @@ class MessageHandler:
         logger.info("MessageHandler inicializado correctamente")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
-    """
-    Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
-    
-    Args:
-        mensaje (str): Mensaje a analizar
+        """
+        Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
         
-    Returns:
-        bool: True si el mensaje debe ignorarse, False si debe procesarse
-    """
-    m = mensaje.lower().strip()
-    # Ignorar mensajes muy cortos
-    if len(m) <= 3:
-        return True
-    
-    # Patrones de conversación personal o saludos
-    patrones_no_relevantes = [
-        r"(?:hola|buenos días|buenas tardes|buenas noches)\b",
-        r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
-        # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
-        r"(?:qué|que).*(?:haces|planes|te parece)",
-        r"(?:te extraño|te quiero|te amo|me gustas)",
-        r"\b(amigo|amiga|carnal|compadre|hermano)\b",
-        r"(?:fiesta|película|cine|restaurante|bar|café|plaza|concierto)",
-        r"(?:cita|vernos|salir)",
-        r"(?:ya llegaste|ya estoy|estoy en|llego en)",
-        r"(?:te llamé|te marqué|no contestas|contesta)"
-    ]
-    for patron in patrones_no_relevantes:
-        if re.search(patron, m):
-            logger.info(f"Ignorado por patrón personal: {patron}")
+        Args:
+            mensaje (str): Mensaje a analizar
+            
+        Returns:
+            bool: True si el mensaje debe ignorarse, False si debe procesarse
+        """
+        m = mensaje.lower().strip()
+        # Ignorar mensajes muy cortos
+        if len(m) <= 3:
             return True
-    
-    # Saludos simples exactos
-    saludos_simples = [
-        r"^hola[\s,.!?]*$",
-        r"^hey[\s,.!?]*$",
-        r"^hi[\s,.!?]*$",
-        r"^buenas[\s,.!?]*$"
-    ]
-    for saludo in saludos_simples:
-        if re.match(saludo, m):
-            logger.info(f"Ignorado por saludo simple: {m}")
-            return True
-    
-    return False
+        
+        # Patrones de conversación personal o saludos
+        patrones_no_relevantes = [
+            r"(?:hola|buenos días|buenas tardes|buenas noches)\b",
+            r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
+            # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
+            r"(?:qué|que).*(?:haces|planes|te parece)",
+            r"(?:te extraño|te quiero|te amo|me gustas)",
+            r"\b(amigo|amiga|carnal|compadre|hermano)\b",
+            r"(?:fiesta|película|cine|restaurante|bar|café|plaza|concierto)",
+            r"(?:cita|vernos|salir)",
+            r"(?:ya llegaste|ya estoy|estoy en|llego en)",
+            r"(?:te llamé|te marqué|no contestas|contesta)"
+        ]
+        for patron in patrones_no_relevantes:
+            if re.search(patron, m):
+                logger.info(f"Ignorado por patrón personal: {patron}")
+                return True
+        
+        # Saludos simples exactos
+        saludos_simples = [
+            r"^hola[\s,.!?]*$",
+            r"^hey[\s,.!?]*$",
+            r"^hi[\s,.!?]*$",
+            r"^buenas[\s,.!?]*$"
+        ]
+        for saludo in saludos_simples:
+            if re.match(saludo, m):
+                logger.info(f"Ignorado por saludo simple: {m}")
+                return True
+        
+        return False
     
     def detectar_tipo_mensaje(self, mensaje):
         """
