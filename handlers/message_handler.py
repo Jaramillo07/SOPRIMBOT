@@ -74,8 +74,8 @@ class MessageHandler:
             r"^buenas[\s,.!?]*$"
         ]
         for saludo in saludos_simples:
-            if re.match(saludo, m):
-                logger.info(f"Ignorado por saludo simple: {m}")
+            if re.fullmatch(saludo, m):  # solo si el saludo es TODO el mensaje
+                logger.info(f"Ignorado por saludo simple aislado: {m}")
                 return True
         
         return False
