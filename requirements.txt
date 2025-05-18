@@ -10,3 +10,4 @@ regex>=2023.6.3
 python-multipart
 twilio
 undetected-chromedriver==3.5.4
+google-cloud-firestore
