@@ -224,41 +224,41 @@ class ScrapingService:
             return False
     
     def _extract_numeric_price(self, price_str):
-    """
-    Extrae un valor numérico del precio para comparación.
-    
-    Modificado para tratar los precios de cero como valores muy altos (baja prioridad).
-    
-    Args:
-        price_str (str): Precio en formato de texto (ej. "$120.50", "120,50", "120")
+        """
+        Extrae un valor numérico del precio para comparación.
         
-    Returns:
-        float: Valor numérico del precio o 9999999.0 si no se puede extraer o es cero
-    """
-    if not price_str:
-        return 9999999.0  # Valor alto para que tenga prioridad baja
-    
-    # Eliminar símbolos de moneda y espacios
-    clean_price = str(price_str).replace('$', '').replace(' ', '')
-    
-    # Convertir comas a puntos si es necesario
-    if ',' in clean_price and '.' not in clean_price:
-        clean_price = clean_price.replace(',', '.')
-    elif ',' in clean_price and '.' in clean_price:
-        # Formato como "$1,234.56"
-        clean_price = clean_price.replace(',', '')
-    
-    # Extraer el número con regex
-    match = re.search(r'(\d+(\.\d+)?)', clean_price)
-    
-    if match:
-        price_value = float(match.group(1))
-        # Considerar precios de cero como valores altos (baja prioridad)
-        if price_value == 0:
-            return 9999999.0
-        return price_value
-    else:
-        return 9999999.0  # Valor por defecto si no se puede extraer
+        Modificado para tratar los precios de cero como valores muy altos (baja prioridad).
+        
+        Args:
+            price_str (str): Precio en formato de texto (ej. "$120.50", "120,50", "120")
+            
+        Returns:
+            float: Valor numérico del precio o 9999999.0 si no se puede extraer o es cero
+        """
+        if not price_str:
+            return 9999999.0  # Valor alto para que tenga prioridad baja
+        
+        # Eliminar símbolos de moneda y espacios
+        clean_price = str(price_str).replace('$', '').replace(' ', '')
+        
+        # Convertir comas a puntos si es necesario
+        if ',' in clean_price and '.' not in clean_price:
+            clean_price = clean_price.replace(',', '.')
+        elif ',' in clean_price and '.' in clean_price:
+            # Formato como "$1,234.56"
+            clean_price = clean_price.replace(',', '')
+        
+        # Extraer el número con regex
+        match = re.search(r'(\d+(\.\d+)?)', clean_price)
+        
+        if match:
+            price_value = float(match.group(1))
+            # Considerar precios de cero como valores altos (baja prioridad)
+            if price_value == 0:
+                return 9999999.0
+            return price_value
+        else:
+            return 9999999.0  # Valor por defecto si no se puede extraer
     
     def _extract_numeric_existencia(self, existencia_str):
         """
@@ -601,109 +601,109 @@ class ScrapingService:
             return None
     
     def buscar_producto(self, nombre_producto):
-    """
-    Busca un producto en todas las fuentes disponibles de forma secuencial en grupos,
-    compara resultados y selecciona el mejor basado en existencia y precio.
-    
-    Args:
-        nombre_producto (str): Nombre del producto a buscar
+        """
+        Busca un producto en todas las fuentes disponibles de forma secuencial en grupos,
+        compara resultados y selecciona el mejor basado en existencia y precio.
         
-    Returns:
-        dict: El mejor producto encontrado o None si no se encuentra en ninguna fuente
-    """
-    logger.info(f"Iniciando búsqueda secuencial para: {nombre_producto}")
-    
-    # Lista para almacenar resultados de todas las fuentes
-    resultados = []
-    
-    # FASE 1: Difarmer y Sufarmed en paralelo (ya probados y funcionan juntos)
-    fase1_scrapers = []
-    if self.difarmer_available:
-        fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
-    if self.sufarmed_available:
-        fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
-    
-    if fase1_scrapers:
-        logger.info("FASE 1: Ejecutando scrapers Difarmer y Sufarmed")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
-            futures = {}
-            for source_name, search_func in fase1_scrapers:
-                future = executor.submit(search_func, nombre_producto)
-                futures[future] = source_name
+        Args:
+            nombre_producto (str): Nombre del producto a buscar
             
-            for future in concurrent.futures.as_completed(futures):
-                source_name = futures[future]
-                try:
-                    resultado = future.result()
-                    if resultado:
-                        # Verificar que el precio no sea cero antes de añadirlo
-                        if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
-                            logger.info(f"Resultado obtenido de {source_name}")
-                            resultados.append(resultado)
-                        else:
-                            logger.warning(f"Resultado de {source_name} descartado por precio cero o inválido")
-                except Exception as e:
-                    logger.error(f"Error en búsqueda de {source_name}: {e}")
-    
-    # FASE 2: NADRO (independiente)
-    if self.nadro_available:
-        logger.info("FASE 2: Ejecutando scraper NADRO")
-        try:
-            resultado_nadro = self.buscar_producto_nadro(nombre_producto)
-            if resultado_nadro:
-                # Verificar que el precio no sea cero antes de añadirlo
-                if resultado_nadro['precio_numerico'] < 9999998.0:  # Un valor normal
-                    logger.info("Resultado obtenido de NADRO")
-                    resultados.append(resultado_nadro)
-                else:
-                    logger.warning("Resultado de NADRO descartado por precio cero o inválido")
-        except Exception as e:
-            logger.error(f"Error en búsqueda de NADRO: {e}")
-    
-    # FASE 3: FANASA (independiente)
-    if self.fanasa_available:
-        logger.info("FASE 3: Ejecutando scraper FANASA")
-        try:
-            resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
-            if resultado_fanasa:
-                # Verificar que el precio no sea cero antes de añadirlo
-                if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
-                    logger.info("Resultado obtenido de FANASA")
-                    resultados.append(resultado_fanasa)
-                else:
-                    logger.warning("Resultado de FANASA descartado por precio cero o inválido")
-        except Exception as e:
-            logger.error(f"Error en búsqueda de FANASA: {e}")
-    
-    # Si no hay resultados, terminar
-    if not resultados:
-        logger.warning(f"No se encontraron resultados para: {nombre_producto}")
-        return None
-    
-    # Imprimir resultados para diagnóstico
-    for i, resultado in enumerate(resultados):
-        logger.info(f"Resultado #{i+1}: {resultado['fuente']} - "
-                   f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
-                   f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
-    
-    # Filtrar productos sin existencia 
-    productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
-    
-    # Si hay productos con existencia, usarlos, sino usar todos los resultados
-    productos_a_comparar = productos_con_existencia if productos_con_existencia else resultados
-    
-    # Ordenar por precio (menor a mayor), pero excluir precios de cero
-    productos_ordenados = sorted(productos_a_comparar, key=lambda x: x['precio_numerico'])
-    
-    # Elegir el de menor precio
-    mejor_producto = productos_ordenados[0] if productos_ordenados else None
-    
-    if mejor_producto:
-        logger.info(f"Mejor resultado seleccionado: {mejor_producto['nombre']} de {mejor_producto['fuente']} "
-                   f"- Precio: {mejor_producto['precio']} - Existencia: {mejor_producto['existencia']}")
+        Returns:
+            dict: El mejor producto encontrado o None si no se encuentra en ninguna fuente
+        """
+        logger.info(f"Iniciando búsqueda secuencial para: {nombre_producto}")
         
-        # Eliminar campos auxiliares de comparación antes de devolver
-        del mejor_producto['precio_numerico']
-        del mejor_producto['existencia_numerica']
-    
-    return mejor_producto
+        # Lista para almacenar resultados de todas las fuentes
+        resultados = []
+        
+        # FASE 1: Difarmer y Sufarmed en paralelo (ya probados y funcionan juntos)
+        fase1_scrapers = []
+        if self.difarmer_available:
+            fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
+        if self.sufarmed_available:
+            fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
+        
+        if fase1_scrapers:
+            logger.info("FASE 1: Ejecutando scrapers Difarmer y Sufarmed")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
+                futures = {}
+                for source_name, search_func in fase1_scrapers:
+                    future = executor.submit(search_func, nombre_producto)
+                    futures[future] = source_name
+                
+                for future in concurrent.futures.as_completed(futures):
+                    source_name = futures[future]
+                    try:
+                        resultado = future.result()
+                        if resultado:
+                            # Verificar que el precio no sea cero antes de añadirlo
+                            if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
+                                logger.info(f"Resultado obtenido de {source_name}")
+                                resultados.append(resultado)
+                            else:
+                                logger.warning(f"Resultado de {source_name} descartado por precio cero o inválido")
+                    except Exception as e:
+                        logger.error(f"Error en búsqueda de {source_name}: {e}")
+        
+        # FASE 2: NADRO (independiente)
+        if self.nadro_available:
+            logger.info("FASE 2: Ejecutando scraper NADRO")
+            try:
+                resultado_nadro = self.buscar_producto_nadro(nombre_producto)
+                if resultado_nadro:
+                    # Verificar que el precio no sea cero antes de añadirlo
+                    if resultado_nadro['precio_numerico'] < 9999998.0:  # Un valor normal
+                        logger.info("Resultado obtenido de NADRO")
+                        resultados.append(resultado_nadro)
+                    else:
+                        logger.warning("Resultado de NADRO descartado por precio cero o inválido")
+            except Exception as e:
+                logger.error(f"Error en búsqueda de NADRO: {e}")
+        
+        # FASE 3: FANASA (independiente)
+        if self.fanasa_available:
+            logger.info("FASE 3: Ejecutando scraper FANASA")
+            try:
+                resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
+                if resultado_fanasa:
+                    # Verificar que el precio no sea cero antes de añadirlo
+                    if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
+                        logger.info("Resultado obtenido de FANASA")
+                        resultados.append(resultado_fanasa)
+                    else:
+                        logger.warning("Resultado de FANASA descartado por precio cero o inválido")
+            except Exception as e:
+                logger.error(f"Error en búsqueda de FANASA: {e}")
+        
+        # Si no hay resultados, terminar
+        if not resultados:
+            logger.warning(f"No se encontraron resultados para: {nombre_producto}")
+            return None
+        
+        # Imprimir resultados para diagnóstico
+        for i, resultado in enumerate(resultados):
+            logger.info(f"Resultado #{i+1}: {resultado['fuente']} - "
+                       f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
+                       f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
+        
+        # Filtrar productos sin existencia 
+        productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
+        
+        # Si hay productos con existencia, usarlos, sino usar todos los resultados
+        productos_a_comparar = productos_con_existencia if productos_con_existencia else resultados
+        
+        # Ordenar por precio (menor a mayor), pero excluir precios de cero
+        productos_ordenados = sorted(productos_a_comparar, key=lambda x: x['precio_numerico'])
+        
+        # Elegir el de menor precio
+        mejor_producto = productos_ordenados[0] if productos_ordenados else None
+        
+        if mejor_producto:
+            logger.info(f"Mejor resultado seleccionado: {mejor_producto['nombre']} de {mejor_producto['fuente']} "
+                       f"- Precio: {mejor_producto['precio']} - Existencia: {mejor_producto['existencia']}")
+            
+            # Eliminar campos auxiliares de comparación antes de devolver
+            del mejor_producto['precio_numerico']
+            del mejor_producto['existencia_numerica']
+        
+        return mejor_producto
