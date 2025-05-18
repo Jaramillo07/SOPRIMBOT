@@ -120,22 +120,60 @@ class GeminiService:
             
             # Formatear la información del producto
             if product_info:
-                # Incluir información de la fuente si está disponible
-                fuente = product_info.get('fuente', '')
-                fuente_txt = f" encontrado en {fuente}" if fuente else ""
+                # Conversión de nombre de fuente a código interno
+                fuente_mapping = {
+                    "Sufarmed": "SF",
+                    "Difarmer": "DF", 
+                    "Fanasa": "FN",
+                    "Nadro": "ND"
+                }
                 
+                fuente_original = product_info.get('fuente', '')
+                codigo_fuente = fuente_mapping.get(fuente_original, fuente_original.upper()[:2] if fuente_original else '')
+                
+                # Calcular precio con margen del 45%
+                precio_original = product_info.get('precio', 'No disponible')
+                precio_mostrar = "No disponible"
+                
+                if precio_original != 'No disponible':
+                    try:
+                        # Eliminar símbolos de moneda y convertir a float
+                        precio_limpio = precio_original.replace('$', '').replace(',', '').strip()
+                        precio_float = float(precio_limpio)
+                        
+                        # Aplicar margen del 45%
+                        precio_con_margen = precio_float * 1.45
+                        
+                        # Formatear de vuelta a string con formato de moneda
+                        precio_mostrar = f"${precio_con_margen:.2f}"
+                    except ValueError:
+                        logger.warning(f"No se pudo convertir el precio: {precio_original}")
+                        precio_mostrar = precio_original
+                
+                # Determinar mensaje de entrega según el código de fuente
+                if codigo_fuente == "SF":
+                    mensaje_entrega = "La entrega sería el mismo día, siempre validando disponibilidad."
+                else:
+                    mensaje_entrega = "La entrega sería al día siguiente, sujeto a disponibilidad."
+                
+                # Información formateada del producto
                 product_details = f"""
-Información del producto{fuente_txt}:
+Información del producto:
 - Nombre: {product_info.get('nombre', 'No disponible')}
 - Laboratorio: {product_info.get('laboratorio', 'No disponible')}
 - Código de barras: {product_info.get('codigo_barras', 'No disponible')}
 - Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
 - URL del producto: {product_info.get('url', 'No disponible')}
-- Precio: {product_info.get('precio', 'No disponible')}
+- Precio: {precio_mostrar}
 - Existencia: {product_info.get('existencia', 'No disponible')}
+- Código fuente: {codigo_fuente}
+- Información de entrega: {mensaje_entrega}
 """
             else:
                 product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
+                precio_mostrar = "No disponible"
+                codigo_fuente = ""
+                mensaje_entrega = ""
             
             # Crear el prompt completo
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
@@ -144,9 +182,12 @@ Mensaje del cliente: {user_message}
 {product_details}
 {additional_context}
 Basándote en esta información, proporciona una respuesta útil y profesional al cliente sobre el producto solicitado.
+Responde de forma clara y evitando tecnicismos.
 Incluye siempre el precio en tu respuesta cuando esté disponible.
-Si el precio está disponible, menciónalo claramente al cliente e indícale que puede confirmar la disponibilidad llamando a la farmacia o visitando la tienda.
-Si el precio no está disponible, indícale al cliente que puede consultar el precio y disponibilidad llamando a la farmacia o visitando la tienda.
+Si el precio está disponible, menciónalo claramente al cliente e indícale que puede confirmar la disponibilidad llamando o visitando la tienda.
+Si el precio no está disponible, indícale al cliente que puede consultar el precio y disponibilidad llamando o visitando la tienda.
+Incluye la información sobre el tiempo de entrega en tu respuesta.
+IMPORTANTE: Nunca menciones el nombre real de la farmacia, solo usa el código interno si es necesario referirte a la fuente.
 """
             logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
             logger.debug(f"Información del producto: {product_info}")
