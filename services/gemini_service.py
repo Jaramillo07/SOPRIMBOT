@@ -1,7 +1,7 @@
 """
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
-Actualizado para manejar información de la fuente del producto.
+Actualizado para manejar información de la fuente del producto e historial de conversación.
 """
 import logging
 import google.generativeai as genai
@@ -39,18 +39,52 @@ class GeminiService:
             logger.error(f"Error al inicializar el modelo Gemini: {e}")
             raise
     
-    def generate_response(self, user_message):
+    def _format_conversation_history(self, history):
+        """
+        Formatea el historial de conversación para incluirlo en el prompt.
+        
+        Args:
+            history (list): Lista de diccionarios con roles y contenido
+            
+        Returns:
+            str: Historial formateado
+        """
+        if not history:
+            return ""
+        
+        formatted_history = ""
+        for turn in history:
+            role = turn.get("role", "")
+            content = turn.get("content", "")
+            if role and content:
+                formatted_history += f"{role}: {content} "
+        
+        return formatted_history.strip()
+    
+    def generate_response(self, user_message, conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
         
         Args:
             user_message (str): Mensaje del usuario para procesar
+            conversation_history (list, optional): Historial de conversación
             
         Returns:
             str: Respuesta generada por Gemini
         """
         try:
-            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nMensaje del cliente: {user_message}"
+            # Formatear el historial de conversación si está disponible
+            context = ""
+            if conversation_history:
+                context = self._format_conversation_history(conversation_history)
+                logger.info(f"Incluyendo historial de conversación ({len(conversation_history)} turnos)")
+                
+                # Añadir el mensaje actual al contexto
+                final_message = f"{context} user: {user_message}"
+            else:
+                final_message = user_message
+            
+            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
             logger.info(f"Enviando prompt a Gemini para respuesta general. Mensaje: '{user_message[:50]}...'")
             
             response = self.model.generate_content(prompt)
@@ -64,7 +98,7 @@ class GeminiService:
             logger.error(f"Error en generate_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
     
-    def generate_product_response(self, user_message, product_info, additional_context=""):
+    def generate_product_response(self, user_message, product_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y la información del producto.
         
@@ -72,11 +106,18 @@ class GeminiService:
             user_message (str): Mensaje del usuario para procesar
             product_info (dict): Información del producto obtenida mediante scraping
             additional_context (str): Contexto adicional opcional
+            conversation_history (list, optional): Historial de conversación
             
         Returns:
             str: Respuesta generada por Gemini
         """
         try:
+            # Formatear el historial de conversación si está disponible
+            context = ""
+            if conversation_history:
+                context = self._format_conversation_history(conversation_history)
+                logger.info(f"Incluyendo historial de conversación ({len(conversation_history)} turnos)")
+            
             # Formatear la información del producto
             if product_info:
                 # Incluir información de la fuente si está disponible
@@ -98,6 +139,7 @@ Información del producto{fuente_txt}:
             
             # Crear el prompt completo
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
+Contexto de conversación previa: {context}
 Mensaje del cliente: {user_message}
 {product_details}
 {additional_context}
