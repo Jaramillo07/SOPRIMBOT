@@ -50,7 +50,7 @@ class MessageHandler:
         
         # Patrones de conversación personal o saludos
         patrones_no_relevantes = [
-            r"(?:hola|buenos días|buenas tardes|buenas noches)\b",
+            # r"(?:hola|buenos días|buenas tardes|buenas noches)\b",  # Comentado para permitir mensajes que empiezan con saludos
             r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
             # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
             r"(?:qué|que).*(?:haces|planes|te parece)",
