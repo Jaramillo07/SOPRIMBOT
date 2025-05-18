@@ -1,7 +1,7 @@
 """
 Servicio de scraping integrado para buscar información de productos farmacéuticos.
-Este servicio orquesta los scrapers de Difarmer, Sufarmed, FANASA y NADRO, comparando resultados
-y seleccionando el mejor en función de existencias y precio.
+Este servicio orquesta los scrapers de Difarmer, Sufarmed, FANASA y NADRO de forma secuencial,
+comparando resultados y seleccionando el mejor en función de existencias y precio.
 """
 import logging
 import os
@@ -28,7 +28,7 @@ class ScrapingService:
         """
         Inicializa el servicio de scraping integrado configurando cada scraper individual.
         """
-        logger.info("Inicializando ScrapingService integrado con múltiples scrapers")
+        logger.info("Inicializando ScrapingService integrado con múltiples scrapers (modo secuencial)")
         
         # Verificar qué servicios están disponibles
         self.difarmer_available = self._check_difarmer_available()
@@ -596,8 +596,8 @@ class ScrapingService:
     
     def buscar_producto(self, nombre_producto):
         """
-        Busca un producto en todas las fuentes disponibles, compara resultados
-        y selecciona el mejor basado en existencia y precio.
+        Busca un producto en todas las fuentes disponibles de forma secuencial en grupos,
+        compara resultados y selecciona el mejor basado en existencia y precio.
         
         Args:
             nombre_producto (str): Nombre del producto a buscar
@@ -605,44 +605,57 @@ class ScrapingService:
         Returns:
             dict: El mejor producto encontrado o None si no se encuentra en ninguna fuente
         """
-        logger.info(f"Iniciando búsqueda integrada para: {nombre_producto}")
+        logger.info(f"Iniciando búsqueda secuencial para: {nombre_producto}")
         
         # Lista para almacenar resultados de todas las fuentes
         resultados = []
         
-        # Verificar qué scrapers podemos usar
-        scrapers_disponibles = []
+        # FASE 1: Difarmer y Sufarmed en paralelo (ya probados y funcionan juntos)
+        fase1_scrapers = []
         if self.difarmer_available:
-            scrapers_disponibles.append(('difarmer', self.buscar_producto_difarmer))
+            fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
         if self.sufarmed_available:
-            scrapers_disponibles.append(('sufarmed', self.buscar_producto_sufarmed))
-        if self.fanasa_available:
-            scrapers_disponibles.append(('fanasa', self.buscar_producto_fanasa))
+            fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
+        
+        if fase1_scrapers:
+            logger.info("FASE 1: Ejecutando scrapers Difarmer y Sufarmed")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
+                futures = {}
+                for source_name, search_func in fase1_scrapers:
+                    future = executor.submit(search_func, nombre_producto)
+                    futures[future] = source_name
+                
+                for future in concurrent.futures.as_completed(futures):
+                    source_name = futures[future]
+                    try:
+                        resultado = future.result()
+                        if resultado:
+                            logger.info(f"Resultado obtenido de {source_name}")
+                            resultados.append(resultado)
+                    except Exception as e:
+                        logger.error(f"Error en búsqueda de {source_name}: {e}")
+        
+        # FASE 2: NADRO (independiente)
         if self.nadro_available:
-            scrapers_disponibles.append(('nadro', self.buscar_producto_nadro))
+            logger.info("FASE 2: Ejecutando scraper NADRO")
+            try:
+                resultado_nadro = self.buscar_producto_nadro(nombre_producto)
+                if resultado_nadro:
+                    logger.info("Resultado obtenido de NADRO")
+                    resultados.append(resultado_nadro)
+            except Exception as e:
+                logger.error(f"Error en búsqueda de NADRO: {e}")
         
-        if not scrapers_disponibles:
-            logger.error("No hay scrapers disponibles para realizar la búsqueda")
-            return None
-        
-        # Para más eficiencia, usar ThreadPoolExecutor para búsquedas en paralelo
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(scrapers_disponibles)) as executor:
-            # Crear tareas de búsqueda
-            futures = {}
-            for source_name, search_func in scrapers_disponibles:
-                future = executor.submit(search_func, nombre_producto)
-                futures[future] = source_name
-            
-            # Recopilar resultados a medida que se completan
-            for future in concurrent.futures.as_completed(futures):
-                source_name = futures[future]
-                try:
-                    resultado = future.result()
-                    if resultado:
-                        logger.info(f"Resultado obtenido de {source_name}")
-                        resultados.append(resultado)
-                except Exception as e:
-                    logger.error(f"Error en búsqueda de {source_name}: {e}")
+        # FASE 3: FANASA (independiente)
+        if self.fanasa_available:
+            logger.info("FASE 3: Ejecutando scraper FANASA")
+            try:
+                resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
+                if resultado_fanasa:
+                    logger.info("Resultado obtenido de FANASA")
+                    resultados.append(resultado_fanasa)
+            except Exception as e:
+                logger.error(f"Error en búsqueda de FANASA: {e}")
         
         # Si no hay resultados, terminar
         if not resultados:
