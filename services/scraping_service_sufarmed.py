@@ -5,10 +5,9 @@ Este archivo contiene la lógica de scraping para buscar productos en Sufarmed.
 import logging
 import time
 import re
+import os
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -16,7 +15,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     TimeoutException, 
     NoSuchElementException,
-    ElementClickInterceptedException
+    ElementClickInterceptedException,
+    WebDriverException
 )
 from config.settings import HEADLESS_BROWSER
 
@@ -81,27 +81,56 @@ def find_one(driver, wait, candidates):
 
 def inicializar_navegador(headless: bool = HEADLESS_BROWSER):
     """
-    Inicializa el navegador Chrome con webdriver-manager para
-    bajar e instalar la versión correcta de ChromeDriver.
+    Inicializa el navegador Chrome de forma compatible con entornos Docker/headless.
+    Usa el binario de Chrome preinstalado en lugar de depender de webdriver-manager.
     """
+    # Rutas predefinidas para entornos Docker
+    chrome_binary_path = "/usr/bin/google-chrome"
+    
     options = webdriver.ChromeOptions()
+    
+    # Configuración para entorno headless
     if headless:
-        options.add_argument("--headless")
+        options.add_argument("--headless=new")  # Versión moderna del flag headless
+    
+    # Opciones críticas para entorno Docker/containerizado
+    options.add_argument("--no-sandbox")  # Requerido para ejecutar Chrome en contenedor
+    options.add_argument("--disable-dev-shm-usage")  # Evita problemas de memoria compartida
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
+    
+    # Especificar la ruta al binario Chrome
+    options.binary_location = chrome_binary_path
+    
     try:
-        # webdriver-manager detecta y descarga el driver compatible
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        # Verificar que el binario de Chrome existe
+        if not os.path.exists(chrome_binary_path):
+            logger.error(f"Binario de Chrome no encontrado en: {chrome_binary_path}")
+            return None
+        
+        # En Selenium 4, no es necesario especificar el chromedriver, se descarga automáticamente
+        logger.info("Inicializando Chrome en modo compatible con Docker")
+        driver = webdriver.Chrome(options=options)
+        
+        # Verificar que el navegador se inicializó correctamente
+        user_agent = driver.execute_script("return navigator.userAgent")
+        logger.info(f"Navegador inicializado correctamente con User-Agent: {user_agent}")
+        
+        # Establecer timeouts razonables
+        driver.set_page_load_timeout(30)
+        driver.implicitly_wait(10)
+        
         return driver
+    except WebDriverException as e:
+        logger.error(f"Error específico de WebDriver al inicializar Chrome: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Error al inicializar el navegador: {e}")
+        logger.error(f"Error general al inicializar el navegador: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 def login(driver, username, password, login_url, timeout):
@@ -193,7 +222,10 @@ def login(driver, username, password, login_url, timeout):
         else:
             logger.error("❌ Login parece fallido.")
             # Capturar evidencia para debugging
-            driver.save_screenshot("after_login.png")
+            try:
+                driver.save_screenshot("after_login.png")
+            except Exception as e:
+                logger.warning(f"No se pudo guardar captura de pantalla: {e}")
             return False
 
     except Exception as e:
@@ -773,14 +805,26 @@ def buscar_producto_sufarmed(nombre_producto: str) -> dict:
     login_url = "https://sufarmed.com/sufarmed/iniciar-sesion"
     timeout = 15
     
-    # Inicializar navegador
-    driver = inicializar_navegador(headless)
-    if not driver:
-        return None
-    
+    # Inicializar variables
+    driver = None
     resultados = []
     
     try:
+        # Inicializar el navegador
+        driver = inicializar_navegador(headless)
+        if not driver:
+            logger.error("No se pudo inicializar el navegador, abortando búsqueda")
+            return None
+        
+        # Verificación de funcionalidad básica
+        try:
+            driver.execute_script("return navigator.userAgent")
+        except Exception as e:
+            logger.error(f"El navegador no responde correctamente: {e}")
+            if driver:
+                driver.quit()
+            return None
+            
         # Realizar login primero para obtener precios
         logger.info("Iniciando proceso de login antes de buscar productos")
         login_exitoso = login(driver, username, password, login_url, timeout)
@@ -923,7 +967,7 @@ def buscar_producto_sufarmed(nombre_producto: str) -> dict:
     except TimeoutException:
         logger.warning("Tiempo de espera agotado durante la navegación.")
         # Verificar si aún así llegamos a una página de producto
-        if es_pagina_producto(driver):
+        if driver and es_pagina_producto(driver):
             logger.info("A pesar del timeout, se detectó página de producto.")
             info_producto = extraer_info_producto(driver)
             if info_producto:
@@ -932,10 +976,16 @@ def buscar_producto_sufarmed(nombre_producto: str) -> dict:
                 return info_producto
     except Exception as e:
         logger.error(f"Error durante la búsqueda: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         # Cerrar el navegador
         if driver:
-            driver.quit()
+            try:
+                driver.quit()
+                logger.info("Navegador cerrado correctamente")
+            except Exception as e:
+                logger.error(f"Error al cerrar el navegador: {e}")
     
     # Si tenemos algún resultado, devolvemos el primero
     if resultados:
@@ -972,4 +1022,3 @@ if __name__ == "__main__":
         print(f"Imagen: {info['imagen']}")
     else:
         print(f"No se pudo encontrar información para el producto: {nombre_producto}")
-                
