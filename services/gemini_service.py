@@ -4,6 +4,7 @@ Encapsula toda la lógica relacionada con la generación de respuestas de IA.
 Actualizado para manejar información de la fuente del producto e historial de conversación.
 """
 import logging
+import re
 import google.generativeai as genai
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_SYSTEM_INSTRUCTIONS
 
@@ -61,6 +62,47 @@ class GeminiService:
         
         return formatted_history.strip()
     
+    def _es_consulta_descuento(self, user_message):
+        """
+        Determina si el mensaje del usuario está relacionado con descuentos o promociones.
+        
+        Args:
+            user_message (str): Mensaje del usuario
+            
+        Returns:
+            bool: True si es una consulta de descuento, False si no
+        """
+        mensaje_lower = user_message.lower()
+        
+        # Palabras clave relacionadas con descuentos y promociones
+        palabras_descuento = [
+            'descuento', 'rebaja', 'promoción', 'promocion', 'oferta', 'más barato', 'mas barato',
+            'mejor precio', 'precio especial', 'precio por volumen', 'mayoreo', 'por mayor',
+            'varias cajas', 'comprar más', 'comprar mas', 'descuentos', 'rebajas', 'ofertas',
+            'promociones', 'rebajado', 'económico', 'economico', 'ahorrar', 'ahorro'
+        ]
+        
+        # Verificar si alguna palabra clave está en el mensaje
+        for palabra in palabras_descuento:
+            if palabra in mensaje_lower:
+                return True
+                
+        # Patrones comunes de preguntas sobre descuentos
+        patrones_descuento = [
+            r'(?:hay|tienen|manejan|aplican?)\s+(?:algún|algun|alguna)?\s*(?:descuento|rebaja|promoción|promocion|oferta)',
+            r'(?:cuánto|cuanto)\s+(?:si|por)\s+(?:compro|llevo)\s+(?:varias|más|mas|muchas)',
+            r'(?:precio)\s+(?:por|de)\s+(?:mayoreo|volumen|cantidad)',
+            r'(?:más|mas)\s+(?:barato|económico|economico)',
+            r'(?:puedes?|podrías?|podrias?)\s+(?:mejorar|bajar|reducir)\s+(?:el|ese)?\s*precio'
+        ]
+        
+        # Verificar si algún patrón coincide con el mensaje
+        for patron in patrones_descuento:
+            if re.search(patron, mensaje_lower):
+                return True
+                
+        return False
+    
     def generate_response(self, user_message, conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
@@ -112,6 +154,27 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
+            # Verificar si es una consulta sobre descuentos o promociones
+            if self._es_consulta_descuento(user_message):
+                logger.info("Detectada consulta sobre descuentos o promociones")
+                
+                # Lista de respuestas posibles para consultas de descuentos
+                respuestas_descuento = [
+                    "Podemos ofrecer descuentos por volumen. Por favor, comunícate directamente para más detalles.",
+                    "Los descuentos pueden aplicar dependiendo del producto o la cantidad. Llámanos para confirmarlo.",
+                    "Sí manejamos promociones en algunas presentaciones. Contáctanos y te damos la información completa.",
+                    "Contamos con descuentos especiales dependiendo del producto y cantidad. Comunícate directamente con nosotros para conocer las opciones disponibles.",
+                    "Para información sobre descuentos y promociones, te invitamos a contactarnos directamente por teléfono o mensaje."
+                ]
+                
+                # Seleccionar una respuesta basada en un hash simple del mensaje del usuario
+                indice = hash(user_message) % len(respuestas_descuento)
+                response_text = respuestas_descuento[indice]
+                
+                logger.info(f"Respuesta de descuento seleccionada: '{response_text}'")
+                return response_text
+            
+            # Si no es consulta de descuento, proceder con la respuesta normal de producto
             # Formatear el historial de conversación si está disponible
             context = ""
             if conversation_history:
@@ -132,7 +195,6 @@ class GeminiService:
                 codigo_fuente = fuente_mapping.get(fuente_original, fuente_original.upper()[:2] if fuente_original else '')
                 
                 # Detectar cantidad en el mensaje del usuario
-                import re
                 cantidad = 1  # Valor por defecto
                 cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
                 if cantidad_match:
@@ -193,23 +255,21 @@ Información del producto:
                 mensaje_entrega = ""
                 cantidad = 1
             
-            # Crear el prompt completo
+            # Crear el prompt completo para respuestas informativas (precio y entrega)
             prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Contexto de conversación previa: {context}
 Mensaje del cliente: {user_message}
 {product_details}
 {additional_context}
-IMPORTANTE: Genera una respuesta EXTREMADAMENTE BREVE Y DIRECTA siguiendo estas reglas:
+IMPORTANTE: Genera una respuesta EXTREMADAMENTE BREVE Y DIRECTA siguiendo el formato exacto:
+"El precio total sería de {precio_total}. La entrega normalmente se realiza {mensaje_entrega.lower().replace("La entrega sería ", "")} Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: {codigo_fuente})"
+
+REGLAS IMPORTANTES:
 1. NO menciones el nombre del producto en tu respuesta
-2. Informa SOLO el precio total (ya calculado con la cantidad de {cantidad})
-3. Indica claramente el tiempo de entrega (mismo día o día siguiente)
-4. Sugiere contacto directo para confirmar stock o programar entrega
-5. Si es necesario mencionar la fuente, colócala AL FINAL entre paréntesis como: (Origen: XX)
-
-FORMATO OBLIGATORIO:
-"El precio total sería de {precio_total}. [INFO ENTREGA]. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: {codigo_fuente})"
-
-Tu respuesta debe tener MÁXIMO 3 FRASES, ser concisa y directa.
+2. SOLO incluye el precio total (ya calculado con la cantidad)
+3. SIGUE EXACTAMENTE el formato solicitado
+4. La respuesta debe ser concisa y directa
+5. La parte "(Origen: XX)" solo debe usarse como referencia interna al final de la respuesta
 """
             logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
             logger.debug(f"Información del producto: {product_info}")
