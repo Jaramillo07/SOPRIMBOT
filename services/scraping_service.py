@@ -1,7 +1,7 @@
 """
 Servicio de scraping integrado para buscar información de productos farmacéuticos.
 Este servicio orquesta los scrapers de Difarmer, Sufarmed, FANASA y NADRO de forma secuencial,
-comparando resultados y seleccionando el mejor en función de existencias y precio.
+comparando resultados y seleccionando opciones según disponibilidad y precio.
 """
 import logging
 import os
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ScrapingService:
     """
     Clase que coordina la búsqueda de productos en múltiples fuentes,
-    comparando resultados y seleccionando la mejor opción.
+    comparando resultados y seleccionando las mejores opciones.
     """
     
     def __init__(self):
@@ -451,7 +451,6 @@ class ScrapingService:
             "fuente": "NADRO",
             "nombre_farmacia": "NADRO"
         }
-
     
     def buscar_producto_difarmer(self, nombre_producto):
         """
@@ -607,14 +606,16 @@ class ScrapingService:
     
     def buscar_producto(self, nombre_producto):
         """
-        Busca un producto en todas las fuentes disponibles de forma secuencial en grupos,
-        compara resultados y selecciona el mejor basado en existencia y precio.
+        Busca un producto en todas las fuentes disponibles,
+        compara resultados y selecciona opciones según la nueva lógica de negocio:
+        - Opción de entrega inmediata (Sufarmed con stock)
+        - Opción de mejor precio (producto más barato con stock)
         
         Args:
             nombre_producto (str): Nombre del producto a buscar
             
         Returns:
-            dict: El mejor producto encontrado o None si no se encuentra en ninguna fuente
+            dict: Diccionario con opciones de productos disponibles y un flag de doble opción
         """
         logger.info(f"Iniciando búsqueda secuencial para: {nombre_producto}")
         
@@ -683,7 +684,11 @@ class ScrapingService:
         # Si no hay resultados, terminar
         if not resultados:
             logger.warning(f"No se encontraron resultados para: {nombre_producto}")
-            return None
+            return {
+                "opcion_entrega_inmediata": None,
+                "opcion_mejor_precio": None,
+                "tiene_doble_opcion": False
+            }
         
         # Imprimir resultados para diagnóstico
         for i, resultado in enumerate(resultados):
@@ -691,24 +696,101 @@ class ScrapingService:
                        f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
                        f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
         
-        # Filtrar productos sin existencia 
+        # Filtrar productos con existencia
         productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
         
-        # Si hay productos con existencia, usarlos, sino usar todos los resultados
-        productos_a_comparar = productos_con_existencia if productos_con_existencia else resultados
+        # Si no hay productos con existencia, devolver None para ambas opciones
+        if not productos_con_existencia:
+            logger.warning(f"No se encontraron productos con existencia para: {nombre_producto}")
+            return {
+                "opcion_entrega_inmediata": None,
+                "opcion_mejor_precio": None,
+                "tiene_doble_opcion": False
+            }
         
-        # Ordenar por precio (menor a mayor), pero excluir precios de cero
-        productos_ordenados = sorted(productos_a_comparar, key=lambda x: x['precio_numerico'])
+        # Buscar opción de entrega inmediata (Sufarmed con stock)
+        opcion_entrega_inmediata = None
+        for producto in productos_con_existencia:
+            if producto['fuente'] == "Sufarmed" and producto['existencia_numerica'] > 0:
+                opcion_entrega_inmediata = producto.copy()
+                # Eliminar campos auxiliares de comparación
+                del opcion_entrega_inmediata['precio_numerico']
+                del opcion_entrega_inmediata['existencia_numerica']
+                logger.info(f"Opción de entrega inmediata seleccionada: {opcion_entrega_inmediata['nombre']} de Sufarmed "
+                           f"- Precio: {opcion_entrega_inmediata['precio']} - Existencia: {opcion_entrega_inmediata['existencia']}")
+                break
+        
+        # Ordenar por precio (menor a mayor) para encontrar la opción de mejor precio
+        productos_ordenados = sorted(productos_con_existencia, key=lambda x: x['precio_numerico'])
         
         # Elegir el de menor precio
-        mejor_producto = productos_ordenados[0] if productos_ordenados else None
+        opcion_mejor_precio = None
+        if productos_ordenados:
+            opcion_mejor_precio = productos_ordenados[0].copy()
+            # Eliminar campos auxiliares de comparación
+            del opcion_mejor_precio['precio_numerico']
+            del opcion_mejor_precio['existencia_numerica']
+            logger.info(f"Opción de mejor precio seleccionada: {opcion_mejor_precio['nombre']} de {opcion_mejor_precio['fuente']} "
+                       f"- Precio: {opcion_mejor_precio['precio']} - Existencia: {opcion_mejor_precio['existencia']}")
         
-        if mejor_producto:
-            logger.info(f"Mejor resultado seleccionado: {mejor_producto['nombre']} de {mejor_producto['fuente']} "
-                       f"- Precio: {mejor_producto['precio']} - Existencia: {mejor_producto['existencia']}")
-            
-            # Eliminar campos auxiliares de comparación antes de devolver
-            del mejor_producto['precio_numerico']
-            del mejor_producto['existencia_numerica']
+        # Determinar si hay doble opción
+        tiene_doble_opcion = False
         
-        return mejor_producto
+        if opcion_entrega_inmediata and opcion_mejor_precio:
+            # Si la opción de entrega inmediata es diferente a la opción de mejor precio
+            if opcion_entrega_inmediata['fuente'] != opcion_mejor_precio['fuente']:
+                tiene_doble_opcion = True
+            elif opcion_entrega_inmediata['precio'] != opcion_mejor_precio['precio']:
+                tiene_doble_opcion = True
+        
+        return {
+            "opcion_entrega_inmediata": opcion_entrega_inmediata,
+            "opcion_mejor_precio": opcion_mejor_precio,
+            "tiene_doble_opcion": tiene_doble_opcion
+        }
+
+# Función para generar respuestas a partir de los resultados de búsqueda
+def generate_product_response(producto_info, query=None, additional_context=None):
+    """
+    Genera una respuesta para el usuario basada en las opciones de productos disponibles.
+    
+    Args:
+        producto_info (dict): Diccionario con las opciones de productos disponibles
+        query (str, opcional): La consulta original del usuario
+        additional_context (dict, opcional): Contexto adicional para la generación
+        
+    Returns:
+        str: Respuesta generada para el usuario
+    """
+    # Si no hay opciones disponibles
+    if not producto_info["opcion_entrega_inmediata"] and not producto_info["opcion_mejor_precio"]:
+        return f"Lo siento, no encontré información sobre {query} en nuestras farmacias asociadas."
+    
+    # Si solo hay una opción (sea entrega inmediata o mejor precio)
+    if not producto_info["tiene_doble_opcion"]:
+        producto = producto_info["opcion_entrega_inmediata"] or producto_info["opcion_mejor_precio"]
+        
+        # Determinar si la entrega es inmediata o no
+        delivery_text = "hoy mismo" if producto["fuente"] == "Sufarmed" else "mañana"
+        
+        # Generar respuesta para una sola opción
+        response = f"Encontré el producto {producto['nombre']}. El precio es {producto['precio']} y está disponible para entrega {delivery_text}."
+        
+        return response
+    
+    # Si hay dos opciones diferentes
+    else:
+        entrega_inmediata = producto_info["opcion_entrega_inmediata"]
+        mejor_precio = producto_info["opcion_mejor_precio"]
+        
+        nombre_producto = entrega_inmediata['nombre'] or mejor_precio['nombre']
+        
+        response = f"📦 Tenemos dos opciones para {nombre_producto}:\n\n"
+        
+        # Añadir opción de entrega inmediata
+        response += f"🚚 *Entrega inmediata* hoy mismo con un precio de {entrega_inmediata['precio']}\n\n"
+        
+        # Añadir opción de mejor precio
+        response += f"💲 *Mejor precio* con entrega mañana por {mejor_precio['precio']}"
+        
+        return response
