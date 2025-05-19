@@ -479,13 +479,9 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         
         driver = login_fanasa_carrito()
         if not driver:
-            logger.error("No se pudo iniciar sesión en FANASA. Abortando búsqueda.")
-            return {
-                "error": "error_login", 
-                "mensaje": "No se pudo iniciar sesión en FANASA",
-                "estado": "error",
-                "fuente": "FANASA"
-            }
+            mensaje_error = "No se pudo iniciar sesión en FANASA. Abortando búsqueda."
+            logger.error(mensaje_error)
+            raise RuntimeError(mensaje_error)
         
         # 2. Buscar el producto
         logger.info(f"Sesión iniciada. Buscando producto: '{nombre_medicamento}'")
@@ -524,18 +520,33 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
             
             return info_producto
         else:
-            # Si no se pudo extraer información, devolver respuesta estructurada
-            return {
-                "nombre": nombre_medicamento,
-                "mensaje": f"No se pudo extraer información para {nombre_medicamento} en FANASA",
-                "estado": "error_extraccion",
-                "fuente": "FANASA",
-                "disponibilidad": "Desconocida",
-                "existencia": "0"
-            }
+            # Si no se pudo extraer información, lanzar ValueError
+            mensaje_error = f"No se pudo extraer información para {nombre_medicamento} en FANASA"
+            logger.error(mensaje_error)
+            raise ValueError(mensaje_error)
         
+    except RuntimeError as e:
+        logger.exception(f"Error en login: {str(e)}")
+        return {
+            "nombre": nombre_medicamento,
+            "mensaje": str(e),
+            "estado": "error",
+            "fuente": "FANASA",
+            "disponibilidad": "Error",
+            "existencia": "0"
+        }
+    except ValueError as e:
+        logger.exception(f"Error en extracción: {str(e)}")
+        return {
+            "nombre": nombre_medicamento,
+            "mensaje": str(e),
+            "estado": "error_extraccion",
+            "fuente": "FANASA",
+            "disponibilidad": "Desconocida",
+            "existencia": "0"
+        }
     except Exception as e:
-        logger.error(f"Error general durante el proceso: {e}")
+        logger.exception(f"Error general durante el proceso: {str(e)}")
         return {
             "nombre": nombre_medicamento,
             "mensaje": f"Error al buscar {nombre_medicamento}: {str(e)}",
@@ -547,7 +558,10 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
     finally:
         if driver:
             logger.info("Cerrando navegador...")
-            driver.quit()
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.exception(f"Error al cerrar el navegador: {str(e)}")
 
 # Para ejecución directa como script independiente
 if __name__ == "__main__":
@@ -596,6 +610,3 @@ if __name__ == "__main__":
         print(f"\nError al guardar resultado: {e}")
 
     sys.exit(0 if estado == 'encontrado' else 1)
-
-
-
