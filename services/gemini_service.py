@@ -180,74 +180,32 @@ class GeminiService:
             logger.error(f"Error en generate_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
     
-    def generate_product_response(self, user_message, product_info, additional_context="", conversation_history=None):
+    def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
-        Genera una respuesta basada en el mensaje del usuario y la información del producto.
+        Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
         
         Args:
             user_message (str): Mensaje del usuario para procesar
-            product_info (dict): Información del producto obtenida mediante scraping
+            producto_info (dict): Diccionario con las opciones de productos disponibles
             additional_context (str): Contexto adicional opcional
             conversation_history (list, optional): Historial de conversación
             
         Returns:
-            str: Respuesta generada por Gemini
+            str: Respuesta generada para el usuario
         """
         try:
             # Verificar si es una consulta sobre entregas
             es_consulta_entrega = self._es_consulta_entrega_hoy(user_message) or re.search(r'(?:para\s+cuándo|para\s+cuando|cuándo|cuando)\s+(?:sería|seria|es)\s+(?:la\s+)?entrega', user_message.lower())
-            
-            # Verificar disponibilidad en diferentes proveedores si es consulta de entrega
-            if es_consulta_entrega and isinstance(product_info, dict):
-                logger.info("Detectada consulta sobre entrega - verificando disponibilidad en proveedores")
                 
-                # Obtener fuente y disponibilidad actual
-                fuente_actual = product_info.get('fuente', '')
-                existencia_str = product_info.get('existencia', '0')
+            # Si es una consulta explícita sobre entregas, dar respuesta directa
+            if es_consulta_entrega:
+                logger.info("Detectada consulta sobre entrega - generando respuesta específica")
                 
-                # Convertir existencia a número si es posible
-                existencia_numerica = 0
-                try:
-                    if existencia_str.lower() == 'si':
-                        existencia_numerica = 1
-                    else:
-                        # Eliminar caracteres no numéricos
-                        existencia_limpia = re.sub(r'[^\d]', '', existencia_str)
-                        if existencia_limpia:
-                            existencia_numerica = int(existencia_limpia)
-                except (ValueError, AttributeError):
-                    existencia_numerica = 0
-                
-                logger.info(f"Fuente actual: {fuente_actual}, Existencia: {existencia_numerica}")
-                
-                # Verificar si la fuente actual es Sufarmed y tiene disponibilidad
-                if (fuente_actual == "Sufarmed" or fuente_actual == "SF") and existencia_numerica > 0:
-                    logger.info("Sufarmed tiene disponibilidad inmediata")
-                    return "La entrega se puede realizar hoy mismo a través de uno de nuestros proveedores. El precio puede variar ligeramente según el proveedor con disponibilidad inmediata. (Origen: SF)"
-                
-                # Verificar si hay información sobre otros proveedores en el contexto adicional
-                proveedores_disponibles = []
-                if "Sufarmed" in additional_context and "existencia" in additional_context and existencia_numerica > 0:
-                    proveedores_disponibles.append("SF")
-                
-                # Si hay proveedores con disponibilidad inmediata
-                if proveedores_disponibles:
-                    logger.info(f"Proveedores con disponibilidad inmediata: {proveedores_disponibles}")
-                    return "La entrega se puede realizar hoy mismo a través de uno de nuestros proveedores. El precio puede variar ligeramente según el proveedor con disponibilidad inmediata. (Origen: SF)"
-                
-                # Si es Nadro y hay existencia
-                if (fuente_actual == "Nadro" or fuente_actual == "ND") and existencia_numerica > 0:
-                    logger.info("Nadro tiene disponibilidad para entrega al día siguiente")
-                    return "Tenemos disponibilidad para entrega al día siguiente a través de nuestro proveedor. (Origen: ND)"
-                
-                # Si no hay disponibilidad en ningún proveedor
-                logger.info("No hay disponibilidad inmediata en ningún proveedor")
-                return "Por el momento no tenemos disponibilidad inmediata. Para coordinar una entrega lo antes posible, te recomendamos contactarnos directamente. (Origen: ND)"
-                    
-            # Verificar si es una consulta sobre entrega para hoy (sin verificar proveedores)
-            if self._es_consulta_entrega_hoy(user_message) and not es_consulta_entrega:
-                logger.info("Detectada consulta sobre entrega para HOY - respuesta directa sin consultar a Gemini")
-                return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
+                # Si tiene opción de entrega inmediata (Sufarmed)
+                if producto_info.get("opcion_entrega_inmediata") and producto_info["opcion_entrega_inmediata"].get("fuente") == "Sufarmed":
+                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente."
+                else:
+                    return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente."
             
             # Verificar si es una consulta sobre descuentos o promociones
             if self._es_consulta_descuento(user_message):
@@ -269,116 +227,49 @@ class GeminiService:
                 logger.info(f"Respuesta de descuento seleccionada: '{response_text}'")
                 return response_text
             
-            # Si no es consulta de descuento, proceder con la respuesta normal de producto
-            # Formatear el historial de conversación si está disponible
-            context = ""
-            if conversation_history:
-                context = self._format_conversation_history(conversation_history)
-                logger.info(f"Incluyendo historial de conversación ({len(conversation_history)} turnos)")
+            # Mensaje estándar para agregar al final
+            mensaje_final = "Para más información o confirmar tu pedido, responde este mensaje."
             
-            # Formatear la información del producto
-            if product_info:
-                # Conversión de nombre de fuente a código interno
-                fuente_mapping = {
-                    "Sufarmed": "SF",
-                    "Difarmer": "DF", 
-                    "Fanasa": "FN",
-                    "Nadro": "ND"
-                }
-                
-                fuente_original = product_info.get('fuente', '')
-                codigo_fuente = fuente_mapping.get(fuente_original, fuente_original.upper()[:2] if fuente_original else '')
-                
-                # Detectar cantidad en el mensaje del usuario
-                cantidad = 1  # Valor por defecto
-                cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
-                if cantidad_match:
-                    cantidad = int(cantidad_match.group(1))
-                    logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
-                
-                # Calcular precio con margen del 45%
-                precio_original = product_info.get('precio', 'No disponible')
-                precio_unitario = "No disponible"
-                precio_total = "No disponible"
-                
-                if precio_original != 'No disponible':
-                    try:
-                        # Eliminar símbolos de moneda y convertir a float
-                        precio_limpio = precio_original.replace('$', '').replace(',', '').strip()
-                        precio_float = float(precio_limpio)
-                        
-                        # Aplicar margen del 45%
-                        precio_con_margen = precio_float * 1.45
-                        
-                        # Calcular precio total basado en la cantidad
-                        precio_total_float = precio_con_margen * cantidad
-                        
-                        # Formatear de vuelta a string con formato de moneda
-                        precio_unitario = f"${precio_con_margen:.2f}"
-                        precio_total = f"${precio_total_float:.2f}"
-                        
-                        logger.info(f"Precio unitario con margen: {precio_unitario}, Cantidad: {cantidad}, Precio total: {precio_total}")
-                    except ValueError:
-                        logger.warning(f"No se pudo convertir el precio: {precio_original}")
-                        precio_unitario = precio_original
-                        precio_total = precio_original
-                
-                # Determinar mensaje de entrega según el código de fuente
-                if codigo_fuente == "SF":
-                    mensaje_entrega = "La entrega sería el mismo día, siempre validando disponibilidad."
-                else:
-                    mensaje_entrega = "La entrega sería al día siguiente, sujeto a disponibilidad."
-                
-                # Información formateada del producto
-                product_details = f"""
-Información del producto:
-- Nombre: {product_info.get('nombre', 'No disponible')}
-- Laboratorio: {product_info.get('laboratorio', 'No disponible')}
-- Código de barras: {product_info.get('codigo_barras', 'No disponible')}
-- Registro sanitario: {product_info.get('registro_sanitario', 'No disponible')}
-- URL del producto: {product_info.get('url', 'No disponible')}
-- Precio unitario: {precio_unitario}
-- Precio total (cantidad: {cantidad}): {precio_total}
-- Existencia: {product_info.get('existencia', 'No disponible')}
-- Código fuente: {codigo_fuente}
-- Información de entrega: {mensaje_entrega}
-"""
-            else:
-                product_details = "No se encontró información específica sobre este producto en nuestra base de datos."
-                precio_total = "No disponible"
-                codigo_fuente = ""
-                mensaje_entrega = ""
-                cantidad = 1
+            # Verificar si hay opciones disponibles
+            if not producto_info.get("opcion_entrega_inmediata") and not producto_info.get("opcion_mejor_precio"):
+                logger.warning("No se encontraron opciones de producto disponibles")
+                return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
-            # Crear el prompt completo para respuestas informativas (precio y entrega)
-            prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
-Contexto de conversación previa: {context}
-Mensaje del cliente: {user_message}
-{product_details}
-{additional_context}
-IMPORTANTE: Genera una respuesta EXTREMADAMENTE BREVE Y DIRECTA siguiendo el formato exacto:
-"El precio total sería de {precio_total}. La entrega normalmente se realiza {mensaje_entrega.lower().replace("La entrega sería ", "")} Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: {codigo_fuente})"
-
-REGLAS IMPORTANTES:
-1. NO menciones el nombre del producto en tu respuesta
-2. SOLO incluye el precio total (ya calculado con la cantidad)
-3. SIGUE EXACTAMENTE el formato solicitado
-4. La respuesta debe ser concisa y directa
-5. La parte "(Origen: XX)" solo debe usarse como referencia interna al final de la respuesta
-"""
-            logger.info(f"Enviando prompt a Gemini para respuesta de producto. Mensaje: '{user_message[:50]}...'")
-            logger.debug(f"Información del producto: {product_info}")
+            # Si hay doble opción (entrega inmediata y mejor precio son diferentes)
+            if producto_info.get("tiene_doble_opcion", False):
+                logger.info("Generando respuesta con doble opción")
+                
+                opcion_entrega_inmediata = producto_info["opcion_entrega_inmediata"]
+                opcion_mejor_precio = producto_info["opcion_mejor_precio"]
+                
+                # Formato para doble opción
+                respuesta = f"📦 Tenemos dos opciones:\n"
+                respuesta += f"🚚 Entrega hoy mismo por {opcion_entrega_inmediata['precio']}\n"
+                respuesta += f"💲 Mejor precio con entrega mañana por {opcion_mejor_precio['precio']}\n"
+                respuesta += mensaje_final
+                
+                return respuesta
             
-            response = self.model.generate_content(prompt)
-            response_text = response.text.strip()
+            # Si solo hay una opción
+            logger.info("Generando respuesta con una sola opción")
             
-            logger.info(f"Respuesta de producto recibida de Gemini ({len(response_text)} caracteres)")
-            logger.debug(f"Respuesta: {response_text[:100]}...")
+            # Determinar cuál opción está disponible
+            producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
             
-            return response_text
+            # Verificar si es entrega inmediata (Sufarmed)
+            es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
+            mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
+            
+            # Formato para opción única
+            respuesta = f"✅ Precio: {producto['precio']}\n"
+            respuesta += f"{mensaje_entrega}\n"
+            respuesta += mensaje_final
+            
+            return respuesta
+                
         except Exception as e:
             logger.error(f"Error en generate_product_response: {e}")
-            return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
+            return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, intenta nuevamente más tarde."
     
     def detectar_producto(self, user_message):
         """
