@@ -103,6 +103,40 @@ class GeminiService:
                 
         return False
     
+    def _es_consulta_entrega_hoy(self, user_message):
+        """
+        Determina si el mensaje del usuario hace referencia a la entrega o disponibilidad inmediata (hoy).
+        
+        Args:
+            user_message (str): Mensaje del usuario
+            
+        Returns:
+            bool: True si es una consulta de entrega para hoy, False si no
+        """
+        mensaje_lower = user_message.lower()
+        
+        # Patrones para detectar consultas de entrega para hoy
+        patrones_entrega_hoy = [
+            r'entregan?\s+hoy',
+            r'entrega\s+(?:para|de)?\s*hoy',
+            r'disponibilidad\s+(?:para|de)?\s*hoy',
+            r'recib(?:o|ir)\s+hoy',
+            r'(?:nada|algo)\s+para\s+(?:el\s+)?(?:día\s+)?(?:de\s+)?hoy',
+            r'tienen\s+(?:algo|nada)\s+(?:para|de)\s+hoy',
+            r'puedo\s+recibir\s+hoy',
+            r'para\s+(?:el\s+)?día\s+de\s+hoy',
+            r'(?:hoy\s+(?:mismo|ya))',
+            r'(?:ya|ahorita|inmediata(?:mente)?)\s+(?:mismo)?'
+        ]
+        
+        # Verificar si algún patrón coincide con el mensaje
+        for patron in patrones_entrega_hoy:
+            if re.search(patron, mensaje_lower):
+                logger.info(f"Detectada consulta de entrega para HOY con patrón: {patron}")
+                return True
+                
+        return False
+        
     def generate_response(self, user_message, conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
@@ -115,6 +149,11 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
+            # Verificar si es una consulta sobre entrega para hoy
+            if self._es_consulta_entrega_hoy(user_message):
+                logger.info("Detectada consulta sobre entrega para HOY - respuesta directa sin consultar a Gemini")
+                return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
+            
             # Formatear el historial de conversación si está disponible
             context = ""
             if conversation_history:
@@ -154,6 +193,11 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
+            # Verificar si es una consulta sobre entrega para hoy
+            if self._es_consulta_entrega_hoy(user_message):
+                logger.info("Detectada consulta sobre entrega para HOY - respuesta directa sin consultar a Gemini")
+                return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
+            
             # Verificar si es una consulta sobre descuentos o promociones
             if self._es_consulta_descuento(user_message):
                 logger.info("Detectada consulta sobre descuentos o promociones")
