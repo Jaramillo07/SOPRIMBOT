@@ -203,9 +203,9 @@ class GeminiService:
                 
                 # Si tiene opción de entrega inmediata (Sufarmed)
                 if producto_info.get("opcion_entrega_inmediata") and producto_info["opcion_entrega_inmediata"].get("fuente") == "Sufarmed":
-                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente."
+                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: SF)"
                 else:
-                    return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente."
+                    return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
             
             # Verificar si es una consulta sobre descuentos o promociones
             if self._es_consulta_descuento(user_message):
@@ -235,6 +235,39 @@ class GeminiService:
                 logger.warning("No se encontraron opciones de producto disponibles")
                 return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
+            # Función para aplicar margen y formatear precio
+            def aplicar_margen_precio(precio_str):
+                try:
+                    # Eliminar símbolos de moneda y convertir a float
+                    precio_limpio = precio_str.replace('$', '').replace(',', '').strip()
+                    precio_float = float(precio_limpio)
+                    
+                    # Aplicar margen del 45%
+                    precio_con_margen = precio_float * 1.45
+                    
+                    # Formatear de vuelta a string con formato de moneda
+                    return f"${precio_con_margen:.2f}"
+                except (ValueError, AttributeError):
+                    logger.warning(f"No se pudo convertir el precio: {precio_str}")
+                    return precio_str
+            
+            # Detectar cantidad en el mensaje del usuario
+            cantidad = 1  # Valor por defecto
+            cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
+            if cantidad_match:
+                cantidad = int(cantidad_match.group(1))
+                logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
+            
+            # Conversión de nombre de fuente a código interno
+            fuente_mapping = {
+                "Sufarmed": "SF",
+                "Difarmer": "DF", 
+                "Fanasa": "FN",
+                "Nadro": "ND",
+                "FANASA": "FN",
+                "NADRO": "ND"
+            }
+            
             # Si hay doble opción (entrega inmediata y mejor precio son diferentes)
             if producto_info.get("tiene_doble_opcion", False):
                 logger.info("Generando respuesta con doble opción")
@@ -242,11 +275,19 @@ class GeminiService:
                 opcion_entrega_inmediata = producto_info["opcion_entrega_inmediata"]
                 opcion_mejor_precio = producto_info["opcion_mejor_precio"]
                 
+                # Aplicar margen del 45% a los precios
+                precio_entrega_inmediata = aplicar_margen_precio(opcion_entrega_inmediata['precio'])
+                precio_mejor_precio = aplicar_margen_precio(opcion_mejor_precio['precio'])
+                
+                # Obtener códigos de fuente para referencia interna
+                fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
+                fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
+                
                 # Formato para doble opción
                 respuesta = f"📦 Tenemos dos opciones:\n"
-                respuesta += f"🚚 Entrega hoy mismo por {opcion_entrega_inmediata['precio']}\n"
-                respuesta += f"💲 Mejor precio con entrega mañana por {opcion_mejor_precio['precio']}\n"
-                respuesta += mensaje_final
+                respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
+                respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
+                respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
                 
                 return respuesta
             
@@ -256,14 +297,20 @@ class GeminiService:
             # Determinar cuál opción está disponible
             producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
             
+            # Aplicar margen del 45% al precio
+            precio_con_margen = aplicar_margen_precio(producto['precio'])
+            
             # Verificar si es entrega inmediata (Sufarmed)
             es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
             mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
             
+            # Obtener código de fuente para referencia interna
+            codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
+            
             # Formato para opción única
-            respuesta = f"✅ Precio: {producto['precio']}\n"
+            respuesta = f"✅ Precio: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
-            respuesta += mensaje_final
+            respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
             
             return respuesta
                 
