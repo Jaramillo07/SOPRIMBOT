@@ -11,9 +11,8 @@ import logging
 import re
 import os
 import traceback
+import undetected_chromedriver as uc
 from functools import wraps
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -190,40 +189,59 @@ def clic_seguro(driver, elemento, modo_js=False, scroll=True, mensaje=None):
 
 def inicializar_navegador(headless=True):
     """
-    Inicializa el navegador Chrome con opciones configuradas.
+    Inicializa el navegador Chrome con undetected-chromedriver configurado para Cloud Run.
     
     Args:
         headless (bool): Si es True, el navegador se ejecuta en modo headless (sin interfaz gráfica)
         
     Returns:
-        webdriver.Chrome: Instancia del navegador
+        uc.Chrome: Instancia del navegador undetected-chromedriver
     """
-    logger.info("Inicializando navegador Chrome...")
-    options = Options()
-    if headless:
-        options.add_argument("--headless=new")  # Usar la nueva sintaxis para Chrome reciente
-    
-    # Configuración adicional para mejorar la estabilidad
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")  # Importante para entornos headless
-    
-    # Aumentar timeouts para evitar ReadTimeoutError
-    options.add_argument("--browserTimeout=120000")  # 120 segundos
-    options.add_argument("--networktimeout=60000")   # 60 segundos
+    logger.info("Inicializando navegador Chrome con undetected-chromedriver...")
     
     try:
-        # Inicializar el navegador Chrome
-        driver = webdriver.Chrome(options=options)
-        driver.set_page_load_timeout(60)  # 60 segundos para cargar páginas
-        driver.set_script_timeout(60)     # 60 segundos para scripts
-        logger.info("✅ Navegador Chrome inicializado correctamente")
+        # Configurar opciones para undetected-chromedriver
+        options = uc.ChromeOptions()
+        
+        # Configuración para entorno headless en producción
+        if headless:
+            options.add_argument("--headless=new")
+        
+        # Flags necesarios para Cloud Run
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--window-size=1920,1080")
+        
+        # Configuración adicional para evitar problemas en Cloud Run
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        
+        # Inicializar undetected_chromedriver
+        driver = uc.Chrome(
+            options=options,
+            version_main=114,  # Ajustar a la versión de Chrome en tu entorno
+            driver_executable_path=None,  # Autodetectar el ejecutable
+            browser_executable_path=None,  # Autodetectar el navegador
+            use_subprocess=True,  # Necesario para modo headless
+            suppress_welcome=True  # Evitar pantallas de bienvenida
+        )
+        
+        # Establecer timeouts más largos para evitar ReadTimeoutError
+        driver.set_page_load_timeout(180)  # Timeout de 180 segundos para cargas de página
+        driver.set_script_timeout(180)     # Timeout de 180 segundos para scripts
+        
+        # Configuración adicional
+        driver.implicitly_wait(20)         # Espera implícita para elementos
+        
+        logger.info("✅ Navegador Chrome (undetected) inicializado correctamente")
         return driver
     except Exception as e:
-        logger.error(f"❌ Error al inicializar el navegador: {e}")
+        logger.error(f"❌ Error al inicializar el navegador undetected-chromedriver: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 @retry(max_attempts=2, delay=3)
@@ -232,7 +250,7 @@ def login_fanasa_carrito():
     Realiza el proceso de login en el portal de carrito de FANASA.
     
     Returns:
-        webdriver.Chrome: Instancia del navegador con sesión iniciada o None si falla
+        uc.Chrome: Instancia del navegador con sesión iniciada o None si falla
     """
     driver = None
     try:
