@@ -411,28 +411,32 @@ class ScrapingService:
     def _format_producto_nadro(self, producto):
         """
         Formatea los datos del producto de NADRO al formato estandarizado.
-        
+
         Args:
             producto (dict): Información del producto en formato NADRO
-            
+
         Returns:
             dict: Producto formateado al estándar común
         """
         if not producto:
             return None
-        
+
         # Obtener el precio (puede estar en diferentes campos según el scraper NADRO)
         precio = producto.get('precio') or producto.get('precio_farmacia') or producto.get('precio_publico') or "0"
-        
-        # Extraer valor numérico de la existencia para comparaciones
+
+        # Determinar existencia numérica
         existencia_numerica = 0
-        if producto.get('existencia'):
-            stock_match = re.search(r'(\d+)', producto.get('existencia', '0'))
-            if stock_match:
-                existencia_numerica = int(stock_match.group(1))
-            elif "disponible" in producto.get('existencia', '').lower():
-                existencia_numerica = 1
-        
+        existencia_raw = producto.get('existencia', '')
+        texto_existencia = str(existencia_raw).lower()
+        indicadores_disponibilidad = ["disponible", "entrega mañana", "sí", "si", "stock"]
+
+        # Verificar si hay número en la existencia
+        stock_match = re.search(r'(\d+)', texto_existencia)
+        if stock_match:
+            existencia_numerica = int(stock_match.group(1))
+        elif any(ind in texto_existencia for ind in indicadores_disponibilidad):
+            existencia_numerica = 1
+
         return {
             "nombre": producto.get('nombre', ''),
             "laboratorio": producto.get('laboratorio', ''),
@@ -441,12 +445,13 @@ class ScrapingService:
             "url": producto.get('url', ''),
             "imagen": producto.get('imagen', ''),
             "precio": precio,
-            "existencia": producto.get('existencia', '0'),
+            "existencia": existencia_raw,
             "precio_numerico": self._extract_numeric_price(precio),
             "existencia_numerica": existencia_numerica,
             "fuente": "NADRO",
             "nombre_farmacia": "NADRO"
         }
+
     
     def buscar_producto_difarmer(self, nombre_producto):
         """
