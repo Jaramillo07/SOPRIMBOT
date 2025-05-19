@@ -126,7 +126,8 @@ class GeminiService:
             r'puedo\s+recibir\s+hoy',
             r'para\s+(?:el\s+)?día\s+de\s+hoy',
             r'(?:hoy\s+(?:mismo|ya))',
-            r'(?:ya|ahorita|inmediata(?:mente)?)\s+(?:mismo)?'
+            r'(?:ya|ahorita|inmediata(?:mente)?)\s+(?:mismo)?',
+            r'(?:hay\s+entrega\s+(?:el\s+)?mismo\s+día)'
         ]
         
         # Verificar si algún patrón coincide con el mensaje
@@ -193,8 +194,58 @@ class GeminiService:
             str: Respuesta generada por Gemini
         """
         try:
-            # Verificar si es una consulta sobre entrega para hoy
-            if self._es_consulta_entrega_hoy(user_message):
+            # Verificar si es una consulta sobre entregas
+            es_consulta_entrega = self._es_consulta_entrega_hoy(user_message) or re.search(r'(?:para\s+cuándo|para\s+cuando|cuándo|cuando)\s+(?:sería|seria|es)\s+(?:la\s+)?entrega', user_message.lower())
+            
+            # Verificar disponibilidad en diferentes proveedores si es consulta de entrega
+            if es_consulta_entrega and isinstance(product_info, dict):
+                logger.info("Detectada consulta sobre entrega - verificando disponibilidad en proveedores")
+                
+                # Obtener fuente y disponibilidad actual
+                fuente_actual = product_info.get('fuente', '')
+                existencia_str = product_info.get('existencia', '0')
+                
+                # Convertir existencia a número si es posible
+                existencia_numerica = 0
+                try:
+                    if existencia_str.lower() == 'si':
+                        existencia_numerica = 1
+                    else:
+                        # Eliminar caracteres no numéricos
+                        existencia_limpia = re.sub(r'[^\d]', '', existencia_str)
+                        if existencia_limpia:
+                            existencia_numerica = int(existencia_limpia)
+                except (ValueError, AttributeError):
+                    existencia_numerica = 0
+                
+                logger.info(f"Fuente actual: {fuente_actual}, Existencia: {existencia_numerica}")
+                
+                # Verificar si la fuente actual es Sufarmed y tiene disponibilidad
+                if (fuente_actual == "Sufarmed" or fuente_actual == "SF") and existencia_numerica > 0:
+                    logger.info("Sufarmed tiene disponibilidad inmediata")
+                    return "La entrega se puede realizar hoy mismo a través de uno de nuestros proveedores. El precio puede variar ligeramente según el proveedor con disponibilidad inmediata. (Origen: SF)"
+                
+                # Verificar si hay información sobre otros proveedores en el contexto adicional
+                proveedores_disponibles = []
+                if "Sufarmed" in additional_context and "existencia" in additional_context and existencia_numerica > 0:
+                    proveedores_disponibles.append("SF")
+                
+                # Si hay proveedores con disponibilidad inmediata
+                if proveedores_disponibles:
+                    logger.info(f"Proveedores con disponibilidad inmediata: {proveedores_disponibles}")
+                    return "La entrega se puede realizar hoy mismo a través de uno de nuestros proveedores. El precio puede variar ligeramente según el proveedor con disponibilidad inmediata. (Origen: SF)"
+                
+                # Si es Nadro y hay existencia
+                if (fuente_actual == "Nadro" or fuente_actual == "ND") and existencia_numerica > 0:
+                    logger.info("Nadro tiene disponibilidad para entrega al día siguiente")
+                    return "Tenemos disponibilidad para entrega al día siguiente a través de nuestro proveedor. (Origen: ND)"
+                
+                # Si no hay disponibilidad en ningún proveedor
+                logger.info("No hay disponibilidad inmediata en ningún proveedor")
+                return "Por el momento no tenemos disponibilidad inmediata. Para coordinar una entrega lo antes posible, te recomendamos contactarnos directamente. (Origen: ND)"
+                    
+            # Verificar si es una consulta sobre entrega para hoy (sin verificar proveedores)
+            if self._es_consulta_entrega_hoy(user_message) and not es_consulta_entrega:
                 logger.info("Detectada consulta sobre entrega para HOY - respuesta directa sin consultar a Gemini")
                 return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
             
