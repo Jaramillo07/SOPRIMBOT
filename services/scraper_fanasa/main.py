@@ -18,6 +18,21 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 
+def guardar_screenshot_seguro(driver, nombre_archivo):
+    """
+    Guarda un screenshot solo si la variable de entorno DEBUG está establecida como "True".
+    
+    Args:
+        driver: Instancia del navegador webdriver
+        nombre_archivo: Nombre del archivo donde guardar el screenshot
+    """
+    if os.environ.get("DEBUG", "False") == "True":
+        try:
+            driver.save_screenshot(nombre_archivo)
+            logger.debug(f"Screenshot guardado: {nombre_archivo}")
+        except Exception as e:
+            logger.warning(f"No se pudo guardar screenshot {nombre_archivo}: {e}")
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -334,12 +349,12 @@ def buscar_producto(driver, nombre_producto):
         logger.info("📦 Resultados visibles tras la búsqueda reactiva")
 
         # Captura opcional para verificación
-        driver.save_screenshot("resultados_busqueda_reactiva.png")
+        guardar_screenshot_seguro(driver, "resultados_busqueda_reactiva.png")
         return True
 
     except Exception as e:
         logger.error(f"⚠️ Error durante la búsqueda reactiva: {e}")
-        driver.save_screenshot("error_busqueda_reactiva.png")
+        guardar_screenshot_seguro(driver, "error_busqueda_reactiva.png")
         return False
 
 def extraer_info_producto(driver):
