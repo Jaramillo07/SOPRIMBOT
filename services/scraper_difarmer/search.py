@@ -61,6 +61,16 @@ def buscar_producto(driver, nombre_producto):
         # Guardar captura de los resultados de búsqueda
         driver.save_screenshot("resultados_busqueda.png")
        
+        # NUEVO: Verificar si hay mensaje de "No se encontraron resultados"
+        no_results_messages = driver.find_elements(By.XPATH, 
+            "//*[contains(text(), 'No se encontraron resultados')]")
+        
+        for message in no_results_messages:
+            if message.is_displayed() and "No se encontraron resultados" in message.text:
+                logger.warning(f"No se encontraron resultados para la búsqueda: '{nombre_producto}'")
+                driver.save_screenshot("no_resultados_encontrados.png")
+                return False
+       
         # NUEVO: Guardar HTML de la página de resultados para análisis
         with open("resultados_busqueda.html", "w", encoding="utf-8") as f:
             f.write(driver.page_source)
