@@ -56,11 +56,26 @@ async def webhook(request: Request):
         # Extraer texto y remitente
         msg_text = form.get("Body", "")
         phone_number = form.get("From", "")
+        
+        # NUEVO: Detectar si hay una imagen
+        num_media = int(form.get("NumMedia", "0"))
+        media_urls = []
+        
+        if num_media > 0:
+            logger.info(f"Mensaje contiene {num_media} elementos multimedia")
+            # Recopilar URLs de las imágenes
+            for i in range(num_media):
+                media_url = form.get(f"MediaUrl{i}")
+                media_type = form.get(f"MediaContentType{i}")
+                
+                if media_url and "image" in media_type:
+                    media_urls.append(media_url)
+                    logger.info(f"Imagen recibida: {media_url}")
 
         logger.info(f"Procesando mensaje: '{msg_text}' de {phone_number}")
 
-        # Llamar a tu lógica
-        result = await message_handler.procesar_mensaje(msg_text, phone_number)
+        # Llamar a tu lógica modificada para incluir procesamiento de imágenes
+        result = await message_handler.procesar_mensaje(msg_text, phone_number, media_urls)
         logger.info(f"Resultado del procesamiento: {result.get('message_type')}")
 
         # Twilio solo necesita un 200 OK
