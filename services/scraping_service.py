@@ -623,44 +623,40 @@ class ScrapingService:
         # Lista para almacenar resultados de todas las fuentes
         resultados = []
         
-        # FASE 1: Difarmer y luego Sufarmed (con delay de 5 segundos)
-        logger.info("FASE 1-A: Ejecutando scraper Difarmer primero")
+        # FASE 1: Difarmer y Sufarmed en paralelo (ya probados y funcionan juntos)
+        fase1_scrapers = []
         if self.difarmer_available:
-            try:
-                resultado_difarmer = self.buscar_producto_difarmer(nombre_producto)
-                if resultado_difarmer:
-                    # Verificar que el precio no sea cero antes de añadirlo
-                    if resultado_difarmer['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info(f"Resultado obtenido de Difarmer")
-                        resultados.append(resultado_difarmer)
-                    else:
-                        logger.warning(f"Resultado de Difarmer descartado por precio cero o inválido")
-            except Exception as e:
-                logger.error(f"Error en búsqueda de Difarmer: {e}")
+            fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
+        if self.sufarmed_available:
+            fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
         
-        # Esperar 5 segundos antes de iniciar Sufarmed
-        logger.info("Esperando 5 segundos antes de iniciar búsqueda en Sufarmed...")
+        if fase1_scrapers:
+            logger.info(f"FASE 1: Ejecutando scrapers {', '.join([x[0] for x in fase1_scrapers])}")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
+                futures = {}
+                for source_name, search_func in fase1_scrapers:
+                    future = executor.submit(search_func, nombre_producto)
+                    futures[future] = source_name
+                
+                for future in concurrent.futures.as_completed(futures):
+                    source_name = futures[future]
+                    try:
+                        resultado = future.result()
+                        if resultado:
+                            # Verificar que el precio no sea cero antes de añadirlo
+                            if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
+                                logger.info(f"Resultado obtenido de {source_name}")
+                                resultados.append(resultado)
+                            else:
+                                logger.warning(f"Resultado de {source_name} descartado por precio cero o inválido")
+                    except Exception as e:
+                        logger.error(f"Error en búsqueda de {source_name}: {e}")
+        
+        # Delay de 5 segundos entre Fase 1 y Fase 2
+        logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 2...")
         time.sleep(5)
         
-        logger.info("FASE 1-B: Ejecutando scraper Sufarmed")
-        if self.sufarmed_available:
-            try:
-                resultado_sufarmed = self.buscar_producto_sufarmed(nombre_producto)
-                if resultado_sufarmed:
-                    # Verificar que el precio no sea cero antes de añadirlo
-                    if resultado_sufarmed['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info(f"Resultado obtenido de Sufarmed")
-                        resultados.append(resultado_sufarmed)
-                    else:
-                        logger.warning(f"Resultado de Sufarmed descartado por precio cero o inválido")
-            except Exception as e:
-                logger.error(f"Error en búsqueda de Sufarmed: {e}")
-        
-        # Esperar 3 segundos antes de iniciar FASE 2
-        logger.info("Esperando 3 segundos antes de iniciar FASE 2...")
-        time.sleep(3)
-        
-        # FASE 2: NADRO
+        # FASE 2: NADRO (independiente)
         if self.nadro_available:
             logger.info("FASE 2: Ejecutando scraper NADRO")
             try:
@@ -675,9 +671,9 @@ class ScrapingService:
             except Exception as e:
                 logger.error(f"Error en búsqueda de NADRO: {e}")
         
-        # Esperar 3 segundos antes de iniciar FASE 3
-        logger.info("Esperando 3 segundos antes de iniciar FASE 3...")
-        time.sleep(3)
+        # Delay de 5 segundos entre Fase 2 y Fase 3
+        logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 3...")
+        time.sleep(5)
         
         # FASE 3: FANASA (último recurso)
         if self.fanasa_available:
