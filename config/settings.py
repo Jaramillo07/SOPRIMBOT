@@ -1,7 +1,7 @@
 """
 Archivo de configuración para SOPRIM BOT.
 Centraliza todas las claves API y parámetros de configuración.
-Ahora adaptado a Twilio Sandbox para WhatsApp.
+Ahora adaptado para incluir Google Cloud Vision para OCR.
 """
 import os
 from dotenv import load_dotenv
@@ -23,6 +23,7 @@ REGLAS:
 4. Mantén un tono amable y profesional, como un farmacéutico bien capacitado.
 5. No des consejos médicos complejos o diagnósticos.
 6. Si alguien parece tener una emergencia médica, sugiere que busque atención médica inmediata.
+7. Si el usuario envía una imagen con texto, como una receta médica o una fotografía de un medicamento, procesa esa información como si fuera texto.
 """
 # --------------------------------------------------
 # Configuración de Twilio WhatsApp Sandbox
@@ -34,6 +35,13 @@ TWILIO_WHATSAPP_SANDBOX_NUMBER = os.getenv(
     "TWILIO_WHATSAPP_SANDBOX_NUMBER",
     "whatsapp:+14155238886"
 )
+# --------------------------------------------------
+# Configuración de Google Cloud Vision (OCR)
+# --------------------------------------------------
+# Si usas GOOGLE_APPLICATION_CREDENTIALS, no necesitas la API_KEY
+GOOGLE_CLOUD_VISION_API_KEY = os.getenv("GOOGLE_CLOUD_VISION_API_KEY", "")
+# Ruta al archivo de credenciales de Google Cloud (alternativa a la API_KEY)
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 # --------------------------------------------------
 # Números permitidos (opcional)
 # --------------------------------------------------
