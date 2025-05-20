@@ -527,3 +527,49 @@ Mensaje: "{user_message}"
             
             logger.info("Respaldo: Consulta general")
             return "consulta_general", None
+            
+def es_mensaje_personal(self, mensaje):
+    """
+    Utiliza Gemini para determinar si un mensaje es personal/coloquial o relacionado con farmacia.
+    
+    Args:
+        mensaje (str): Mensaje del usuario a analizar
+        
+    Returns:
+        bool: True si es un mensaje personal que debe ignorarse, False si es una consulta válida
+    """
+    try:
+        # Mensaje muy corto: asumir que es personal
+        if len(mensaje.strip()) <= 3:
+            return True
+            
+        # Prompt específico para esta tarea
+        prompt = f"""
+        Clasifica el siguiente mensaje como PERSONAL o FARMACIA.
+        
+        PERSONAL: Si es un saludo genérico, conversación casual, jerga, invitación social, pregunta personal.
+        Ejemplos: "hola", "qué onda", "vamos por cheves", "a qué hora sales", "nos vemos luego", etc.
+        
+        FARMACIA: Si es una consulta sobre medicamentos, productos de farmacia, disponibilidad, precios o entregas.
+        Ejemplos: "tienen paracetamol", "precio de aspirina", "cuándo entregan", "tienen zoladex", etc.
+        
+        Solo responde con una palabra: PERSONAL o FARMACIA.
+        
+        Mensaje: "{mensaje}"
+        """
+        
+        logger.info("Consultando a Gemini para clasificar mensaje")
+        response = self.model.generate_content(prompt)
+        resultado = response.text.strip().upper()
+        
+        logger.info(f"Gemini clasificó mensaje como: {resultado}")
+        
+        # Si la respuesta es PERSONAL, ignorar el mensaje
+        if "PERSONAL" in resultado:
+            return True
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error al clasificar mensaje con Gemini: {e}")
+        # En caso de error, caer a las reglas de expresiones regulares por seguridad
+        return False
