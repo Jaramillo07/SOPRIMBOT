@@ -28,7 +28,7 @@ TIMEOUT = 20                       # Tiempo de espera para elementos (segundos)
 
 
 
-def inicializar_navegador(headless=False):
+def inicializar_navegador(headless=True):  # Cambiado a True para producción
     """
     Inicializa el navegador Chrome con opciones configuradas.
     
@@ -74,7 +74,7 @@ def login_fanasa_carrito():
     Returns:
         webdriver.Chrome: Instancia del navegador con sesión iniciada o None si falla
     """
-    driver = inicializar_navegador(headless=False)  # Usar False para ver el proceso visualmente
+    driver = inicializar_navegador(headless=True)  # Cambiado a True para producción
     if not driver:
         logger.error("No se pudo inicializar el navegador. Abortando.")
         return None
@@ -86,8 +86,11 @@ def login_fanasa_carrito():
         time.sleep(5)  # Esperar a que cargue la página
         
         # Tomar captura de pantalla inicial
-        driver.save_screenshot("01_fanasa_carrito_login_inicio.png")
-        logger.info("Captura de pantalla guardada: 01_fanasa_carrito_login_inicio.png")
+        try:
+            driver.save_screenshot("01_fanasa_carrito_login_inicio.png")
+            logger.info("Captura de pantalla guardada: 01_fanasa_carrito_login_inicio.png")
+        except:
+            logger.warning("No se pudo guardar captura de pantalla")
         
         # 2. Buscar campo de usuario
         logger.info("Buscando campo de usuario...")
@@ -142,7 +145,10 @@ def login_fanasa_carrito():
         time.sleep(1)
         
         # Tomar captura después de ingresar el usuario
-        driver.save_screenshot("02_fanasa_carrito_usuario_ingresado.png")
+        try:
+            driver.save_screenshot("02_fanasa_carrito_usuario_ingresado.png")
+        except:
+            pass
         
         # 3. Buscar campo de contraseña
         logger.info("Buscando campo de contraseña...")
@@ -195,7 +201,10 @@ def login_fanasa_carrito():
         time.sleep(1)
         
         # Tomar captura después de ingresar la contraseña
-        driver.save_screenshot("03_fanasa_carrito_password_ingresado.png")
+        try:
+            driver.save_screenshot("03_fanasa_carrito_password_ingresado.png")
+        except:
+            pass
         
         # 4. Buscar botón de inicio de sesión (basado en la captura es un botón azul)
         logger.info("Buscando botón 'Iniciar sesión'...")
@@ -252,13 +261,19 @@ def login_fanasa_carrito():
             logger.warning("No se encontró botón de inicio de sesión. Intentando enviar formulario con Enter.")
             password_field.send_keys(Keys.RETURN)
             time.sleep(5)
-            driver.save_screenshot("04_fanasa_carrito_enviado_con_enter.png")
+            try:
+                driver.save_screenshot("04_fanasa_carrito_enviado_con_enter.png")
+            except:
+                pass
         else:
             # Hacer clic en el botón
             try:
                 # Resaltar el botón para identificarlo en la captura
                 driver.execute_script("arguments[0].style.border='2px solid red'", login_button)
-                driver.save_screenshot("04a_fanasa_carrito_boton_resaltado.png")
+                try:
+                    driver.save_screenshot("04a_fanasa_carrito_boton_resaltado.png")
+                except:
+                    pass
                 
                 # Asegurar que el botón sea visible
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", login_button)
@@ -275,16 +290,22 @@ def login_fanasa_carrito():
                 logger.info("Clic en botón realizado con JavaScript")
             
             time.sleep(5)  # Esperar a que se procese el login
-            driver.save_screenshot("04b_fanasa_carrito_despues_clic.png")
+            try:
+                driver.save_screenshot("04b_fanasa_carrito_despues_clic.png")
+            except:
+                pass
         
         # 5. Verificar si el login fue exitoso
         current_url = driver.current_url
         logger.info(f"URL actual después del intento de login: {current_url}")
         
         # Guardar HTML para análisis
-        with open("fanasa_carrito_despues_login.html", "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        logger.info("HTML después del login guardado para análisis")
+        try:
+            with open("fanasa_carrito_despues_login.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            logger.info("HTML después del login guardado para análisis")
+        except:
+            logger.warning("No se pudo guardar HTML")
         
         # Verificar si ya no estamos en la página de login
         login_exitoso = "/login" not in current_url
@@ -320,7 +341,10 @@ def login_fanasa_carrito():
             logger.info("└─────────────────────────────────────┘")
             
             # Tomar una última captura después del login exitoso
-            driver.save_screenshot("05_fanasa_carrito_login_exitoso.png")
+            try:
+                driver.save_screenshot("05_fanasa_carrito_login_exitoso.png")
+            except:
+                pass
             
             return driver
         else:
@@ -331,14 +355,20 @@ def login_fanasa_carrito():
             if has_error:
                 logger.error("Se detectaron mensajes de error en la página")
             
-            driver.save_screenshot("error_login_fallido.png")
+            try:
+                driver.save_screenshot("error_login_fallido.png")
+            except:
+                pass
             driver.quit()
             return None
         
     except Exception as e:
         logger.error(f"Error durante el proceso de login: {e}")
         if driver:
-            driver.save_screenshot("error_general_login.png")
+            try:
+                driver.save_screenshot("error_general_login.png")
+            except:
+                pass
             driver.quit()
         return None
 
@@ -362,7 +392,10 @@ def buscar_producto(driver, nombre_producto):
         
         # Esperar a que la página principal esté cargada
         time.sleep(3)
-        driver.save_screenshot("pagina_principal.png")
+        try:
+            driver.save_screenshot("pagina_principal.png")
+        except:
+            pass
         
         # Buscar el input de búsqueda por varios selectores posibles
         search_field = None
@@ -426,12 +459,18 @@ def buscar_producto(driver, nombre_producto):
         
         if not search_field:
             logger.error("No se pudo encontrar el campo de búsqueda")
-            driver.save_screenshot("error_no_campo_busqueda.png")
+            try:
+                driver.save_screenshot("error_no_campo_busqueda.png")
+            except:
+                pass
             return False
         
         # Resaltar el campo de búsqueda en la captura
         driver.execute_script("arguments[0].style.border='3px solid red'", search_field)
-        driver.save_screenshot("campo_busqueda_encontrado.png")
+        try:
+            driver.save_screenshot("campo_busqueda_encontrado.png")
+        except:
+            pass
         
         # Limpiar e ingresar el término de búsqueda
         search_field.clear()
@@ -449,7 +488,10 @@ def buscar_producto(driver, nombre_producto):
         time.sleep(5)
         
         # Tomar captura de la página de resultados
-        driver.save_screenshot("resultados_busqueda.png")
+        try:
+            driver.save_screenshot("resultados_busqueda.png")
+        except:
+            pass
         
         # Verificar la presencia de productos en la página
         # Buscar elementos que indiquen productos
@@ -478,7 +520,10 @@ def buscar_producto(driver, nombre_producto):
             
     except Exception as e:
         logger.error(f"⚠️ Error durante la búsqueda: {e}")
-        driver.save_screenshot("error_busqueda.png")
+        try:
+            driver.save_screenshot("error_busqueda.png")
+        except:
+            pass
         return False
 
 def extraer_info_productos(driver, numero_producto=0):
@@ -500,7 +545,10 @@ def extraer_info_productos(driver, numero_producto=0):
         logger.info(f"Extrayendo información del producto #{numero_producto}")
         
         # Guardar página para análisis
-        driver.save_screenshot(f"pagina_resultados_producto_{numero_producto}.png")
+        try:
+            driver.save_screenshot(f"pagina_resultados_producto_{numero_producto}.png")
+        except:
+            pass
         
         # Inicializar diccionario de información
         info_producto = {
@@ -545,8 +593,11 @@ def extraer_info_productos(driver, numero_producto=0):
                 product_card = product_cards[numero_producto]
                 logger.info(f"Seleccionando producto #{numero_producto}")
                 # Resaltar el producto seleccionado
-                driver.execute_script("arguments[0].style.border='3px solid green'", product_card)
-                driver.save_screenshot(f"tarjeta_producto_{numero_producto}_seleccionada.png")
+                try:
+                    driver.execute_script("arguments[0].style.border='3px solid green'", product_card)
+                    driver.save_screenshot(f"tarjeta_producto_{numero_producto}_seleccionada.png")
+                except:
+                    pass
             else:
                 logger.warning(f"Índice {numero_producto} fuera de rango. Solo hay {len(product_cards)} productos. Usando el primero.")
                 product_card = product_cards[0]
@@ -802,7 +853,10 @@ def extraer_info_productos(driver, numero_producto=0):
     
     except Exception as e:
         logger.error(f"Error general extrayendo información: {e}")
-        driver.save_screenshot("error_extraccion_general.png")
+        try:
+            driver.save_screenshot("error_extraccion_general.png")
+        except:
+            pass
         return None
 
 def buscar_info_medicamento(nombre_medicamento, headless=True):
@@ -893,165 +947,3 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         if driver:
             logger.info("Cerrando navegador...")
             driver.quit()
-
-if __name__ == "__main__":
-    print("=== Script de Login y Scraping para FANASA Carrito ===")
-    print(f"Iniciando sesión con el usuario: {USERNAME}")
-    
-    # Ejecutar el login
-    driver = login_fanasa_carrito()
-    
-    if driver:
-        print("\n✅ ¡Login exitoso en FANASA Carrito!")
-        
-        # Preguntar si se desea buscar un producto
-        buscar = input("\n¿Deseas buscar un producto? (s/n): ").lower()
-        
-        if buscar == 's':
-            nombre_producto = input("Ingresa el nombre del producto a buscar: ")
-            
-            if buscar_producto(driver, nombre_producto):
-                print(f"\n✅ Búsqueda realizada para: {nombre_producto}")
-                
-                # Extraer información del PRIMER producto automáticamente (índice 0)
-                info = extraer_info_productos(driver, 0)
-                
-                if info:
-                    print("\n" + "="*50)
-                    print("         INFORMACIÓN DEL PRODUCTO")
-                    print("="*50)
-                    
-                    # Mostrar información en un formato más ordenado
-                    if info['nombre']:
-                        print(f"\n🏷️  NOMBRE: {info['nombre']}")
-                    
-                    print("\n💰 PRECIOS:")
-                    if info['precio_neto']:
-                        print(f"   ▪ Precio Neto: {info['precio_neto']}")
-                    if info['pmp']:
-                        print(f"   ▪ PMP: {info['pmp']}")
-                    if info['precio_publico']:
-                        print(f"   ▪ Precio Público: {info['precio_publico']}")
-                    if info['precio_farmacia']:
-                        print(f"   ▪ Precio Farmacia: {info['precio_farmacia']}")
-                    
-                    if info['sku'] or info['codigo']:
-                        print(f"\n🔢 SKU/CÓDIGO: {info['sku'] or info['codigo']}")
-                    
-                    if info['laboratorio']:
-                        print(f"\n🏭 LABORATORIO: {info['laboratorio']}")
-                    
-                    if info['disponibilidad']:
-                        print(f"\n📦 DISPONIBILIDAD: {info['disponibilidad']}")
-                    
-                    if info['imagen']:
-                        print(f"\n🖼️  URL DE IMAGEN: {info['imagen']}")
-                    
-                    print(f"\n🔗 URL DEL PRODUCTO: {info['url']}")
-                    
-                    print("\n" + "="*50)
-                    
-                    # Preguntar si desea guardar la información en un archivo
-                    guardar = input("\n¿Deseas guardar esta información en un archivo? (s/n): ").lower()
-                    if guardar == 's':
-                        try:
-                            import json
-                            from datetime import datetime
-                            
-                            # Crear un nombre de archivo basado en el nombre del producto y fecha
-                            fecha_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            nombre_archivo = f"{info['nombre'] if info['nombre'] else nombre_producto}_{fecha_hora}.json"
-                            nombre_archivo = nombre_archivo.replace(" ", "_").replace("/", "_").replace("\\", "_")
-                            
-                            # Guardar como JSON
-                            with open(nombre_archivo, "w", encoding="utf-8") as f:
-                                json.dump(info, f, ensure_ascii=False, indent=4)
-                            
-                            print(f"\n✅ Información guardada en el archivo: {nombre_archivo}")
-                        except Exception as e:
-                            print(f"\n❌ Error al guardar información: {e}")
-                else:
-                    print("\n❌ No se pudo extraer información del producto.")
-                    print("Revisa las capturas de pantalla y los logs para identificar el problema.")
-            else:
-                print(f"\n❌ No se pudo encontrar el producto: {nombre_producto}")
-        
-        # Preguntar si desea realizar otra búsqueda
-        otra_busqueda = input("\n¿Deseas buscar otro producto? (s/n): ").lower()
-        while otra_busqueda == 's':
-            nombre_producto = input("\nIngresa el nombre del producto a buscar: ")
-            
-            if buscar_producto(driver, nombre_producto):
-                print(f"\n✅ Búsqueda realizada para: {nombre_producto}")
-                
-                # Extraer información del PRIMER producto automáticamente (índice 0)
-                info = extraer_info_productos(driver, 0)
-                
-                if info:
-                    print("\n" + "="*50)
-                    print("         INFORMACIÓN DEL PRODUCTO")
-                    print("="*50)
-                    
-                    # Mostrar información en un formato más ordenado
-                    if info['nombre']:
-                        print(f"\n🏷️  NOMBRE: {info['nombre']}")
-                    
-                    print("\n💰 PRECIOS:")
-                    if info['precio_neto']:
-                        print(f"   ▪ Precio Neto: {info['precio_neto']}")
-                    if info['pmp']:
-                        print(f"   ▪ PMP: {info['pmp']}")
-                    if info['precio_publico']:
-                        print(f"   ▪ Precio Público: {info['precio_publico']}")
-                    if info['precio_farmacia']:
-                        print(f"   ▪ Precio Farmacia: {info['precio_farmacia']}")
-                    
-                    if info['sku'] or info['codigo']:
-                        print(f"\n🔢 SKU/CÓDIGO: {info['sku'] or info['codigo']}")
-                    
-                    if info['laboratorio']:
-                        print(f"\n🏭 LABORATORIO: {info['laboratorio']}")
-                    
-                    if info['disponibilidad']:
-                        print(f"\n📦 DISPONIBILIDAD: {info['disponibilidad']}")
-                    
-                    if info['imagen']:
-                        print(f"\n🖼️  URL DE IMAGEN: {info['imagen']}")
-                    
-                    print(f"\n🔗 URL DEL PRODUCTO: {info['url']}")
-                    
-                    print("\n" + "="*50)
-                    
-                    # Preguntar si desea guardar la información
-                    guardar = input("\n¿Deseas guardar esta información en un archivo? (s/n): ").lower()
-                    if guardar == 's':
-                        try:
-                            import json
-                            from datetime import datetime
-                            
-                            # Crear nombre de archivo
-                            fecha_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            nombre_archivo = f"{info['nombre'] if info['nombre'] else nombre_producto}_{fecha_hora}.json"
-                            nombre_archivo = nombre_archivo.replace(" ", "_").replace("/", "_").replace("\\", "_")
-                            
-                            # Guardar como JSON
-                            with open(nombre_archivo, "w", encoding="utf-8") as f:
-                                json.dump(info, f, ensure_ascii=False, indent=4)
-                            
-                            print(f"\n✅ Información guardada en el archivo: {nombre_archivo}")
-                        except Exception as e:
-                            print(f"\n❌ Error al guardar información: {e}")
-                else:
-                    print("\n❌ No se pudo extraer información del producto.")
-            else:
-                print(f"\n❌ No se pudo encontrar el producto: {nombre_producto}")
-            
-            otra_busqueda = input("\n¿Deseas buscar otro producto? (s/n): ").lower()
-        
-        # Mantener el navegador abierto para inspección manual
-        input("\nPresiona Enter para cerrar el navegador... ")
-        driver.quit()
-        print("Navegador cerrado. Proceso finalizado.")
-    else:
-        print("\n❌ Error durante el login en FANASA Carrito.")
-        print("Revisa las capturas de pantalla y los logs para identificar el problema.")
