@@ -142,15 +142,20 @@ class GeminiService:
         """
         Determina si el mensaje del usuario es solo para indicar una cantidad
         (por ejemplo: "quiero 5", "dame 2", etc.)
-        
+    
         Args:
             user_message (str): Mensaje del usuario
-            
+        
         Returns:
             bool, int: (True/False, cantidad detectada o None)
         """
         mensaje_lower = user_message.lower().strip()
-        
+    
+        # NUEVO: Verificar si el número está seguido de unidades de medida (mg, ml, g, etc.)
+        # En ese caso, es parte del nombre del producto, no una cantidad
+        if re.search(r'\d+\.?\d*\s*(?:mg|ml|g|mcg|kg|oz|cc|ui|u\.i\.|mm)(?:\b|$)', mensaje_lower):
+            return False, None
+    
         # Patrones para detectar mensajes de cantidad
         patrones_cantidad = [
             r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
@@ -158,7 +163,7 @@ class GeminiService:
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             r'^(?:son|serían|serian|serán|seran)\s+(\d+)$'
         ]
-        
+    
         # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_cantidad:
             match = re.search(patron, mensaje_lower)
@@ -166,7 +171,7 @@ class GeminiService:
                 cantidad = int(match.group(1))
                 logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
                 return True, cantidad
-                
+            
         return False, None
 
     def _extraer_ultimo_producto(self, conversation_history):
