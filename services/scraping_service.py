@@ -1,6 +1,6 @@
 """
 Servicio de scraping integrado para buscar información de productos farmacéuticos.
-Este servicio orquesta los scrapers de Difarmer, Sufarmed, FANASA y NADRO de forma secuencial,
+Este servicio orquesta los scrapers de Difarmer, Sufarmed y NADRO de forma secuencial,
 comparando resultados y seleccionando opciones según disponibilidad y precio.
 """
 import logging
@@ -33,7 +33,8 @@ class ScrapingService:
         # Verificar qué servicios están disponibles
         self.difarmer_available = self._check_difarmer_available()
         self.sufarmed_available = self._check_sufarmed_available()
-        self.fanasa_available = self._check_fanasa_available()
+        # Forzar FANASA como no disponible para evitar errores de timeout
+        self.fanasa_available = False
         self.nadro_available = self._check_nadro_available()
         
         # Inicializar scrapers solo si están disponibles
@@ -84,26 +85,7 @@ class ScrapingService:
                 except ImportError:
                     self.sufarmed_available = False
         
-        # Inicializar FANASA si está disponible
-        if self.fanasa_available:
-            try:
-                # Importar el módulo de FANASA
-                from services.scraper_fanasa import buscar_info_medicamento as buscar_fanasa
-                self.buscar_fanasa = buscar_fanasa
-                logger.info("Scraper FANASA inicializado correctamente")
-            except ImportError as e:
-                logger.error(f"Error al importar scraper_fanasa: {e}")
-                self.fanasa_available = False
-                # Intentar import alternativo
-                try:
-                    scraper_path = os.path.join('services', 'scraper_fanasa')
-                    sys.path.insert(0, scraper_path)
-                    from main import buscar_info_medicamento
-                    self.buscar_fanasa = buscar_info_medicamento
-                    self.fanasa_available = True
-                    logger.info("Scraper FANASA inicializado mediante ruta alternativa")
-                except ImportError as e2:
-                    logger.error(f"Error en importación alternativa de FANASA: {e2}")
+        # FANASA se fuerza como no disponible, por lo que no se inicializa
 
         # Inicializar NADRO si está disponible
         if self.nadro_available:
@@ -127,7 +109,7 @@ class ScrapingService:
                     logger.error(f"Error en importación alternativa de NADRO: {e2}")
         
         # Verificar que al menos un scraper esté disponible
-        if not (self.difarmer_available or self.sufarmed_available or self.fanasa_available or self.nadro_available):
+        if not (self.difarmer_available or self.sufarmed_available or self.nadro_available):
             logger.critical("ALERTA: Ningún scraper está disponible. La funcionalidad estará limitada.")
         else:
             servicios_activos = []
@@ -135,8 +117,7 @@ class ScrapingService:
                 servicios_activos.append("Difarmer")
             if self.sufarmed_available:
                 servicios_activos.append("Sufarmed")
-            if self.fanasa_available:
-                servicios_activos.append("FANASA")
+            # FANASA está deshabilitado
             if self.nadro_available:
                 servicios_activos.append("NADRO")
             logger.info(f"Scrapers activos: {', '.join(servicios_activos)}")
@@ -183,24 +164,8 @@ class ScrapingService:
     
     def _check_fanasa_available(self):
         """Verifica si el scraper de FANASA está disponible"""
-        try:
-            # Verificar que existe el directorio
-            scraper_path = os.path.join('services', 'scraper_fanasa')
-            if not os.path.isdir(scraper_path):
-                logger.warning(f"Directorio {scraper_path} no encontrado")
-                return False
-            
-            # Verificar que existen los archivos principales
-            required_files = ['__init__.py', 'main.py']
-            for file in required_files:
-                if not os.path.exists(os.path.join(scraper_path, file)):
-                    logger.warning(f"Archivo {file} no encontrado en {scraper_path}")
-                    return False
-            
-            return True
-        except Exception as e:
-            logger.warning(f"Error al verificar disponibilidad de FANASA: {e}")
-            return False
+        # Esta función no se usa ya que FANASA se fuerza a no disponible
+        return False
 
     def _check_nadro_available(self):
         """Verifica si el scraper de NADRO está disponible"""
@@ -378,6 +343,8 @@ class ScrapingService:
         Returns:
             dict: Producto formateado al estándar común
         """
+        # Esta función se mantiene por compatibilidad pero no se usa
+        # ya que FANASA está deshabilitado
         if not producto:
             return None
         
@@ -534,35 +501,9 @@ class ScrapingService:
         Returns:
             dict: Producto formateado o None si no se encuentra
         """
-        if not self.fanasa_available:
-            logger.warning("Scraper FANASA no disponible. No se realizará búsqueda.")
-            return None
-        
-        try:
-            logger.info(f"Buscando producto en FANASA: {nombre_producto}")
-            
-            # Configuración para entorno de producción (sin interfaz gráfica)
-            headless = True
-            
-            # Verificar si estamos en entorno de desarrollo
-            if os.environ.get('ENVIRONMENT', 'production').lower() == 'development':
-                headless = False
-                logger.info("Utilizando navegador con interfaz gráfica (modo desarrollo)")
-            
-            # Llamar a la función de búsqueda del scraper de FANASA
-            info_producto = self.buscar_fanasa(nombre_producto, headless=headless)
-            
-            # Formatear el producto al estándar común
-            if info_producto:
-                resultado = self._format_producto_fanasa(info_producto)
-                logger.info(f"Producto encontrado en FANASA: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
-                return resultado
-            else:
-                logger.warning(f"No se encontró información en FANASA para: {nombre_producto}")
-                return None
-        except Exception as e:
-            logger.error(f"Error al buscar producto en FANASA: {e}")
-            return None
+        # FANASA está deshabilitado, así que siempre devuelve None
+        logger.warning("Scraper FANASA está deshabilitado. No se realizará búsqueda.")
+        return None
 
     def buscar_producto_nadro(self, nombre_producto):
         """
@@ -666,20 +607,8 @@ class ScrapingService:
             except Exception as e:
                 logger.error(f"Error en búsqueda de NADRO: {e}")
         
-        # FASE 3: FANASA (independiente)
-        if self.fanasa_available:
-            logger.info("FASE 3: Ejecutando scraper FANASA")
-            try:
-                resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
-                if resultado_fanasa:
-                    # Verificar que el precio no sea cero antes de añadirlo
-                    if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info("Resultado obtenido de FANASA")
-                        resultados.append(resultado_fanasa)
-                    else:
-                        logger.warning("Resultado de FANASA descartado por precio cero o inválido")
-            except Exception as e:
-                logger.error(f"Error en búsqueda de FANASA: {e}")
+        # FASE 3: FANASA (independiente) - DESHABILITADA
+        # Esta fase se omite completamente ya que FANASA está deshabilitado
         
         # Si no hay resultados, terminar
         if not resultados:
