@@ -542,43 +542,47 @@ Mensaje: "{user_message}"
 def es_mensaje_personal(self, mensaje):
     """
     Utiliza Gemini para determinar si un mensaje es personal/coloquial o relacionado con farmacia.
+    
+    Args:
+        mensaje (str): Mensaje del usuario a analizar
+        
+    Returns:
+        bool: True si es un mensaje personal que debe ignorarse, False si es una consulta válida
     """
     try:
-        # Mensajes muy cortos o comunes: asumir personal
-        m = mensaje.lower().strip()
-        if len(m) <= 3 or m in ["hola", "gracias", "ok", "vale"]:
+        # Aplicar reglas rápidas primero (mensajes muy cortos)
+        if len(mensaje.strip()) <= 3:
             return True
             
-        # Prompt mejorado con más ejemplos claros
+        # Prompt específico para esta tarea
         prompt = f"""
-        Clasifica el siguiente mensaje EXACTAMENTE como "PERSONAL" o "FARMACIA".
+        Clasifica el siguiente mensaje como "PERSONAL" o "FARMACIA".
         
-        PERSONAL: Saludos, despedidas, conversación casual, jerga, invitaciones, preguntas personales, comentarios sobre actividades diarias no relacionadas con medicamentos.
-        Ejemplos PERSONALES: "hola", "qué onda", "nos vemos", "vamos a comer", "a qué hora sales", "qué haces", "gracias", "cómo estás", "saludos", "llegué", "estoy aquí".
+        PERSONAL: Si es un saludo genérico, conversación casual, jerga, invitación social, pregunta personal no relacionada con farmacia.
+        Ejemplos de PERSONAL: "hola", "qué onda", "vamos por cheves", "a qué hora sales", "nos vemos luego", "oye, pasarás por los niños?", "vamos al cine", "ya llegué", "dónde estás?", "qué haces?".
         
-        FARMACIA: Preguntas o comentarios sobre medicamentos, productos farmacéuticos, disponibilidad, precios, entregas, síntomas, o tratamientos médicos.
-        Ejemplos FARMACIA: "tienen paracetamol", "precio de aspirina", "cuándo entregan", "tienen zoladex", "me duele la cabeza", "qué tomar para fiebre".
+        FARMACIA: Si es una consulta sobre medicamentos, productos de farmacia, disponibilidad, precios, entregas, recetas, síntomas o tratamientos médicos.
+        Ejemplos de FARMACIA: "tienen paracetamol", "precio de aspirina", "cuándo entregan", "tienen zoladex", "me duele la cabeza qué me recomiendan", "necesito antibióticos".
         
-        No analices en exceso o busques formas creativas de interpretar el mensaje. Si hay alguna duda, clasifica como PERSONAL.
+        Si hay alguna duda, clasifica como PERSONAL.
         
         Mensaje: "{mensaje}"
         
-        Respuesta (solo escribe PERSONAL o FARMACIA):
+        Clasificación (solo responde PERSONAL o FARMACIA):
         """
         
-        logger.info(f"Clasificando mensaje con Gemini: '{mensaje}'")
+        logger.info(f"Enviando a Gemini para clasificar mensaje: '{mensaje}'")
         response = self.model.generate_content(prompt)
         resultado = response.text.strip().upper()
         
         logger.info(f"Gemini clasificó mensaje como: {resultado}")
         
-        # Si la respuesta es PERSONAL o no está clara, ignorar el mensaje
-        return "PERSONAL" in resultado or "FARMACIA" not in resultado
+        # Si la respuesta contiene PERSONAL, ignorar el mensaje
+        return "PERSONAL" in resultado
         
     except Exception as e:
         logger.error(f"Error al clasificar mensaje con Gemini: {e}")
-        # Regla simple de respaldo: verificar patrones obvios
-        m = mensaje.lower()
-        if any(term in m for term in ["comer", "vamos", "salir", "llegué", "hola"]):
-            return True
-        return False
+        # En caso de error, usar reglas de respaldo simples
+        msg = mensaje.lower()
+        palabras_personales = ["cine", "niños", "pasaras", "onda", "amigo", "casa", "llego", "llegue", "vamos", "donde estas"]
+        return any(palabra in msg for palabra in palabras_personales)
