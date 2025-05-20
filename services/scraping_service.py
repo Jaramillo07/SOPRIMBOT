@@ -695,6 +695,9 @@ class ScrapingService:
             except Exception as e:
                 logger.error(f"Error en búsqueda de FANASA: {e}")
         
+        # COMIENZA PROCESO DE COMPARACIÓN Y SELECCIÓN
+        logger.info("🔍 COMENZANDO ANÁLISIS Y COMPARACIÓN DE RESULTADOS 🔍")
+        
         # Si no hay resultados, terminar
         if not resultados:
             logger.warning(f"No se encontraron resultados para: {nombre_producto}")
@@ -705,13 +708,16 @@ class ScrapingService:
             }
         
         # Imprimir resultados para diagnóstico
+        logger.info(f"Analizando {len(resultados)} resultados encontrados:")
         for i, resultado in enumerate(resultados):
-            logger.info(f"Resultado #{i+1}: {resultado['fuente']} - "
+            logger.info(f"  • Resultado #{i+1}: {resultado['fuente']} - "
+                       f"Nombre: {resultado['nombre']} - "
                        f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
                        f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
         
         # Filtrar productos con existencia
         productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
+        logger.info(f"Productos con existencias disponibles: {len(productos_con_existencia)} de {len(resultados)}")
         
         # Si no hay productos con existencia, devolver None para ambas opciones
         if not productos_con_existencia:
@@ -723,6 +729,7 @@ class ScrapingService:
             }
         
         # Buscar opción de entrega inmediata (Sufarmed con stock)
+        logger.info("Buscando opción de ENTREGA INMEDIATA (producto de Sufarmed con stock)...")
         opcion_entrega_inmediata = None
         for producto in productos_con_existencia:
             if producto['fuente'] == "Sufarmed" and producto['existencia_numerica'] > 0:
@@ -730,12 +737,21 @@ class ScrapingService:
                 # Eliminar campos auxiliares de comparación
                 del opcion_entrega_inmediata['precio_numerico']
                 del opcion_entrega_inmediata['existencia_numerica']
-                logger.info(f"Opción de entrega inmediata seleccionada: {opcion_entrega_inmediata['nombre']} de Sufarmed "
+                logger.info(f"✅ Opción de entrega inmediata seleccionada: {opcion_entrega_inmediata['nombre']} de Sufarmed "
                            f"- Precio: {opcion_entrega_inmediata['precio']} - Existencia: {opcion_entrega_inmediata['existencia']}")
                 break
         
+        if not opcion_entrega_inmediata:
+            logger.info("❌ No se encontró opción de entrega inmediata (Sufarmed)")
+        
         # Ordenar por precio (menor a mayor) para encontrar la opción de mejor precio
+        logger.info("Buscando opción de MEJOR PRECIO (producto más barato con existencias)...")
         productos_ordenados = sorted(productos_con_existencia, key=lambda x: x['precio_numerico'])
+        
+        # Mostrar todos los productos ordenados por precio
+        logger.info("Productos ordenados por precio (menor a mayor):")
+        for i, p in enumerate(productos_ordenados):
+            logger.info(f"  • #{i+1}: {p['fuente']} - {p['nombre']} - Precio: {p['precio']} ({p['precio_numerico']})")
         
         # Elegir el de menor precio
         opcion_mejor_precio = None
@@ -744,7 +760,7 @@ class ScrapingService:
             # Eliminar campos auxiliares de comparación
             del opcion_mejor_precio['precio_numerico']
             del opcion_mejor_precio['existencia_numerica']
-            logger.info(f"Opción de mejor precio seleccionada: {opcion_mejor_precio['nombre']} de {opcion_mejor_precio['fuente']} "
+            logger.info(f"✅ Opción de mejor precio seleccionada: {opcion_mejor_precio['nombre']} de {opcion_mejor_precio['fuente']} "
                        f"- Precio: {opcion_mejor_precio['precio']} - Existencia: {opcion_mejor_precio['existencia']}")
         
         # Determinar si hay doble opción
@@ -754,8 +770,16 @@ class ScrapingService:
             # Si la opción de entrega inmediata es diferente a la opción de mejor precio
             if opcion_entrega_inmediata['fuente'] != opcion_mejor_precio['fuente']:
                 tiene_doble_opcion = True
+                logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Fuentes diferentes ({opcion_entrega_inmediata['fuente']} vs {opcion_mejor_precio['fuente']})")
             elif opcion_entrega_inmediata['precio'] != opcion_mejor_precio['precio']:
                 tiene_doble_opcion = True
+                logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Precios diferentes ({opcion_entrega_inmediata['precio']} vs {opcion_mejor_precio['precio']})")
+            else:
+                logger.info("❌ No hay doble opción: Misma fuente y mismo precio")
+        else:
+            logger.info("❌ No hay doble opción: Falta alguna de las opciones")
+        
+        logger.info("🏁 ANÁLISIS COMPLETO - RESULTADOS PREPARADOS 🏁")
         
         return {
             "opcion_entrega_inmediata": opcion_entrega_inmediata,
