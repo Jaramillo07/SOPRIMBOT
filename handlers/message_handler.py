@@ -36,60 +36,93 @@ class MessageHandler:
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
         Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
+    
+        Args:
+            mensaje (str): Mensaje a analizar
+            
+        Returns:
+            bool: True si el mensaje debe ignorarse, False si debe procesarse
         """
-        try:
-            # Ignorar mensajes muy cortos sin consultar a Gemini
-            m = mensaje.lower().strip()
-            if len(m) <= 3:
+        m = mensaje.lower().strip()
+    
+        # Ignorar mensajes muy cortos
+        if len(m) <= 3:
+            logger.info(f"Mensaje ignorado por ser muy corto: '{m}'")
+            return True
+    
+        # NUEVA SECCIÓN: Patrones específicos para mensajes personales comunes
+        patrones_personales_especificos = [
+            r"vamos al (cine|teatro|concierto|parque|mall|centro|bar|antro)",
+            r"(oye|hey|escucha|hola),?\s+(pas[aá](s|r[aá]s)|puedes pasar|vienes|recog(e|er[aá]s)|lleva(s|r[aá]s))\s+",
+            r"(niño|niña|niños|niñas|hijo|hija|hijos|chav[oa]|joven)s?",
+            r"(llegar[eé]|estoy|estar[eé])\s+(a|en|por)\s+(casa|oficina|trabajo|escuela)",
+            r"(qu[eé]|c[oó]mo|d[oó]nde|cu[aá]ndo).*((est[aá]s|andas|vas|haces|hiciste|haremos|vamos|iremos))",
+            r"(como|qu[eé] tal|qu[eé] onda|qu[eé] hay)\s+.*"
+        ]    
+    
+        for patron in patrones_personales_especificos:
+            if re.search(patron, m):
+                logger.info(f"Mensaje ignorado por patrón personal específico: '{m}' - coincide con: {patron}")
                 return True
-        
-            # Intentar usar Gemini con manejo de errores seguro
-            try:
-                if hasattr(self.gemini_service, 'es_mensaje_personal'):
-                    if self.gemini_service.es_mensaje_personal(mensaje):
-                        logger.info(f"Mensaje clasificado como PERSONAL por Gemini: '{mensaje}'")
-                        return True
-                else:
-                    logger.warning("Método es_mensaje_personal no disponible en gemini_service")
-            except Exception as e:
-                logger.error(f"Error al usar Gemini para clasificar mensaje: {e}")
-                # Continuar con las reglas fallback
-        
-            # Reglas fallback usando expresiones regulares (tu código actual)
-            patrones_no_relevantes = [
-                r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
-                r"(?:qué|que).*(?:haces|planes|te parece)",
-                r"(?:te extraño|te quiero|te amo|me gustas)",
-                r"\b(amigo|amiga|carnal|compadre|hermano)\b",
-                r"(?:fiesta|película|cine|restaurante|bar|café|plaza|concierto)",
-                r"(?:cita|vernos|salir)",
-                r"(?:ya llegaste|ya estoy|estoy en|llego en)",
-                r"(?:te llamé|te marqué|no contestas|contesta)"
-            ]
-        
-            for patron in patrones_no_relevantes:
-                if re.search(patron, m):
-                    logger.info(f"Ignorado por patrón personal: {patron}")
+    
+        # Expresiones coloquiales y jerga
+        expresiones_coloquiales = [
+            "vamos por", "te veo", "nos vemos", "ya llegué", "ya llegue",
+            "estoy en", "llegaré", "llegare", "a qué hora", "a que hora",
+            "pasas por", "pasaras por", "pasarás por", "te espero", "dónde estás",
+            "donde estas", "qué haces", "que haces", "cómo estás", "como estas"
+        ]
+    
+        for expresion in expresiones_coloquiales:
+            if expresion in m:
+                logger.info(f"Mensaje ignorado por expresión coloquial: '{m}' - contiene: {expresion}")
+                return True
+    
+        # Patrones de conversación personal o saludos
+        patrones_no_relevantes = [
+            r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
+            r"(?:qué|que).*(?:haces|planes|te parece)",
+            r"(?:te extraño|te quiero|te amo|me gustas)",
+            r"\b(amigo|amiga|carnal|compadre|hermano)\b",
+            r"(?:fiesta|película|cine|restaurante|bar|café|plaza|concierto)",
+            r"(?:cita|vernos|salir)",
+            r"(?:ya llegaste|ya estoy|estoy en|llego en)",
+            r"(?:te llamé|te marqué|no contestas|contesta)"
+        ]
+    
+        for patron in patrones_no_relevantes:
+            if re.search(patron, m):
+                logger.info(f"Ignorado por patrón personal: {patron}")
+                return True
+    
+        # Saludos simples exactos
+        saludos_simples = [
+            r"^hola[\s,.!?]*$",
+            r"^hey[\s,.!?]*$",
+            r"^hi[\s,.!?]*$",
+            r"^buenas[\s,.!?]*$",
+            r"^q(ue)?\s+(onda|tal|hay|pedo|rollo|pasa)[\s,.!?]*$",
+            r"^saludos[\s,.!?]*$"
+        ]
+    
+        for saludo in saludos_simples:
+            if re.fullmatch(saludo, m):  # solo si el saludo es TODO el mensaje
+                logger.info(f"Ignorado por saludo simple aislado: {m}")
+                return True
+    
+        # NUEVO: Intentar usar Gemini si está disponible
+        try:
+            if hasattr(self.gemini_service, 'es_mensaje_personal'):
+                resultado = self.gemini_service.es_mensaje_personal(mensaje)
+                if resultado:
+                    logger.info(f"Mensaje ignorado por clasificación de Gemini: '{mensaje}'")
                     return True
-        
-            saludos_simples = [
-                r"^hola[\s,.!?]*$",
-                r"^hey[\s,.!?]*$",
-                r"^hi[\s,.!?]*$",
-                r"^buenas[\s,.!?]*$"
-            ]
-        
-            for saludo in saludos_simples:
-                if re.fullmatch(saludo, m):
-                    logger.info(f"Ignorado por saludo simple aislado: {m}")
-                    return True
-        
-            return False
+            else:
+                logger.warning("Método es_mensaje_personal no disponible en gemini_service")
         except Exception as e:
-            # Capturamos cualquier error y registramos
-            logger.error(f"Error general en es_mensaje_a_ignorar: {e}")
-            # En caso de error, permitir que el mensaje sea procesado
-            return False
+            logger.error(f"Error al usar gemini_service.es_mensaje_personal: {e}")
+    
+        return False
     
     def detectar_tipo_mensaje(self, mensaje):
         """
