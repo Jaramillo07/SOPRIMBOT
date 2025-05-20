@@ -1,13 +1,15 @@
 """
 Manejador de mensajes para SOPRIM BOT.
-Adaptado para trabajar con múltiples scrapers (Difarmer, Sufarmed, FANASA y NADRO).
+Adaptado para trabajar con múltiples fuentes de datos (Sheets, Difarmer, Sufarmed, FANASA y NADRO).
 """
 import logging
 import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
-from services.scraping_service import ScrapingService  # Servicio integrado con 4 scrapers
-from services.firestore_service import obtener_historial, guardar_interaccion  # Importación de Firestore
+from services.scraping_service import ScrapingService  # Servicio integrado con scrapers
+from services.sheets_service import SheetsService  # NUEVO: Servicio de Google Sheets
+from services.firestore_service import obtener_historial, guardar_interaccion
+from utils.helpers import normalize_product_name
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -20,23 +22,24 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """
     Clase que maneja los mensajes entrantes y coordina las respuestas.
-    Adaptada para trabajar con múltiples scrapers y almacenar historial en Firestore.
+    Adaptada para trabajar con múltiples fuentes de datos y almacenar historial en Firestore.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler con soporte para múltiples scrapers y Firestore")
+        logger.info("Inicializando MessageHandler con soporte para base interna y scrapers")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
-        self.scraping_service = ScrapingService()  # Servicio integrado con 4 scrapers
+        self.scraping_service = ScrapingService()  # Servicio integrado con scrapers
+        self.sheets_service = SheetsService()  # NUEVO: Servicio de Google Sheets
         logger.info("MessageHandler inicializado correctamente")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
         Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
-    
+        
         Args:
             mensaje (str): Mensaje a analizar
             
@@ -44,43 +47,15 @@ class MessageHandler:
             bool: True si el mensaje debe ignorarse, False si debe procesarse
         """
         m = mensaje.lower().strip()
-    
         # Ignorar mensajes muy cortos
         if len(m) <= 3:
-            logger.info(f"Mensaje ignorado por ser muy corto: '{m}'")
             return True
-    
-        # NUEVA SECCIÓN: Patrones específicos para mensajes personales comunes
-        patrones_personales_especificos = [
-            r"vamos al (cine|teatro|concierto|parque|mall|centro|bar|antro)",
-            r"(oye|hey|escucha|hola),?\s+(pas[aá](s|r[aá]s)|puedes pasar|vienes|recog(e|er[aá]s)|lleva(s|r[aá]s))\s+",
-            r"(niño|niña|niños|niñas|hijo|hija|hijos|chav[oa]|joven)s?",
-            r"(llegar[eé]|estoy|estar[eé])\s+(a|en|por)\s+(casa|oficina|trabajo|escuela)",
-            r"(qu[eé]|c[oó]mo|d[oó]nde|cu[aá]ndo).*((est[aá]s|andas|vas|haces|hiciste|haremos|vamos|iremos))",
-            r"(como|qu[eé] tal|qu[eé] onda|qu[eé] hay)\s+.*"
-        ]    
-    
-        for patron in patrones_personales_especificos:
-            if re.search(patron, m):
-                logger.info(f"Mensaje ignorado por patrón personal específico: '{m}' - coincide con: {patron}")
-                return True
-    
-        # Expresiones coloquiales y jerga
-        expresiones_coloquiales = [
-            "vamos por", "te veo", "nos vemos", "ya llegué", "ya llegue",
-            "estoy en", "llegaré", "llegare", "a qué hora", "a que hora",
-            "pasas por", "pasaras por", "pasarás por", "te espero", "dónde estás",
-            "donde estas", "qué haces", "que haces", "cómo estás", "como estas"
-        ]
-    
-        for expresion in expresiones_coloquiales:
-            if expresion in m:
-                logger.info(f"Mensaje ignorado por expresión coloquial: '{m}' - contiene: {expresion}")
-                return True
-    
+        
         # Patrones de conversación personal o saludos
         patrones_no_relevantes = [
+            # r"(?:hola|buenos días|buenas tardes|buenas noches)\b",  # Comentado para permitir mensajes que empiezan con saludos
             r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
+            # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
             r"(?:qué|que).*(?:haces|planes|te parece)",
             r"(?:te extraño|te quiero|te amo|me gustas)",
             r"\b(amigo|amiga|carnal|compadre|hermano)\b",
@@ -89,39 +64,23 @@ class MessageHandler:
             r"(?:ya llegaste|ya estoy|estoy en|llego en)",
             r"(?:te llamé|te marqué|no contestas|contesta)"
         ]
-    
         for patron in patrones_no_relevantes:
             if re.search(patron, m):
                 logger.info(f"Ignorado por patrón personal: {patron}")
                 return True
-    
+        
         # Saludos simples exactos
         saludos_simples = [
             r"^hola[\s,.!?]*$",
             r"^hey[\s,.!?]*$",
             r"^hi[\s,.!?]*$",
-            r"^buenas[\s,.!?]*$",
-            r"^q(ue)?\s+(onda|tal|hay|pedo|rollo|pasa)[\s,.!?]*$",
-            r"^saludos[\s,.!?]*$"
+            r"^buenas[\s,.!?]*$"
         ]
-    
         for saludo in saludos_simples:
             if re.fullmatch(saludo, m):  # solo si el saludo es TODO el mensaje
                 logger.info(f"Ignorado por saludo simple aislado: {m}")
                 return True
-    
-        # NUEVO: Intentar usar Gemini si está disponible
-        try:
-            if hasattr(self.gemini_service, 'es_mensaje_personal'):
-                resultado = self.gemini_service.es_mensaje_personal(mensaje)
-                if resultado:
-                    logger.info(f"Mensaje ignorado por clasificación de Gemini: '{mensaje}'")
-                    return True
-            else:
-                logger.warning("Método es_mensaje_personal no disponible en gemini_service")
-        except Exception as e:
-            logger.error(f"Error al usar gemini_service.es_mensaje_personal: {e}")
-    
+        
         return False
     
     def detectar_tipo_mensaje(self, mensaje):
@@ -182,7 +141,7 @@ class MessageHandler:
     async def procesar_mensaje(self, mensaje: str, phone_number: str) -> dict:
         """
         Procesa un mensaje entrante y genera una respuesta.
-        Adaptado para trabajar con múltiples scrapers y mantener historial en Firestore.
+        Adaptado para buscar primero en Google Sheets antes de usar scrapers.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
@@ -230,7 +189,7 @@ class MessageHandler:
         # Si no detectamos localmente, intentar con Gemini
         if tipo_mensaje != "consulta_producto" or not producto_detectado:
             try:
-                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
+                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje, historial)
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
                     tipo_mensaje = tipo_mensaje_gemini
                     producto_detectado = producto_detectado_gemini
@@ -239,9 +198,61 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, hacemos scraping con los scrapers disponibles
+        # 3) Si es consulta de producto, primero buscamos en Google Sheets
         if tipo_mensaje == "consulta_producto" and producto_detectado:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
+            
+            # NUEVO: Primero buscar en la base interna (Google Sheets)
+            try:
+                producto_interno = self.sheets_service.buscar_producto(producto_detectado)
+                
+                if producto_interno:
+                    logger.info(f"¡Producto encontrado en base interna! Nombre: {producto_interno['nombre']}")
+                    
+                    # Preparar formato para la respuesta del bot
+                    product_info = {
+                        "opcion_mejor_precio": producto_interno,
+                        "opcion_entrega_inmediata": None,
+                        "tiene_doble_opcion": False
+                    }
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context="Información de nuestra base de datos interna.",
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    # Intentar enviar respuesta
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("status") == "error":
+                        logger.error("Error al enviar respuesta de producto interno")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result.get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    return {
+                        "success": True,
+                        "message_type": "producto_interno",
+                        "producto": producto_detectado,
+                        "fuente": "Base Interna",
+                        "respuesta": respuesta
+                    }
+            except Exception as e:
+                logger.error(f"Error al buscar en base interna: {e}")
+                # Si falla la búsqueda interna, continuamos con los scrapers
+            
+            # Si no se encontró en base interna o hubo error, continuar con scrapers
             try:
                 # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
@@ -287,11 +298,11 @@ class MessageHandler:
                         "respuesta": respuesta
                     }
                 else:
-                    logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
+                    logger.info(f"No se encontró información para {producto_detectado} en ninguna fuente")
                     
                     # Generar respuesta con Gemini incluyendo el historial
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}",
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras fuentes. {mensaje}",
                         conversation_history=historial
                     )
                     
