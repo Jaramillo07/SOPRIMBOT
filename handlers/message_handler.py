@@ -138,7 +138,7 @@ class MessageHandler:
         # Por defecto, considerar como consulta general
         return "consulta_general", None
     
-    async def procesar_mensaje(self, mensaje: str, phone_number: str) -> dict:
+   async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None)
         """
         Procesa un mensaje entrante y genera una respuesta.
         Adaptado para buscar primero en Google Sheets antes de usar scrapers.
