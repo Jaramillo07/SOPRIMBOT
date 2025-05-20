@@ -138,6 +138,109 @@ class GeminiService:
                 
         return False
         
+    def _es_mensaje_cantidad(self, user_message):
+        """
+        Determina si el mensaje del usuario es solo para indicar una cantidad
+        (por ejemplo: "quiero 5", "dame 2", etc.)
+        
+        Args:
+            user_message (str): Mensaje del usuario
+            
+        Returns:
+            bool, int: (True/False, cantidad detectada o None)
+        """
+        mensaje_lower = user_message.lower().strip()
+        
+        # Patrones para detectar mensajes de cantidad
+        patrones_cantidad = [
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
+            r'^(\d+)$',
+            r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
+            r'^(?:son|serían|serian|serán|seran)\s+(\d+)$'
+        ]
+        
+        # Verificar si algún patrón coincide con el mensaje
+        for patron in patrones_cantidad:
+            match = re.search(patron, mensaje_lower)
+            if match:
+                cantidad = int(match.group(1))
+                logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
+                return True, cantidad
+                
+        return False, None
+
+    def _extraer_ultimo_producto(self, conversation_history):
+        """
+        Extrae el último producto mencionado en el historial de conversación.
+        
+        Args:
+            conversation_history (list): Historial de conversación
+            
+        Returns:
+            str: Último producto mencionado o None si no se encuentra
+        """
+        if not conversation_history:
+            return None
+            
+        # Buscar en los últimos 3 mensajes del bot (son respuestas a consultas de producto)
+        mensajes_bot = [msg for msg in conversation_history if msg.get("role") == "bot"][-3:]
+        
+        for msg in reversed(mensajes_bot):
+            content = msg.get("content", "")
+            # Buscar patrones típicos de respuestas sobre productos
+            if "Precio:" in content or "Entrega" in content or "opciones:" in content:
+                # Buscar el último mensaje del usuario antes de esta respuesta
+                indice_bot = conversation_history.index(msg)
+                for i in range(indice_bot-1, -1, -1):
+                    if conversation_history[i].get("role") == "user":
+                        # Analizar este mensaje para extraer el producto
+                        user_msg = conversation_history[i].get("content", "")
+                        # Buscar nombres de productos comunes
+                        productos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
+                                            "loratadina", "antibiotico", "motrin", "ampicilina"]
+                        for producto in productos_comunes:
+                            if producto in user_msg.lower():
+                                logger.info(f"Producto extraído del historial: {producto}")
+                                return producto
+                        
+                        # Si no encontramos un producto conocido, intentar detectarlo con Gemini
+                        try:
+                            tipo, producto = self._detectar_producto_con_gemini(user_msg)
+                            if tipo == "consulta_producto" and producto:
+                                logger.info(f"Producto extraído con Gemini: {producto}")
+                                return producto
+                        except Exception as e:
+                            logger.error(f"Error al extraer producto con Gemini: {e}")
+                        
+                        break
+        
+        return None
+        
+    def _detectar_producto_con_gemini(self, user_message):
+        """
+        Versión privada que usa Gemini para determinar si el mensaje pregunta por un medicamento.
+        """
+        prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
+Determina SI el siguiente mensaje está preguntando por un medicamento específico.
+- Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
+- Si NO, responde exactamente con la palabra GENERAL.
+Mensaje: "{user_message}"
+"""
+        try:
+            response = self.model.generate_content(prompt)
+            resp = response.text.strip()
+            
+            # Procesar la respuesta
+            if resp.upper() == "GENERAL":
+                return "consulta_general", None
+            else:
+                # Limpiar la respuesta para obtener solo el nombre del medicamento
+                producto = resp.strip()
+                return "consulta_producto", producto
+        except Exception as e:
+            logger.error(f"Error en _detectar_producto_con_gemini: {e}")
+            return "consulta_general", None
+
     def generate_response(self, user_message, conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
@@ -253,10 +356,16 @@ class GeminiService:
             
             # Detectar cantidad en el mensaje del usuario
             cantidad = 1  # Valor por defecto
-            cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
-            if cantidad_match:
-                cantidad = int(cantidad_match.group(1))
-                logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
+            es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
+            if es_mensaje_cantidad and cantidad_detectada:
+                cantidad = cantidad_detectada
+            else:
+                # Si no es un mensaje simple de cantidad, buscar cantidad en el texto completo
+                cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
+                if cantidad_match:
+                    cantidad = int(cantidad_match.group(1))
+            
+            logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
             
             # Conversión de nombre de fuente a código interno
             fuente_mapping = {
@@ -279,12 +388,26 @@ class GeminiService:
                 precio_entrega_inmediata = aplicar_margen_precio(opcion_entrega_inmediata['precio'])
                 precio_mejor_precio = aplicar_margen_precio(opcion_mejor_precio['precio'])
                 
+                # Ajustar precio según la cantidad solicitada
+                if cantidad > 1:
+                    # Extraer valores numéricos
+                    valor_entrega = float(precio_entrega_inmediata.replace('$', '').replace(',', ''))
+                    valor_mejor = float(precio_mejor_precio.replace('$', '').replace(',', ''))
+                    
+                    # Multiplicar por la cantidad
+                    total_entrega = valor_entrega * cantidad
+                    total_mejor = valor_mejor * cantidad
+                    
+                    # Formatear de vuelta
+                    precio_entrega_inmediata = f"${total_entrega:.2f}"
+                    precio_mejor_precio = f"${total_mejor:.2f}"
+                
                 # Obtener códigos de fuente para referencia interna
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
                 
                 # Formato para doble opción
-                respuesta = f"📦 Tenemos dos opciones:\n"
+                respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
                 respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
                 respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
@@ -300,6 +423,17 @@ class GeminiService:
             # Aplicar margen del 45% al precio
             precio_con_margen = aplicar_margen_precio(producto['precio'])
             
+            # Ajustar precio según la cantidad solicitada
+            if cantidad > 1:
+                # Extraer valor numérico
+                valor = float(precio_con_margen.replace('$', '').replace(',', ''))
+                
+                # Multiplicar por la cantidad
+                total = valor * cantidad
+                
+                # Formatear de vuelta
+                precio_con_margen = f"${total:.2f}"
+            
             # Verificar si es entrega inmediata (Sufarmed)
             es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
             mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
@@ -308,7 +442,8 @@ class GeminiService:
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
             # Formato para opción única
-            respuesta = f"✅ Precio: {precio_con_margen}\n"
+            respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
+            respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
             respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
             
@@ -318,12 +453,30 @@ class GeminiService:
             logger.error(f"Error en generate_product_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, intenta nuevamente más tarde."
     
-    def detectar_producto(self, user_message):
+    def detectar_producto(self, user_message, conversation_history=None):
         """
-        Usa Gemini para determinar si el mensaje pregunta por un medicamento específico.
-        Si es así devuelve ('consulta_producto', '<nombre_del_medicamento>')
-        Si no, devuelve ('consulta_general', None).
+        Determina si el mensaje pregunta por un medicamento específico o es una indicación
+        de cantidad para un producto previo.
+        
+        Args:
+            user_message (str): Mensaje del usuario
+            conversation_history (list, optional): Historial de conversación
+            
+        Returns:
+            tuple: ('consulta_producto', nombre_producto) o ('consulta_general', None)
         """
+        # Primero verificar si es un mensaje simple de cantidad
+        es_mensaje_cantidad, cantidad = self._es_mensaje_cantidad(user_message)
+        
+        if es_mensaje_cantidad and conversation_history:
+            # Si es un mensaje de cantidad, buscar el último producto en el historial
+            ultimo_producto = self._extraer_ultimo_producto(conversation_history)
+            
+            if ultimo_producto:
+                logger.info(f"Mensaje de cantidad ({cantidad}) para el producto anterior: {ultimo_producto}")
+                return "consulta_producto", ultimo_producto
+        
+        # Si no es mensaje de cantidad o no se encontró producto previo, proceder normalmente
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Determina SI el siguiente mensaje está preguntando por un medicamento específico.
 - Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
@@ -333,9 +486,9 @@ Mensaje: "{user_message}"
         try:
             logger.info(f"Enviando prompt a Gemini para detectar producto. Mensaje: '{user_message}'")
             
-            # MODIFICACIÓN TEMPORAL: Para pruebas, puedes descomentar esta línea para forzar la detección
-            # Si el mensaje contiene "paracetamol", "ibuprofeno" u otros medicamentos comunes
-            medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", "loratadina", "antibiotico"]
+            # Detección local para medicamentos comunes
+            medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
+                                    "loratadina", "antibiotico", "motrin", "ampicilina"]
             mensaje_lower = user_message.lower()
             for med in medicamentos_comunes:
                 if med in mensaje_lower:
