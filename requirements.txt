@@ -11,3 +11,5 @@ python-multipart
 twilio
 undetected-chromedriver==3.5.4
 google-cloud-firestore
+gspread>=5.10.0
+google-auth>=2.22.0
