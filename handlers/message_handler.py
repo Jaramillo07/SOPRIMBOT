@@ -33,26 +33,41 @@ class MessageHandler:
         self.scraping_service = ScrapingService()  # Servicio integrado con 4 scrapers
         logger.info("MessageHandler inicializado correctamente")
     
-    def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
+   def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
         """
         Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
-        
+        Utiliza Gemini para una clasificación avanzada, con fallback a reglas predefinidas.
+    
         Args:
             mensaje (str): Mensaje a analizar
             
         Returns:
             bool: True si el mensaje debe ignorarse, False si debe procesarse
         """
+        # Primera capa: reglas rápidas (para respuesta inmediata)
         m = mensaje.lower().strip()
-        # Ignorar mensajes muy cortos
+    
+        # Ignorar mensajes muy cortos sin consultar a Gemini
         if len(m) <= 3:
             return True
-        
+    
+        # Segunda capa: Utilizar Gemini para clasificación avanzada
+        try:
+            # Intentar clasificar con Gemini primero
+            if self.gemini_service.es_mensaje_personal(mensaje):
+                logger.info(f"Mensaje '{mensaje}' clasificado como PERSONAL por Gemini")
+                return True
+            
+        except Exception as e:
+            logger.error(f"Error al usar Gemini para clasificar mensaje: {e}")
+            # En caso de error con Gemini, caer a la detección por reglas
+    
+        # Tercera capa: Reglas de expresiones regulares como fallback
+        # (Mantener el código original como respaldo)
+    
         # Patrones de conversación personal o saludos
         patrones_no_relevantes = [
-            # r"(?:hola|buenos días|buenas tardes|buenas noches)\b",  # Comentado para permitir mensajes que empiezan con saludos
             r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
-            # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
             r"(?:qué|que).*(?:haces|planes|te parece)",
             r"(?:te extraño|te quiero|te amo|me gustas)",
             r"\b(amigo|amiga|carnal|compadre|hermano)\b",
@@ -61,11 +76,12 @@ class MessageHandler:
             r"(?:ya llegaste|ya estoy|estoy en|llego en)",
             r"(?:te llamé|te marqué|no contestas|contesta)"
         ]
+    
         for patron in patrones_no_relevantes:
             if re.search(patron, m):
                 logger.info(f"Ignorado por patrón personal: {patron}")
                 return True
-        
+    
         # Saludos simples exactos
         saludos_simples = [
             r"^hola[\s,.!?]*$",
@@ -73,11 +89,12 @@ class MessageHandler:
             r"^hi[\s,.!?]*$",
             r"^buenas[\s,.!?]*$"
         ]
+    
         for saludo in saludos_simples:
             if re.fullmatch(saludo, m):  # solo si el saludo es TODO el mensaje
                 logger.info(f"Ignorado por saludo simple aislado: {m}")
                 return True
-        
+    
         return False
     
     def detectar_tipo_mensaje(self, mensaje):
