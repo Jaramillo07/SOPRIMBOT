@@ -912,12 +912,25 @@ def buscar_producto_sufarmed(nombre_producto: str) -> dict:
         # Ordenar enlaces por puntaje (mayor a menor)
         link_scores.sort(key=lambda x: x[1], reverse=True)
         
+        # CAMBIO: Filtrar solo enlaces con puntuación 50 o más
+        high_score_links = [link for link in link_scores if link[1] >= 50]
+        
+        # Si no hay enlaces con puntuación alta, terminar
+        if not high_score_links:
+            logger.warning("No se encontraron enlaces con puntuación 50+, terminando búsqueda")
+            if driver:
+                driver.quit()
+            return None
+        
+        # Usar solo los enlaces con alta puntuación
+        link_scores = high_score_links
+        
         # Convertir a lista de URLs
         product_links = [url for url, score in link_scores]
         
         # Eliminar duplicados preservando el orden
         product_links = list(dict.fromkeys(product_links))
-        logger.info(f"Enlaces relacionados con el producto encontrados: {len(product_links)}")
+        logger.info(f"Enlaces de alta relevancia (50+ puntos) encontrados: {len(product_links)}")
         
         # Intentar navegar a cada enlace hasta encontrar una página de producto
         for url in product_links:
