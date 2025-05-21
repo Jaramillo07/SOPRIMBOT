@@ -1,10 +1,9 @@
 """
-Manejador de mensajes mejorado para SOPRIM BOT.
-Usa Gemini como clasificador principal en lugar de palabras clave.
+MessageHandler actualizado que usa el GeminiService optimizado con clasificación inteligente.
+Mantiene toda la funcionalidad existente pero simplifica la lógica de detección.
 """
 import logging
 import traceback
-import json
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService
@@ -20,134 +19,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class SmartMessageClassifier:
-    """Clasificador inteligente que usa Gemini para determinar el tipo de mensaje."""
-    
-    def __init__(self, gemini_service):
-        self.gemini_service = gemini_service
-    
-    def classify_message(self, mensaje: str, historial: list = None) -> dict:
-        """
-        Clasifica un mensaje usando Gemini.
-        
-        Returns:
-            dict: {
-                "tipo": str,  # producto_especifico, cantidad, descuentos, entrega, general, saludo
-                "producto": str or None,
-                "cantidad": int or str or None,
-                "confianza": str
-            }
-        """
-        try:
-            # Preparar contexto del historial
-            contexto_historial = ""
-            if historial:
-                # Tomar solo los últimos 4 intercambios
-                recent = historial[-8:]
-                for turn in recent:
-                    role = turn.get("role", "")
-                    content = turn.get("content", "")[:80]
-                    if role and content:
-                        contexto_historial += f"{role}: {content}\n"
-            
-            prompt = f"""
-Eres un clasificador de mensajes para una farmacia. Analiza el mensaje y clasifícalo:
-
-TIPOS POSIBLES:
-1. producto_especifico: Busca un medicamento/producto por nombre
-2. cantidad: Solo indica cantidad para producto anterior (ej: "2", "quiero 3", "ambas")  
-3. descuentos: Pregunta sobre precios, descuentos, promociones
-4. entrega: Pregunta sobre tiempos de entrega, envío
-5. general: Servicios, horarios, ubicación de farmacia
-6. saludo: Saludos, despedidas, agradecimientos
-
-CONTEXTO PREVIO:
-{contexto_historial}
-
-MENSAJE: "{mensaje}"
-
-Responde SOLO este JSON:
-{{
-    "tipo": "tipo_exacto",
-    "producto": "nombre_producto_o_null", 
-    "cantidad": "numero_o_palabra_o_null",
-    "confianza": "alta_o_media_o_baja"
-}}
-
-EJEMPLOS:
-- "tienes paracetamol?" → {{"tipo":"producto_especifico","producto":"paracetamol","cantidad":null,"confianza":"alta"}}
-- "2" (después de hablar de un producto) → {{"tipo":"cantidad","producto":null,"cantidad":"2","confianza":"alta"}}
-- "ambas" → {{"tipo":"cantidad","producto":null,"cantidad":"ambas","confianza":"alta"}}
-- "hay descuentos?" → {{"tipo":"descuentos","producto":null,"cantidad":null,"confianza":"alta"}}
-- "entregan hoy?" → {{"tipo":"entrega","producto":null,"cantidad":null,"confianza":"alta"}}
-- "hola" → {{"tipo":"saludo","producto":null,"cantidad":null,"confianza":"alta"}}
-"""
-
-            response = self.gemini_service.model.generate_content(prompt)
-            response_text = response.text.strip()
-            
-            # Limpiar respuesta
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1]
-            
-            clasificacion = json.loads(response_text)
-            
-            # Validar estructura
-            required_keys = ["tipo", "producto", "cantidad", "confianza"]
-            if all(key in clasificacion for key in required_keys):
-                logger.info(f"Clasificación: {clasificacion}")
-                return clasificacion
-            else:
-                logger.warning(f"Clasificación incompleta: {clasificacion}")
-                return self._clasificacion_fallback(mensaje)
-                
-        except Exception as e:
-            logger.error(f"Error en clasificación con Gemini: {e}")
-            return self._clasificacion_fallback(mensaje)
-    
-    def _clasificacion_fallback(self, mensaje: str) -> dict:
-        """Clasificación básica de respaldo cuando falla Gemini."""
-        mensaje_lower = mensaje.lower().strip()
-        
-        # Detectar saludos simples
-        if mensaje_lower in ["hola", "hi", "hello", "buenos días", "buenas tardes", "buenas noches", "gracias", "bye", "adiós"]:
-            return {"tipo": "saludo", "producto": None, "cantidad": None, "confianza": "media"}
-        
-        # Detectar números simples o palabras de cantidad
-        if mensaje_lower.isdigit() or mensaje_lower in ["dos", "tres", "cuatro", "cinco", "ambas", "ambos", "todas", "todos"]:
-            return {"tipo": "cantidad", "producto": None, "cantidad": mensaje_lower, "confianza": "media"}
-        
-        # Detectar palabras de descuentos
-        if any(word in mensaje_lower for word in ["descuento", "promoción", "oferta", "barato", "precio"]):
-            return {"tipo": "descuentos", "producto": None, "cantidad": None, "confianza": "media"}
-        
-        # Detectar consultas de entrega
-        if any(word in mensaje_lower for word in ["entrega", "envío", "hoy", "mañana", "cuándo", "cuando"]):
-            return {"tipo": "entrega", "producto": None, "cantidad": None, "confianza": "media"}
-        
-        # Por defecto, asumir que es búsqueda de producto
-        return {"tipo": "producto_especifico", "producto": mensaje, "cantidad": None, "confianza": "baja"}
-
 class MessageHandler:
     """
-    Manejador de mensajes simplificado que usa clasificación inteligente.
+    Manejador de mensajes que usa el GeminiService optimizado con clasificación inteligente.
     """
     
     def __init__(self):
         """Inicializa el manejador con sus servicios."""
-        logger.info("Inicializando MessageHandler con clasificador inteligente")
+        logger.info("Inicializando MessageHandler con GeminiService optimizado")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
         self.ocr_service = OCRService()
         self.sheets_service = SheetsService()
-        self.classifier = SmartMessageClassifier(self.gemini_service)
         logger.info("MessageHandler inicializado correctamente")
     
     def _convertir_cantidad_especial(self, cantidad_str: str, existencias_disponibles: int = 0) -> int:
         """Convierte palabras especiales a números."""
+        if isinstance(cantidad_str, int):
+            return cantidad_str
+            
         cantidad_str = str(cantidad_str).lower()
         
         conversiones = {
@@ -175,35 +66,9 @@ class MessageHandler:
         
         return 1  # Por defecto
     
-    def _extraer_ultimo_producto(self, historial: list) -> str:
-        """Extrae el último producto mencionado en el historial."""
-        if not historial:
-            return None
-        
-        # Buscar en mensajes del bot que contengan información de productos
-        for mensaje in reversed(historial):
-            if mensaje.get("role") == "assistant":
-                content = mensaje.get("content", "")
-                # Si es una respuesta de producto típica
-                if any(indicador in content for indicador in ["Precio:", "Entrega", "unidad(es)", "✅", "📦", "🚚"]):
-                    # Buscar el mensaje del usuario anterior
-                    idx = historial.index(mensaje)
-                    if idx > 0:
-                        user_msg = historial[idx-1]
-                        if user_msg.get("role") == "user":
-                            # Intentar extraer producto con Gemini
-                            try:
-                                clasificacion = self.classifier.classify_message(user_msg.get("content", ""))
-                                if clasificacion.get("tipo") == "producto_especifico" and clasificacion.get("producto"):
-                                    return clasificacion["producto"]
-                            except:
-                                pass
-        
-        return None
-    
     async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
         """
-        Procesa un mensaje usando clasificación inteligente.
+        Procesa un mensaje usando el clasificador inteligente del GeminiService.
         """
         logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
         
@@ -246,15 +111,27 @@ class MessageHandler:
         historial = obtener_historial(clean_phone)
         logger.info(f"Historial: {len(historial)} turnos")
         
-        # 🧠 CLASIFICAR MENSAJE CON GEMINI
-        clasificacion = self.classifier.classify_message(mensaje, historial)
-        tipo = clasificacion.get("tipo")
-        producto = clasificacion.get("producto")
-        cantidad = clasificacion.get("cantidad")
+        # 🧠 USAR CLASIFICADOR INTELIGENTE DEL GEMINI SERVICE
+        try:
+            clasificacion = self.gemini_service.classify_message_smart(mensaje, historial)
+            tipo = clasificacion.get("tipo")
+            producto = clasificacion.get("producto")
+            cantidad = clasificacion.get("cantidad")
+            confianza = clasificacion.get("confianza")
+            
+            logger.info(f"🎯 Clasificación: {tipo} | Producto: {producto} | Cantidad: {cantidad} | Confianza: {confianza}")
+        except Exception as e:
+            logger.error(f"Error en clasificación inteligente: {e}")
+            # Usar detección clásica como respaldo
+            tipo, producto = self.gemini_service.detectar_producto(mensaje, historial)
+            cantidad = None
+            if tipo == "consulta_producto":
+                tipo = "producto_especifico"
+            else:
+                tipo = "general"
+            logger.info(f"🔧 Clasificación de respaldo: {tipo} | Producto: {producto}")
         
-        logger.info(f"🎯 Clasificación: {tipo} | Producto: {producto} | Cantidad: {cantidad}")
-        
-        # 📊 MANEJAR SEGÚN TIPO
+        # 📊 MANEJAR SEGÚN TIPO DETECTADO
         
         if tipo == "cantidad":
             return await self._manejar_cantidad(mensaje, cantidad, historial, phone_number, clean_phone)
@@ -273,8 +150,8 @@ class MessageHandler:
     
     async def _manejar_cantidad(self, mensaje: str, cantidad: str, historial: list, phone_number: str, clean_phone: str):
         """Maneja mensajes que solo indican cantidad."""
-        # Buscar último producto
-        ultimo_producto = self._extraer_ultimo_producto(historial)
+        # Usar la función existente del GeminiService para extraer último producto
+        ultimo_producto = self.gemini_service._extraer_ultimo_producto(historial)
         
         if not ultimo_producto:
             respuesta = "¿Para qué producto necesitas esa cantidad? Puedes decirme el nombre del medicamento."
@@ -282,7 +159,7 @@ class MessageHandler:
             guardar_interaccion(clean_phone, mensaje, respuesta)
             return {"success": True, "message_type": "solicitud_producto", "respuesta": respuesta}
         
-        # Convertir cantidad
+        # Convertir cantidad usando función helper
         cantidad_numerica = self._convertir_cantidad_especial(cantidad)
         
         # Buscar producto en base interna primero
@@ -300,6 +177,7 @@ class MessageHandler:
                 "tiene_doble_opcion": False
             }
             
+            # Usar la función completa del GeminiService
             respuesta = self.gemini_service.generate_product_response(
                 f"quiero {cantidad_numerica} {ultimo_producto}", 
                 product_info,
@@ -370,6 +248,7 @@ class MessageHandler:
                 "tiene_doble_opcion": False
             }
             
+            # Usar la función completa del GeminiService
             respuesta = self.gemini_service.generate_product_response(
                 mensaje, 
                 product_info,
@@ -421,15 +300,23 @@ class MessageHandler:
     
     async def _manejar_descuentos(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
         """Maneja consultas sobre descuentos y promociones."""
-        respuestas_descuento = [
-            "Sí manejamos descuentos por volumen. Contáctanos para más detalles.",
-            "Tenemos promociones especiales dependiendo del producto. Llámanos para informarte.",
-            "Los descuentos aplican según cantidad y producto. Comunícate directamente con nosotros."
-        ]
-        
-        # Seleccionar respuesta basada en hash del mensaje
-        indice = hash(mensaje) % len(respuestas_descuento)
-        respuesta = respuestas_descuento[indice]
+        # Usar las respuestas de descuento del GeminiService
+        if self.gemini_service._es_consulta_descuento(mensaje):
+            respuestas_descuento = [
+                "Sí manejamos descuentos por volumen. Contáctanos para más detalles.",
+                "Tenemos promociones especiales dependiendo del producto. Llámanos para informarte.",
+                "Los descuentos aplican según cantidad y producto. Comunícate directamente con nosotros."
+            ]
+            
+            # Seleccionar respuesta basada en hash del mensaje
+            indice = hash(mensaje) % len(respuestas_descuento)
+            respuesta = respuestas_descuento[indice]
+        else:
+            # Usar Gemini para generar respuesta más contextual
+            respuesta = self.gemini_service.generate_response(
+                f"{mensaje}\n\n[INSTRUCCIÓN: El usuario pregunta sobre descuentos o promociones. Responde como farmacia que maneja descuentos por volumen]",
+                conversation_history=historial
+            )
         
         result = self.whatsapp_service.send_text_message(phone_number, respuesta)
         guardar_interaccion(clean_phone, mensaje, respuesta)
@@ -438,7 +325,15 @@ class MessageHandler:
     
     async def _manejar_entrega(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
         """Maneja consultas sobre entregas."""
-        respuesta = "La entrega normalmente es al día siguiente. Para entrega el mismo día, contactanos directamente para confirmar disponibilidad."
+        # Usar la función existente del GeminiService
+        if self.gemini_service._es_consulta_entrega_hoy(mensaje):
+            respuesta = "La entrega normalmente es al día siguiente. Para entrega el mismo día, contáctanos directamente para confirmar disponibilidad."
+        else:
+            # Usar Gemini para respuesta más contextual
+            respuesta = self.gemini_service.generate_response(
+                f"{mensaje}\n\n[INSTRUCCIÓN: El usuario pregunta sobre entregas o tiempos de envío. Menciona que normalmente es al día siguiente]",
+                conversation_history=historial
+            )
         
         result = self.whatsapp_service.send_text_message(phone_number, respuesta)
         guardar_interaccion(clean_phone, mensaje, respuesta)
@@ -447,6 +342,7 @@ class MessageHandler:
     
     async def _manejar_general(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
         """Maneja mensajes generales, saludos y otros."""
+        # Usar la función existente del GeminiService
         respuesta = self.gemini_service.generate_response(
             f"{mensaje}\n\n[INSTRUCCIÓN: Responde como asistente de farmacia profesional]",
             conversation_history=historial
@@ -456,3 +352,24 @@ class MessageHandler:
         guardar_interaccion(clean_phone, mensaje, respuesta)
         
         return {"success": True, "message_type": "respuesta_general", "respuesta": respuesta}
+    
+    # ============================================================================
+    # MANTENER FUNCIÓN LEGACY PARA COMPATIBILIDAD
+    # ============================================================================
+    
+    def detectar_consulta_medicamento(self, mensaje):
+        """
+        Función legacy mantenida para compatibilidad.
+        Ahora usa el clasificador inteligente internamente.
+        """
+        try:
+            clasificacion = self.gemini_service.classify_message_smart(mensaje)
+            if clasificacion.get("tipo") == "producto_especifico":
+                return True, clasificacion.get("producto")
+            else:
+                return False, None
+        except Exception as e:
+            logger.error(f"Error en detectar_consulta_medicamento: {e}")
+            # Respaldo usando función clásica
+            tipo, producto = self.gemini_service.detectar_producto(mensaje)
+            return tipo == "consulta_producto", producto
