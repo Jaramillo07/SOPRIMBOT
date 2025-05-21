@@ -1,6 +1,6 @@
 """
 Manejador de mensajes para SOPRIM BOT.
-Adaptado para trabajar con múltiples scrapers, procesar imágenes y base de datos interna.
+Optimizado para servicio farmacéutico con búsqueda en base interna y scrapers.
 """
 import logging
 import re
@@ -8,8 +8,8 @@ import traceback
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService
-from services.ocr_service import OCRService  # Importar el servicio OCR
-from services.sheets_service import SheetsService  # NUEVO: Importar servicio de Sheets
+from services.ocr_service import OCRService
+from services.sheets_service import SheetsService  # Servicio para base interna
 from services.firestore_service import obtener_historial, guardar_interaccion
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
@@ -22,93 +22,48 @@ logger = logging.getLogger(__name__)
 
 class MessageHandler:
     """
-    Clase que maneja los mensajes entrantes y coordina las respuestas.
-    Adaptada para trabajar con múltiples fuentes de datos y procesar imágenes.
+    Clase que maneja los mensajes entrantes y coordina las respuestas
+    con enfoque en consultas de productos farmacéuticos.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler con soporte para base interna, scrapers, Firestore y procesamiento de imágenes")
+        logger.info("Inicializando MessageHandler optimizado para servicio farmacéutico")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
-        self.ocr_service = OCRService()  # Inicializar el servicio OCR
-        self.sheets_service = SheetsService()  # NUEVO: Inicializar servicio de Sheets
+        self.ocr_service = OCRService()
+        self.sheets_service = SheetsService()  # Servicio para base interna
         logger.info("MessageHandler inicializado correctamente")
     
-    # [Mantener los métodos es_mensaje_a_ignorar y detectar_tipo_mensaje sin cambios]
-    
-    def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
+    def detectar_consulta_medicamento(self, mensaje):
         """
-        Determina si un mensaje debe ser ignorado por ser saludo o conversación personal.
+        Detecta si el mensaje es una consulta sobre un medicamento.
+        Optimizado para el sector farmacéutico.
         
         Args:
             mensaje (str): Mensaje a analizar
             
         Returns:
-            bool: True si el mensaje debe ignorarse, False si debe procesarse
+            tuple: (es_consulta_medicamento, producto_detectado)
         """
-        # Si el mensaje está vacío, no ignoramos porque podría ser solo una imagen
-        if not mensaje or mensaje.strip() == "":
-            return False
+        if not mensaje:
+            return False, None
             
-        m = mensaje.lower().strip()
-        # Ignorar mensajes muy cortos
-        if len(m) <= 3:
-            return True
-        
-        # Patrones de conversación personal o saludos
-        patrones_no_relevantes = [
-            r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
-            r"(?:qué|que).*(?:haces|planes|te parece)",
-            r"(?:te extraño|te quiero|te amo|me gustas)",
-            r"\b(amigo|amiga|carnal|compadre|hermano)\b",
-            r"(?:fiesta|película|cine|restaurante|bar|café|plaza|concierto)",
-            r"(?:cita|vernos|salir)",
-            r"(?:ya llegaste|ya estoy|estoy en|llego en)",
-            r"(?:te llamé|te marqué|no contestas|contesta)"
-        ]
-        for patron in patrones_no_relevantes:
-            if re.search(patron, m):
-                logger.info(f"Ignorado por patrón personal: {patron}")
-                return True
-        
-        # Saludos simples exactos
-        saludos_simples = [
-            r"^hola[\s,.!?]*$",
-            r"^hey[\s,.!?]*$",
-            r"^hi[\s,.!?]*$",
-            r"^buenas[\s,.!?]*$"
-        ]
-        for saludo in saludos_simples:
-            if re.fullmatch(saludo, m):  # solo si el saludo es TODO el mensaje
-                logger.info(f"Ignorado por saludo simple aislado: {m}")
-                return True
-        
-        return False
-    
-    def detectar_tipo_mensaje(self, mensaje):
-        """
-        Detecta el tipo de mensaje basado en su contenido.
-        
-        Args:
-            mensaje (str): Mensaje a analizar
-            
-        Returns:
-            tuple: (tipo_mensaje, producto_detectado)
-        """
         mensaje_lower = mensaje.lower()
         producto_detectado = None
         
         # Patrones para detectar consultas sobre productos farmacéuticos
         patrones_producto = [
             r'(?:tienes|tienen|venden|hay|disponible|disponibles)\s+(.+?)(?:\?|$)',
-            r'(?:busco|necesito|quiero)\s+(.+?)(?:\?|$)',
-            r'(?:me pueden conseguir|consiguen)\s+(.+?)(?:\?|$)',
-            r'(?:vende[ns]|tiene[ns])\s+(.+?)(?:\?|$)',
-            r'(?:precio de|cuánto cuesta|costo de|valor de)\s+(.+?)(?:\?|$)'
+            r'(?:busco|necesito|quiero|ocupo)\s+(.+?)(?:\?|$)',
+            r'(?:me pueden conseguir|consiguen|habrá|habra)\s+(.+?)(?:\?|$)',
+            r'(?:vende[ns]|tiene[ns]|manejan|traen)\s+(.+?)(?:\?|$)',
+            r'(?:precio de|cuánto cuesta|costo de|valor de|precio del|cuanto vale)\s+(.+?)(?:\?|$)',
+            r'(?:dosis|pastillas|tabletas|comprimidos|jarabe|suspensión|ampolletas)\s+(?:de|del|para)\s+(.+?)(?:\?|$)',
+            r'(?:medicamento|medicina|medicinas|fármaco|remedio)\s+(?:para|de|del|contra)\s+(.+?)(?:\?|$)'
         ]
         
         # Buscar coincidencias en los patrones
@@ -116,38 +71,85 @@ class MessageHandler:
             match = re.search(patron, mensaje_lower)
             if match:
                 producto_detectado = match.group(1).strip()
-                # Limpiar términos comunes que no son parte del producto
+                # Limpiar términos comunes
                 terminos_eliminar = ["el", "la", "los", "las", "algún", "alguna", "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas"]
                 for termino in terminos_eliminar:
                     if producto_detectado.startswith(f"{termino} "):
                         producto_detectado = producto_detectado[len(termino)+1:]
                 
                 logger.info(f"Producto detectado: {producto_detectado}")
-                return "consulta_producto", producto_detectado
+                return True, producto_detectado
         
-        # Palabras clave que podrían indicar que se está hablando de un medicamento
-        palabras_medicamento = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", "loratadina", "antibiotico", "ampicilina", "penicilina", "clindamicina", "rapamune", "sirolimus"]
+        # Lista ampliada de medicamentos comunes
+        palabras_medicamento = [
+            # Analgésicos y antiinflamatorios
+            "paracetamol", "ibuprofeno", "aspirina", "naproxeno", "diclofenaco", 
+            "ketorolaco", "indometacina", "meloxicam", "piroxicam", "metamizol",
+            # Antibióticos
+            "amoxicilina", "azitromicina", "ciprofloxacino", "cefalexina", 
+            "ampicilina", "penicilina", "claritromicina", "doxiciclina", 
+            "clindamicina", "levofloxacino", "moxifloxacino", "ceftriaxona",
+            # Antiácidos y protectores gástricos
+            "omeprazol", "pantoprazol", "lansoprazol", "esomeprazol", 
+            "ranitidina", "famotidina", "sucralfato", "magaldrato",
+            # Antialérgicos
+            "loratadina", "cetirizina", "fexofenadina", "desloratadina", 
+            "clorfenamina", "difenhidramina",
+            # Otros medicamentos comunes
+            "metformina", "captopril", "enalapril", "losartan", "atenolol", 
+            "metoprolol", "amlodipino", "simvastatina", "atorvastatina", 
+            "levotiroxina", "alprazolam", "clonazepam", "diazepam", 
+            "fluoxetina", "sertralina", "paroxetina", "sildenafil",
+            "tadalafil", "ambroxol", "salbutamol", "prednisona", 
+            "dexametasona", "betametasona", "aciclovir", "valaciclovir",
+            "loperamida", "metoclopramida", "butilhioscina", "tramadol",
+            "codeína", "fluconazol", "itraconazol", "nistatina",
+            "clotrimazol", "miconazol", "rapamune", "sirolimus",
+            # Nombres comerciales comunes
+            "aspirina", "tylenol", "advil", "motrin", "aleve", "nexium", 
+            "zantac", "pepcid", "claritin", "zyrtec", "allegra", "benadryl",
+            "lipitor", "crestor", "synthroid", "xanax", "valium", "prozac",
+            "zoloft", "viagra", "cialis", "ventolin", "prilosec"
+        ]
+        
         for palabra in palabras_medicamento:
             if palabra in mensaje_lower:
                 logger.info(f"Medicamento detectado por palabra clave: {palabra}")
-                return "consulta_producto", palabra
+                return True, palabra
         
-        # Verificación adicional para medicamentos
-        if "medicina" in mensaje_lower or "medicamento" in mensaje_lower or "pastilla" in mensaje_lower:
-            # Buscar palabras largas que podrían ser nombres de medicamentos
-            palabras = mensaje_lower.split()
-            for palabra in palabras:
-                if len(palabra) > 5 and palabra not in ["medicina", "medicamento", "pastilla", "farmacia", "necesito", "quiero", "busco", "tienen", "venden"]:
-                    logger.info(f"Posible medicamento detectado: {palabra}")
-                    return "consulta_producto", palabra
+        # Buscar términos que indiquen síntomas o condiciones médicas
+        sintomas_condiciones = [
+            "dolor", "fiebre", "gripe", "tos", "diarrea", "vómito", "náusea",
+            "alergia", "infección", "inflamación", "presión alta", "diabetes",
+            "colesterol", "tiroides", "ansiedad", "depresión", "insomnio",
+            "artritis", "migraña", "asma", "acidez", "gastritis", "úlcera"
+        ]
         
-        # Por defecto, considerar como consulta general
-        return "consulta_general", None
+        for sintoma in sintomas_condiciones:
+            if sintoma in mensaje_lower:
+                # Buscar el término más largo que contenga el síntoma
+                palabras = mensaje_lower.split()
+                for i in range(len(palabras)):
+                    if sintoma in palabras[i]:
+                        # Intentar encontrar una frase de contexto (3 palabras antes y después)
+                        inicio = max(0, i-3)
+                        fin = min(len(palabras), i+4)
+                        contexto = " ".join(palabras[inicio:fin])
+                        logger.info(f"Consulta médica detectada por síntoma: {sintoma} (contexto: {contexto})")
+                        return True, contexto
+        
+        # Si no se detecta un producto o síntoma específico, verificar si es consulta general
+        if any(term in mensaje_lower for term in ["medicina", "medicamento", "pastilla", "farmacia", "remedio", "receta"]):
+            logger.info("Consulta general sobre farmacia/medicamentos detectada")
+            return True, None
+        
+        logger.info("No se detectó consulta de medicamento específico")
+        return False, None
     
     async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
         """
         Procesa un mensaje entrante y genera una respuesta.
-        Adaptado para trabajar con múltiples fuentes de datos y procesar imágenes.
+        Optimizado para consultas de farmacia y medicamentos.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
@@ -178,7 +180,7 @@ class MessageHandler:
         else:
             logger.info(f"Número {formatted_number} está permitido para interacción")
         
-        # NUEVO: Procesar imágenes si hay alguna con mejor manejo de errores
+        # Procesar imágenes si hay alguna
         texto_extraido = ""
         if media_urls:
             logger.info(f"Procesando {len(media_urls)} imágenes con OCR...")
@@ -221,40 +223,29 @@ class MessageHandler:
                         "respuesta": respuesta
                     }
         
-        # 1) Ignorar saludos y mensajes personales
-        if self.es_mensaje_a_ignorar(mensaje):
-            logger.info(f"Mensaje ignorado: '{mensaje}'")
-            return {
-                "success": True,
-                "message_type": "ignorado",
-                "respuesta": None
-            }
-        
-        # Obtener historial de conversación de Firestore (10 turnos por defecto)
+        # Obtener historial de conversación de Firestore
         historial = obtener_historial(clean_phone)
         logger.info(f"Recuperado historial para {clean_phone}: {len(historial)} turnos")
         
-        # 2) Detectar tipo de mensaje localmente primero
-        tipo_mensaje, producto_detectado = self.detectar_tipo_mensaje(mensaje)
-        logger.info(f"Tipo de mensaje detectado localmente: {tipo_mensaje}, producto: {producto_detectado}")
+        # Detectar si es consulta de medicamento
+        es_consulta_medicamento, producto_detectado = self.detectar_consulta_medicamento(mensaje)
         
         # Si no detectamos localmente, intentar con Gemini
-        if tipo_mensaje != "consulta_producto" or not producto_detectado:
+        if not es_consulta_medicamento or not producto_detectado:
             try:
                 tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
-                    tipo_mensaje = tipo_mensaje_gemini
+                    es_consulta_medicamento = True
                     producto_detectado = producto_detectado_gemini
-                    logger.info(f"Gemini detectó: {tipo_mensaje}, producto: {producto_detectado}")
+                    logger.info(f"Gemini detectó medicamento: {producto_detectado}")
             except Exception as e:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
-                # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, PRIMERO buscamos en Google Sheets
-        if tipo_mensaje == "consulta_producto" and producto_detectado:
+        # Si es consulta de medicamento, primero buscamos en Google Sheets
+        if es_consulta_medicamento and producto_detectado:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
             
-            # NUEVO: Primero buscar en la base interna (Google Sheets)
+            # PRIMERO: Buscar en la base interna (Google Sheets)
             try:
                 producto_interno = self.sheets_service.buscar_producto(producto_detectado)
                 
@@ -304,9 +295,8 @@ class MessageHandler:
             except Exception as e:
                 logger.error(f"Error al buscar en base interna: {e}")
                 logger.error(traceback.format_exc())
-                # Si falla la búsqueda interna, continuamos con los scrapers
             
-            # SOLO si no encuentra en la base interna, continuar con los scrapers
+            # SOLO si no encuentra en la base interna o hay error, continuar con los scrapers
             try:
                 # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
@@ -354,9 +344,11 @@ class MessageHandler:
                 else:
                     logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
                     
-                    # Generar respuesta con Gemini incluyendo el historial
+                    # Generar respuesta personalizada para producto no encontrado
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}",
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras fuentes. "
+                        f"Pero podemos ayudarte a conseguirlo. ¿Podrías proporcionar más detalles como "
+                        f"marca, concentración o presentación? {mensaje}",
                         conversation_history=historial
                     )
                     
@@ -385,10 +377,9 @@ class MessageHandler:
             except Exception as e:
                 logger.error(f"Error durante el scraping: {e}")
                 logger.error(traceback.format_exc())
-                # En caso de error, caer en respuesta general
         
-        # 4) En cualquier otro caso, respuesta general
-        logger.info("Generando respuesta general con Gemini")
+        # Para cualquier otro tipo de mensaje (incluyendo saludos o preguntas generales)
+        logger.info("Generando respuesta orientada al negocio farmacéutico con Gemini")
         
         # NUEVO: Verificar si el mensaje incluía una imagen procesada con OCR
         contexto_imagen = ""
@@ -401,8 +392,11 @@ class MessageHandler:
         if contexto_imagen:
             mensaje_para_gemini = f"{mensaje}\n\n[CONTEXTO: {contexto_imagen}]"
             
+        # Instrucción adicional para Gemini: enfoque en farmacia
+        mensaje_con_instruccion = f"{mensaje_para_gemini}\n\n[INSTRUCCIÓN: Responde como asistente de farmacia, orienta la respuesta hacia servicios farmacéuticos o información de salud relevante]"
+        
         respuesta = self.gemini_service.generate_response(
-            mensaje_para_gemini,
+            mensaje_con_instruccion,
             conversation_history=historial
         )
         
@@ -424,6 +418,6 @@ class MessageHandler:
         
         return {
             "success": True,
-            "message_type": "general",
+            "message_type": "respuesta_farmaceutica",
             "respuesta": respuesta
         }
