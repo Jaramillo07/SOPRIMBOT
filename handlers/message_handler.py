@@ -246,12 +246,22 @@ class MessageHandler:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
             
             # PRIMERO: Buscar en la base interna (Google Sheets)
+            # IMPORTANTE: Esta llamada debe estar FUERA de cualquier bloque try/except
+            producto_interno = None
             try:
-                producto_interno = self.sheets_service.buscar_producto(producto_detectado)
+                logger.info(f"[DEBUG] Buscando producto en base interna: '{producto_detectado}'")
+                producto_interno = self.sheets_service.buscar_producto(producto_detectado, threshold=0.7)
+                logger.info(f"[DEBUG] Resultado de búsqueda interna: {producto_interno}")
+            except Exception as e:
+                logger.error(f"Error al buscar en base interna: {e}")
+                logger.error(traceback.format_exc())
+                # No hacemos producto_interno = None para preservar cualquier valor exitoso
+            
+            # Si encontramos el producto en la base interna, procesarlo FUERA del bloque try/except de búsqueda
+            if producto_interno:
+                logger.info(f"[DEBUG] ÉXITO: Producto encontrado en base interna: {producto_interno.get('nombre', 'desconocido')}")
                 
-                if producto_interno:
-                    logger.info(f"¡Producto encontrado en base interna! Nombre: {producto_interno['nombre']}")
-                    
+                try:
                     # Preparar formato para la respuesta del bot
                     product_info = {
                         "opcion_mejor_precio": producto_interno,
@@ -292,11 +302,20 @@ class MessageHandler:
                         "fuente": "Base Interna",
                         "respuesta": respuesta
                     }
-            except Exception as e:
-                logger.error(f"Error al buscar en base interna: {e}")
-                logger.error(traceback.format_exc())
+                except Exception as e:
+                    logger.error(f"Error al procesar producto interno: {e}")
+                    logger.error(traceback.format_exc())
+                    # Aún así NO continuamos con scrapers si ya encontramos el producto
+                    return {
+                        "success": False,
+                        "message_type": "error_producto_interno",
+                        "error": str(e),
+                        "producto": producto_detectado,
+                        "respuesta": f"Lo siento, encontré información del producto pero hubo un error al procesarla. Por favor, intenta nuevamente."
+                    }
             
             # SOLO si no encuentra en la base interna o hay error, continuar con los scrapers
+            logger.info(f"[DEBUG] Producto NO encontrado en base interna, procediendo con scrapers: {producto_detectado}")
             try:
                 # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
