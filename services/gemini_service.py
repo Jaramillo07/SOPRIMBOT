@@ -1,7 +1,7 @@
 """
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
-Actualizado para manejar información de la fuente del producto e historial de conversación.
+Optimizado para consultas farmacéuticas sin mencionar nombres específicos de medicamentos.
 """
 import logging
 import re
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """
     Clase que proporciona métodos para interactuar con la API de Gemini.
+    Optimizada para consultas farmacéuticas con respuestas genéricas.
     """
     
     def __init__(self):
@@ -276,7 +277,12 @@ Mensaje: "{user_message}"
             else:
                 final_message = user_message
             
-            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
+            # Modificado: Añadir instrucción para no mencionar nombres específicos de medicamentos
+            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\n"
+            prompt += "IMPORTANTE: No menciones nombres específicos de medicamentos en tu respuesta. "
+            prompt += "Refiérete a ellos siempre como 'producto', 'medicamento' o 'artículo'. "
+            prompt += f"\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
+            
             logger.info(f"Enviando prompt a Gemini para respuesta general. Mensaje: '{user_message[:50]}...'")
             
             response = self.model.generate_content(prompt)
@@ -288,11 +294,12 @@ Mensaje: "{user_message}"
             return response_text
         except Exception as e:
             logger.error(f"Error en generate_response: {e}")
-            return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
+            return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo o contáctanos directamente."
     
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
+        Optimizada para no mencionar nombres específicos de medicamentos.
     
         Args:
             user_message (str): Mensaje del usuario para procesar
@@ -313,9 +320,9 @@ Mensaje: "{user_message}"
             
                 # Si tiene opción de entrega inmediata (Sufarmed)
                 if producto_info.get("opcion_entrega_inmediata") and producto_info["opcion_entrega_inmediata"].get("fuente") == "Sufarmed":
-                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: SF)"
+                    return "La entrega del producto se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: SF)"
                 else:
-                    return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
+                    return "La entrega del producto normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
         
             # Verificar si es una consulta sobre descuentos o promociones
             if self._es_consulta_descuento(user_message):
@@ -343,7 +350,7 @@ Mensaje: "{user_message}"
             # Verificar si hay opciones disponibles
             if not producto_info.get("opcion_entrega_inmediata") and not producto_info.get("opcion_mejor_precio"):
                 logger.warning("No se encontraron opciones de producto disponibles")
-                return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
+                return f"Lo siento, no tenemos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
         
             # Función para aplicar margen y formatear precio
             def aplicar_margen_precio(precio_str):
@@ -390,7 +397,8 @@ Mensaje: "{user_message}"
                 "Fanasa": "FN",
                 "Nadro": "ND",
                 "FANASA": "FN",
-                "NADRO": "ND"
+                "NADRO": "ND",
+                "Base Interna": "BI"
             }
         
             # Si hay doble opción (entrega inmediata y mejor precio son diferentes)
@@ -422,8 +430,8 @@ Mensaje: "{user_message}"
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
             
-                # Formato para doble opción
-                respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
+                # Formato para doble opción - MODIFICADO para no mencionar nombres específicos
+                respuesta = f"📦 {cantidad} unidad(es) del producto solicitado:\n"
                 respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
                 respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
@@ -457,8 +465,8 @@ Mensaje: "{user_message}"
             # Obtener código de fuente para referencia interna
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
         
-            # Formato para opción única
-            respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
+            # Formato para opción única - MODIFICADO para no mencionar nombres específicos
+            respuesta = f"✅ {cantidad} unidad(es) del producto solicitado.\n"
             respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
             respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
@@ -538,51 +546,3 @@ Mensaje: "{user_message}"
             
             logger.info("Respaldo: Consulta general")
             return "consulta_general", None
-            
-def es_mensaje_personal(self, mensaje):
-    """
-    Utiliza Gemini para determinar si un mensaje es personal/coloquial o relacionado con farmacia.
-    
-    Args:
-        mensaje (str): Mensaje del usuario a analizar
-        
-    Returns:
-        bool: True si es un mensaje personal que debe ignorarse, False si es una consulta válida
-    """
-    try:
-        # Aplicar reglas rápidas primero (mensajes muy cortos)
-        if len(mensaje.strip()) <= 3:
-            return True
-            
-        # Prompt específico para esta tarea
-        prompt = f"""
-        Clasifica el siguiente mensaje como "PERSONAL" o "FARMACIA".
-        
-        PERSONAL: Si es un saludo genérico, conversación casual, jerga, invitación social, pregunta personal no relacionada con farmacia.
-        Ejemplos de PERSONAL: "hola", "qué onda", "vamos por cheves", "a qué hora sales", "nos vemos luego", "oye, pasarás por los niños?", "vamos al cine", "ya llegué", "dónde estás?", "qué haces?".
-        
-        FARMACIA: Si es una consulta sobre medicamentos, productos de farmacia, disponibilidad, precios, entregas, recetas, síntomas o tratamientos médicos.
-        Ejemplos de FARMACIA: "tienen paracetamol", "precio de aspirina", "cuándo entregan", "tienen zoladex", "me duele la cabeza qué me recomiendan", "necesito antibióticos".
-        
-        Si hay alguna duda, clasifica como PERSONAL.
-        
-        Mensaje: "{mensaje}"
-        
-        Clasificación (solo responde PERSONAL o FARMACIA):
-        """
-        
-        logger.info(f"Enviando a Gemini para clasificar mensaje: '{mensaje}'")
-        response = self.model.generate_content(prompt)
-        resultado = response.text.strip().upper()
-        
-        logger.info(f"Gemini clasificó mensaje como: {resultado}")
-        
-        # Si la respuesta contiene PERSONAL, ignorar el mensaje
-        return "PERSONAL" in resultado
-        
-    except Exception as e:
-        logger.error(f"Error al clasificar mensaje con Gemini: {e}")
-        # En caso de error, usar reglas de respaldo simples
-        msg = mensaje.lower()
-        palabras_personales = ["cine", "niños", "pasaras", "onda", "amigo", "casa", "llego", "llegue", "vamos", "donde estas"]
-        return any(palabra in msg for palabra in palabras_personales)
