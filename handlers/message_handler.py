@@ -146,6 +146,30 @@ class MessageHandler:
         logger.info("No se detectó consulta de medicamento específico")
         return False, None
     
+    def _convertir_palabra_especial_a_cantidad(self, palabra_especial, existencias_disponibles):
+        """
+        Convierte palabras especiales como "ambas", "todas" a cantidades numéricas.
+        
+        Args:
+            palabra_especial (str): Palabra especial detectada
+            existencias_disponibles (int): Existencias disponibles del producto
+            
+        Returns:
+            int: Cantidad numérica correspondiente
+        """
+        if palabra_especial in ["ambas", "ambos", "las dos", "los dos"]:
+            return min(2, existencias_disponibles) if existencias_disponibles > 0 else 2
+        elif palabra_especial in ["todas", "todos", "disponibles", "existentes", "completo", "completa", "todo", "toda", "total"]:
+            return existencias_disponibles if existencias_disponibles > 0 else 1
+        elif "tres" in palabra_especial:
+            return min(3, existencias_disponibles) if existencias_disponibles > 0 else 3
+        elif "cuatro" in palabra_especial:
+            return min(4, existencias_disponibles) if existencias_disponibles > 0 else 4
+        elif "cinco" in palabra_especial:
+            return min(5, existencias_disponibles) if existencias_disponibles > 0 else 5
+        else:
+            return 1  # Por defecto
+    
     async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
         """
         Procesa un mensaje entrante y genera una respuesta.
@@ -247,6 +271,14 @@ class MessageHandler:
                     
                     # Si encontramos el producto, generar respuesta con la cantidad actualizada
                     if producto_interno:
+                        # NUEVO: Manejar palabras especiales como "ambas", "todas"
+                        cantidad_final = cantidad_detectada
+                        if isinstance(cantidad_detectada, str):
+                            # Si es una palabra especial, convertir a cantidad numérica basada en existencias
+                            existencias_disponibles = int(producto_interno.get('existencia', '0')) if producto_interno.get('existencia', '0').isdigit() else 0
+                            cantidad_final = self._convertir_palabra_especial_a_cantidad(cantidad_detectada, existencias_disponibles)
+                            logger.info(f"Palabra especial '{cantidad_detectada}' convertida a cantidad: {cantidad_final}")
+                        
                         # Preparar formato para la respuesta del bot
                         product_info = {
                             "opcion_mejor_precio": producto_interno,
@@ -256,7 +288,7 @@ class MessageHandler:
                         
                         # Generar respuesta con la cantidad solicitada
                         respuesta = self.gemini_service.generate_product_response(
-                            f"quiero {cantidad_detectada} {ultimo_producto}", 
+                            f"quiero {cantidad_final} {ultimo_producto}", 
                             product_info,
                             additional_context="Actualización de cantidad para producto previo.",
                             conversation_history=historial
@@ -282,7 +314,7 @@ class MessageHandler:
                             "success": True,
                             "message_type": "actualizacion_cantidad",
                             "producto": ultimo_producto,
-                            "cantidad": cantidad_detectada,
+                            "cantidad": cantidad_final,
                             "fuente": "Base Interna",
                             "respuesta": respuesta
                         }
@@ -293,9 +325,18 @@ class MessageHandler:
                         product_info = self.scraping_service.buscar_producto(ultimo_producto)
                         
                         if product_info and (product_info.get("opcion_entrega_inmediata") or product_info.get("opcion_mejor_precio")):
+                            # NUEVO: Manejar palabras especiales para scrapers también
+                            cantidad_final = cantidad_detectada
+                            if isinstance(cantidad_detectada, str):
+                                # Obtener existencias del producto encontrado
+                                producto_ref = product_info.get("opcion_entrega_inmediata") or product_info.get("opcion_mejor_precio")
+                                existencias_disponibles = int(producto_ref.get('existencia', '0')) if producto_ref.get('existencia', '0').isdigit() else 0
+                                cantidad_final = self._convertir_palabra_especial_a_cantidad(cantidad_detectada, existencias_disponibles)
+                                logger.info(f"Palabra especial '{cantidad_detectada}' convertida a cantidad: {cantidad_final} (scraper)")
+                            
                             # Generar respuesta con la cantidad actualizada
                             respuesta = self.gemini_service.generate_product_response(
-                                f"quiero {cantidad_detectada} {ultimo_producto}", 
+                                f"quiero {cantidad_final} {ultimo_producto}", 
                                 product_info,
                                 additional_context="Actualización de cantidad para producto previo.",
                                 conversation_history=historial
@@ -321,7 +362,7 @@ class MessageHandler:
                                 "success": True,
                                 "message_type": "actualizacion_cantidad",
                                 "producto": ultimo_producto,
-                                "cantidad": cantidad_detectada,
+                                "cantidad": cantidad_final,
                                 "fuente": product_info.get("opcion_mejor_precio", {}).get("fuente", "externa"),
                                 "respuesta": respuesta
                             }
