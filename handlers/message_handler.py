@@ -1,15 +1,14 @@
 """
 Manejador de mensajes para SOPRIM BOT.
-Adaptado para trabajar con múltiples fuentes de datos (Sheets, Difarmer, Sufarmed, FANASA y NADRO).
+Adaptado para trabajar con múltiples scrapers y procesar imágenes.
 """
 import logging
 import re
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
-from services.scraping_service import ScrapingService  # Servicio integrado con scrapers
-from services.sheets_service import SheetsService  # NUEVO: Servicio de Google Sheets
+from services.scraping_service import ScrapingService
+from services.ocr_service import OCRService  # Importar el servicio OCR
 from services.firestore_service import obtener_historial, guardar_interaccion
-from utils.helpers import normalize_product_name
 from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
@@ -22,18 +21,18 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """
     Clase que maneja los mensajes entrantes y coordina las respuestas.
-    Adaptada para trabajar con múltiples fuentes de datos y almacenar historial en Firestore.
+    Adaptada para trabajar con múltiples scrapers, almacenar historial y procesar imágenes.
     """
     
     def __init__(self):
         """
         Inicializa el manejador de mensajes con sus servicios asociados.
         """
-        logger.info("Inicializando MessageHandler con soporte para base interna y scrapers")
+        logger.info("Inicializando MessageHandler con soporte para múltiples scrapers, Firestore y procesamiento de imágenes")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
-        self.scraping_service = ScrapingService()  # Servicio integrado con scrapers
-        self.sheets_service = SheetsService()  # NUEVO: Servicio de Google Sheets
+        self.scraping_service = ScrapingService()
+        self.ocr_service = OCRService()  # Inicializar el servicio OCR
         logger.info("MessageHandler inicializado correctamente")
     
     def es_mensaje_a_ignorar(self, mensaje: str) -> bool:
@@ -46,6 +45,10 @@ class MessageHandler:
         Returns:
             bool: True si el mensaje debe ignorarse, False si debe procesarse
         """
+        # Si el mensaje está vacío, no ignoramos porque podría ser solo una imagen
+        if not mensaje or mensaje.strip() == "":
+            return False
+            
         m = mensaje.lower().strip()
         # Ignorar mensajes muy cortos
         if len(m) <= 3:
@@ -53,9 +56,7 @@ class MessageHandler:
         
         # Patrones de conversación personal o saludos
         patrones_no_relevantes = [
-            # r"(?:hola|buenos días|buenas tardes|buenas noches)\b",  # Comentado para permitir mensajes que empiezan con saludos
             r"(?:nos vemos|quedamos|vernos|hablamos|te llamo)",
-            # r"(?:a qué hora|cuando|dónde|donde|cómo|como).*?",  # Comentado para permitir preguntas sobre entregas y métodos de compra
             r"(?:qué|que).*(?:haces|planes|te parece)",
             r"(?:te extraño|te quiero|te amo|me gustas)",
             r"\b(amigo|amiga|carnal|compadre|hermano)\b",
@@ -138,24 +139,27 @@ class MessageHandler:
         # Por defecto, considerar como consulta general
         return "consulta_general", None
     
-   async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
+    async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
         """
         Procesa un mensaje entrante y genera una respuesta.
-        Adaptado para buscar primero en Google Sheets antes de usar scrapers.
+        Adaptado para trabajar con múltiples scrapers, mantener historial y procesar imágenes.
         
         Args:
             mensaje (str): Mensaje entrante del usuario
             phone_number (str): Número de teléfono del remitente
+            media_urls (list, optional): Lista de URLs de imágenes adjuntas
             
         Returns:
             dict: Resultado de la operación
         """
         logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
+        if media_urls:
+            logger.info(f"El mensaje incluye {len(media_urls)} imágenes")
         
         # Limpiar el número de teléfono para Firestore
         clean_phone = phone_number.replace("whatsapp:", "")
         
-        # 0) Verificar si el número está en la lista de permitidos (solo en pruebas)
+        # Verificar si el número está en la lista de permitidos (solo en pruebas)
         formatted_number = self.whatsapp_service.format_phone_number(phone_number)
         logger.info(f"Número formateado: {formatted_number}")
         if ALLOWED_TEST_NUMBERS and formatted_number not in ALLOWED_TEST_NUMBERS:
@@ -168,6 +172,35 @@ class MessageHandler:
             }
         else:
             logger.info(f"Número {formatted_number} está permitido para interacción")
+        
+        # NUEVO: Procesar imágenes si hay alguna
+        texto_extraido = ""
+        if media_urls:
+            logger.info("Procesando imágenes con OCR...")
+            texto_extraido = await self.ocr_service.process_images(media_urls)
+            
+            if texto_extraido:
+                logger.info(f"Texto extraído de las imágenes: {texto_extraido[:100]}...")
+                # Si no hay mensaje de texto, usamos solo el texto extraído
+                if not mensaje or mensaje.strip() == "":
+                    mensaje = texto_extraido
+                else:
+                    # Si hay ambos, los combinamos
+                    mensaje = f"{mensaje}\n\n[Texto de la imagen: {texto_extraido}]"
+                    
+                logger.info(f"Mensaje combinado: {mensaje[:100]}...")
+            else:
+                logger.warning("No se pudo extraer texto de las imágenes")
+                # Si no se extrajo texto y no hay mensaje, respondemos con error
+                if not mensaje or mensaje.strip() == "":
+                    respuesta = "He recibido tu imagen pero no he podido extraer texto de ella. ¿Podrías enviar el mensaje en formato texto o una imagen más clara?"
+                    
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    return {
+                        "success": True,
+                        "message_type": "error_ocr",
+                        "respuesta": respuesta
+                    }
         
         # 1) Ignorar saludos y mensajes personales
         if self.es_mensaje_a_ignorar(mensaje):
@@ -189,7 +222,7 @@ class MessageHandler:
         # Si no detectamos localmente, intentar con Gemini
         if tipo_mensaje != "consulta_producto" or not producto_detectado:
             try:
-                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje, historial)
+                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
                     tipo_mensaje = tipo_mensaje_gemini
                     producto_detectado = producto_detectado_gemini
@@ -198,61 +231,9 @@ class MessageHandler:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
                 # Continuamos con la detección local en caso de error
         
-        # 3) Si es consulta de producto, primero buscamos en Google Sheets
+        # 3) Si es consulta de producto, hacemos scraping con los scrapers disponibles
         if tipo_mensaje == "consulta_producto" and producto_detectado:
             logger.info(f"Iniciando búsqueda para: {producto_detectado}")
-            
-            # NUEVO: Primero buscar en la base interna (Google Sheets)
-            try:
-                producto_interno = self.sheets_service.buscar_producto(producto_detectado)
-                
-                if producto_interno:
-                    logger.info(f"¡Producto encontrado en base interna! Nombre: {producto_interno['nombre']}")
-                    
-                    # Preparar formato para la respuesta del bot
-                    product_info = {
-                        "opcion_mejor_precio": producto_interno,
-                        "opcion_entrega_inmediata": None,
-                        "tiene_doble_opcion": False
-                    }
-                    
-                    # Generar respuesta con Gemini incluyendo el historial
-                    respuesta = self.gemini_service.generate_product_response(
-                        mensaje, 
-                        product_info,
-                        additional_context="Información de nuestra base de datos interna.",
-                        conversation_history=historial
-                    )
-                    
-                    # Guardar la interacción en Firestore
-                    guardar_interaccion(clean_phone, mensaje, respuesta)
-                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
-                    
-                    # Intentar enviar respuesta
-                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-                    
-                    # Verificar si hubo error de sandbox
-                    if result.get("status") == "error":
-                        logger.error("Error al enviar respuesta de producto interno")
-                        return {
-                            "success": False,
-                            "message_type": "error_sandbox",
-                            "error": result.get("message", "Error al enviar mensaje"),
-                            "respuesta": respuesta
-                        }
-                    
-                    return {
-                        "success": True,
-                        "message_type": "producto_interno",
-                        "producto": producto_detectado,
-                        "fuente": "Base Interna",
-                        "respuesta": respuesta
-                    }
-            except Exception as e:
-                logger.error(f"Error al buscar en base interna: {e}")
-                # Si falla la búsqueda interna, continuamos con los scrapers
-            
-            # Si no se encontró en base interna o hubo error, continuar con scrapers
             try:
                 # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
@@ -298,11 +279,11 @@ class MessageHandler:
                         "respuesta": respuesta
                     }
                 else:
-                    logger.info(f"No se encontró información para {producto_detectado} en ninguna fuente")
+                    logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
                     
                     # Generar respuesta con Gemini incluyendo el historial
                     respuesta = self.gemini_service.generate_response(
-                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras fuentes. {mensaje}",
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras farmacias asociadas. {mensaje}",
                         conversation_history=historial
                     )
                     
@@ -335,9 +316,19 @@ class MessageHandler:
         # 4) En cualquier otro caso, respuesta general
         logger.info("Generando respuesta general con Gemini")
         
-        # Generar respuesta con Gemini incluyendo el historial
+        # NUEVO: Verificar si el mensaje incluía una imagen procesada con OCR
+        contexto_imagen = ""
+        if texto_extraido and media_urls:
+            contexto_imagen = f"El usuario envió una imagen que contiene el siguiente texto: {texto_extraido}"
+            logger.info("Añadiendo contexto de imagen procesada")
+        
+        # Generar respuesta con Gemini incluyendo el historial y contexto de imagen
+        mensaje_para_gemini = mensaje
+        if contexto_imagen:
+            mensaje_para_gemini = f"{mensaje}\n\n[CONTEXTO: {contexto_imagen}]"
+            
         respuesta = self.gemini_service.generate_response(
-            mensaje,
+            mensaje_para_gemini,
             conversation_history=historial
         )
         
