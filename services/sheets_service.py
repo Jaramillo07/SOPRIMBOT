@@ -226,6 +226,7 @@ class SheetsService:
         best_score = 0
         
         for product in self.data:
+            # Verifica que exista la columna DESCRIPCION (podría usar otra columna si no está)
             desc = product.get('DESCRIPCION', '')
             if not desc:
                 continue
@@ -273,6 +274,16 @@ class SheetsService:
         Returns:
             dict: Producto formateado
         """
+        # MODIFICACIÓN: Busca ambos nombres de columna - EXISTENCIA o EXISTENCIAS
+        stock = product_data.get('EXISTENCIAS', product_data.get('EXISTENCIA', 0))
+        stock_value = 0
+        try:
+            stock_value = int(float(stock))
+        except (ValueError, TypeError):
+            # Si no es número, verificar si es texto que indica disponibilidad
+            if isinstance(stock, str) and any(word in stock.lower() for word in ['si', 'disponible']):
+                stock_value = 1
+        
         # Extraer y formatear precio
         price = product_data.get('PRECIO', 0)
         if isinstance(price, str) and price.startswith('$'):
@@ -292,21 +303,13 @@ class SheetsService:
         except (ValueError, TypeError):
             pass
         
-        # Extraer y formatear existencia
-        stock = product_data.get('EXISTENCIA', 0)
-        stock_value = 0
-        try:
-            stock_value = int(float(stock))
-        except (ValueError, TypeError):
-            # Si no es número, verificar si es texto que indica disponibilidad
-            if isinstance(stock, str) and any(word in stock.lower() for word in ['si', 'disponible']):
-                stock_value = 1
-        
-        # Crear el objeto producto estandarizado
+        # Crear el objeto producto estandarizado con manejo adecuado para columnas faltantes
         return {
             "nombre": product_data.get('DESCRIPCION', ''),
             "codigo_barras": str(product_data.get('CLAVE', '')),
-            "laboratorio": product_data.get('LABORATORIO', ''),
+            # MODIFICADO: Usar campo vacío si no hay LABORATORIO
+            "laboratorio": product_data.get('LABORATORIO', 'No especificado'),
+            # MODIFICADO: Usar campo vacío si no hay REGISTRO
             "registro_sanitario": product_data.get('REGISTRO', ''),
             "precio": price_str,
             "existencia": str(stock_value),
@@ -417,12 +420,13 @@ class SheetsService:
             productos_con_stock = []
             for p in self.data:
                 try:
-                    existencia = float(p.get('EXISTENCIA', 0))
+                    # MODIFICADO: Buscar ambas columnas
+                    existencia = float(p.get('EXISTENCIAS', p.get('EXISTENCIA', 0)))
                     if existencia > 0:
                         productos_con_stock.append(self.format_product(p))
                 except (ValueError, TypeError):
                     # Verificar si la existencia es texto que indica disponibilidad
-                    existencia_str = str(p.get('EXISTENCIA', '')).lower()
+                    existencia_str = str(p.get('EXISTENCIAS', p.get('EXISTENCIA', ''))).lower()
                     if any(word in existencia_str for word in ['si', 'disponible']):
                         productos_con_stock.append(self.format_product(p))
             
