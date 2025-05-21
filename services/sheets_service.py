@@ -193,7 +193,7 @@ class SheetsService:
         # Limitar puntuación a 1.0 máximo
         return min(score, 1.0)
     
-    def search_product(self, product_name: str, threshold: float = 0.8) -> Optional[Dict[str, Any]]:
+    def search_product(self, product_name: str, threshold: float = 0.7) -> Optional[Dict[str, Any]]:
         """
         Busca un producto en los datos de la hoja usando coincidencia parcial
         y comparación de similitud.
@@ -209,11 +209,15 @@ class SheetsService:
         self.refresh_cache_if_needed()
         
         if not product_name or not self.data:
+            logger.warning(f"[DEBUG] No hay búsqueda posible: producto='{product_name}', datos={len(self.data)}")
             return None
         
         normalized_query = self.normalize_product_name(product_name)
         if not normalized_query:
+            logger.warning(f"[DEBUG] Búsqueda normalizada vacía para: '{product_name}'")
             return None
+        
+        logger.info(f"[DEBUG] Búsqueda normalizada: '{normalized_query}' (original: '{product_name}')")
         
         # Dividir en palabras para búsqueda por tokens
         query_words = set(normalized_query.split())
@@ -231,6 +235,7 @@ class SheetsService:
             
             # Verificar coincidencia exacta primero
             if normalized_query == normalized_desc:
+                logger.info(f"[DEBUG] Coincidencia EXACTA encontrada: '{desc}'")
                 return product
                 
             # Si no es exacta, calcular similitud
@@ -240,11 +245,21 @@ class SheetsService:
             product_code = str(product.get('CLAVE', '')).lower()
             if product_code and normalized_query == product_code:
                 score += 0.5
+                logger.info(f"[DEBUG] Bonus por código coincidente: {product_code}")
+                
+            # Debug para puntuaciones altas
+            if score > 0.5:
+                logger.info(f"[DEBUG] Puntuación alta ({score:.2f}): '{desc}' para consulta '{normalized_query}'")
                 
             # Actualizar mejor coincidencia si supera el umbral y la puntuación anterior
             if score > best_score and score >= threshold:
                 best_score = score
                 best_match = product
+        
+        if best_match:
+            logger.info(f"[DEBUG] Mejor coincidencia ({best_score:.2f}): '{best_match.get('DESCRIPCION', '')}'")
+        else:
+            logger.info(f"[DEBUG] No se encontraron coincidencias que superen el umbral ({threshold}) para '{normalized_query}'")
         
         return best_match
     
@@ -303,7 +318,7 @@ class SheetsService:
             "estado": "encontrado"
         }
     
-    def buscar_producto(self, nombre_producto: str, threshold: float = 0.8) -> Optional[Dict[str, Any]]:
+    def buscar_producto(self, nombre_producto: str, threshold: float = 0.7) -> Optional[Dict[str, Any]]:
         """
         Método principal para buscar un producto en la base de datos interna.
         Interfaz unificada para el handler principal.
@@ -318,8 +333,10 @@ class SheetsService:
         try:
             # Si no hay hoja configurada, retornar None inmediatamente
             if not self.sheet_id:
-                logger.warning("No hay hoja de cálculo configurada. Omitiendo búsqueda interna.")
+                logger.warning("[DEBUG] No hay hoja de cálculo configurada. Omitiendo búsqueda interna.")
                 return None
+            
+            logger.info(f"[DEBUG] Iniciando búsqueda para: '{nombre_producto}' con umbral {threshold}")
             
             # Buscar el producto
             producto = self.search_product(nombre_producto, threshold)
@@ -327,13 +344,15 @@ class SheetsService:
             if producto:
                 # Formatear al estándar del bot
                 resultado = self.format_product(producto)
-                logger.info(f"Producto encontrado en base interna: {resultado['nombre']} (similitud >= {threshold})")
+                logger.info(f"[DEBUG] Producto encontrado en base interna: {resultado['nombre']} (similitud >= {threshold})")
                 return resultado
             
-            logger.info(f"No se encontró '{nombre_producto}' en la base interna (umbral: {threshold})")
+            logger.info(f"[DEBUG] No se encontró '{nombre_producto}' en la base interna (umbral: {threshold})")
             return None
         except Exception as e:
-            logger.error(f"Error buscando producto '{nombre_producto}': {e}")
+            logger.error(f"[DEBUG] Error buscando producto '{nombre_producto}': {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def buscar_por_codigo(self, codigo: str) -> Optional[Dict[str, Any]]:
@@ -395,7 +414,7 @@ class SheetsService:
             # Asegurar que los datos estén actualizados
             self.refresh_cache_if_needed()
             
-            # Filtrar productos con existencia > 0
+            # Filtrar productos con existencia > a
             productos_con_stock = []
             for p in self.data:
                 try:
@@ -412,36 +431,3 @@ class SheetsService:
         except Exception as e:
             logger.error(f"Error obteniendo productos con stock: {e}")
             return []
-
-# Para pruebas independientes
-if __name__ == "__main__":
-    import sys
-    
-    # Crear instancia del servicio
-    service = SheetsService()
-    
-    # Verificar si se proporcionó un nombre de producto como argumento
-    if len(sys.argv) > 1:
-        nombre_producto = " ".join(sys.argv[1:])
-        print(f"\nBuscando: '{nombre_producto}'")
-        
-        # Buscar el producto
-        producto = service.buscar_producto(nombre_producto)
-        
-        if producto:
-            print(f"\n=== PRODUCTO ENCONTRADO ===")
-            print(f"Nombre: {producto['nombre']}")
-            print(f"Precio: {producto['precio']}")
-            print(f"Existencia: {producto['existencia']}")
-            print(f"Código: {producto['codigo_barras']}")
-            print(f"Laboratorio: {producto['laboratorio']}")
-        else:
-            print(f"\nNo se encontró el producto '{nombre_producto}' en la base interna.")
-    else:
-        # Mostrar estadísticas generales
-        todos = service.get_all_products()
-        con_stock = service.get_products_with_stock()
-        
-        print(f"\n=== BASE DE DATOS INTERNA ===")
-        print(f"Total de productos: {len(todos)}")
-        print(f"Productos con stock: {len(con_stock)}")
