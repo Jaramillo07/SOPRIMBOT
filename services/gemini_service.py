@@ -364,14 +364,15 @@ Mensaje: "{user_message}"
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
             
-            # Detectar cantidad en el mensaje del usuario
+            # Detectar cantidad en el mensaje del usuario - MODIFICADO
             cantidad = 1  # Valor por defecto
             es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
             if es_mensaje_cantidad and cantidad_detectada:
                 cantidad = cantidad_detectada
             else:
-                # Si no es un mensaje simple de cantidad, buscar cantidad en el texto completo
-                cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
+                # VERSIÓN CORREGIDA: Sólo buscar números seguidos explícitamente por palabras de unidades
+                # para evitar confundir números en nombres de productos con cantidades
+                cantidad_match = re.search(r'(\d+)\s+(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)', user_message.lower())
                 if cantidad_match:
                     cantidad = int(cantidad_match.group(1))
             
