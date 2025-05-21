@@ -227,13 +227,120 @@ class MessageHandler:
         historial = obtener_historial(clean_phone)
         logger.info(f"Recuperado historial para {clean_phone}: {len(historial)} turnos")
         
+        # PRIMERO: Verificar si es un mensaje simple de cantidad para un producto anterior
+        # Usar directamente la función del servicio Gemini para mayor precisión
+        es_cantidad, cantidad_detectada = self.gemini_service._es_mensaje_cantidad(mensaje)
+        if es_cantidad and cantidad_detectada and historial:
+            try:
+                # Extraer el último producto mencionado
+                ultimo_producto = self.gemini_service._extraer_ultimo_producto(historial)
+                
+                if ultimo_producto:
+                    logger.info(f"Detectado mensaje de cantidad: {cantidad_detectada} para producto previo: {ultimo_producto}")
+                    
+                    # Buscar información del producto en la base interna primero
+                    producto_interno = None
+                    try:
+                        producto_interno = self.sheets_service.buscar_producto(ultimo_producto, threshold=0.7)
+                    except Exception as e:
+                        logger.error(f"Error al buscar en base interna: {e}")
+                    
+                    # Si encontramos el producto, generar respuesta con la cantidad actualizada
+                    if producto_interno:
+                        # Preparar formato para la respuesta del bot
+                        product_info = {
+                            "opcion_mejor_precio": producto_interno,
+                            "opcion_entrega_inmediata": None,
+                            "tiene_doble_opcion": False
+                        }
+                        
+                        # Generar respuesta con la cantidad solicitada
+                        respuesta = self.gemini_service.generate_product_response(
+                            f"quiero {cantidad_detectada} {ultimo_producto}", 
+                            product_info,
+                            additional_context="Actualización de cantidad para producto previo.",
+                            conversation_history=historial
+                        )
+                        
+                        # Guardar la interacción en Firestore
+                        guardar_interaccion(clean_phone, mensaje, respuesta)
+                        
+                        # Enviar respuesta
+                        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                        
+                        # Verificar si hubo error de sandbox
+                        if result.get("status") == "error":
+                            logger.error("Error al enviar respuesta de actualización de cantidad")
+                            return {
+                                "success": False,
+                                "message_type": "error_sandbox",
+                                "error": result.get("message", "Error al enviar mensaje"),
+                                "respuesta": respuesta
+                            }
+                        
+                        return {
+                            "success": True,
+                            "message_type": "actualizacion_cantidad",
+                            "producto": ultimo_producto,
+                            "cantidad": cantidad_detectada,
+                            "fuente": "Base Interna",
+                            "respuesta": respuesta
+                        }
+                    
+                    # Si no está en base interna, buscar en scrapers
+                    try:
+                        # Llamar al servicio de scraping integrado
+                        product_info = self.scraping_service.buscar_producto(ultimo_producto)
+                        
+                        if product_info and (product_info.get("opcion_entrega_inmediata") or product_info.get("opcion_mejor_precio")):
+                            # Generar respuesta con la cantidad actualizada
+                            respuesta = self.gemini_service.generate_product_response(
+                                f"quiero {cantidad_detectada} {ultimo_producto}", 
+                                product_info,
+                                additional_context="Actualización de cantidad para producto previo.",
+                                conversation_history=historial
+                            )
+                            
+                            # Guardar la interacción en Firestore
+                            guardar_interaccion(clean_phone, mensaje, respuesta)
+                            
+                            # Enviar respuesta
+                            result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                            
+                            # Verificar si hubo error de sandbox
+                            if result.get("status") == "error":
+                                logger.error("Error al enviar respuesta de actualización de cantidad (scraper)")
+                                return {
+                                    "success": False,
+                                    "message_type": "error_sandbox",
+                                    "error": result.get("message", "Error al enviar mensaje"),
+                                    "respuesta": respuesta
+                                }
+                            
+                            return {
+                                "success": True,
+                                "message_type": "actualizacion_cantidad",
+                                "producto": ultimo_producto,
+                                "cantidad": cantidad_detectada,
+                                "fuente": product_info.get("opcion_mejor_precio", {}).get("fuente", "externa"),
+                                "respuesta": respuesta
+                            }
+                    except Exception as e:
+                        logger.error(f"Error al buscar producto previo en scrapers: {e}")
+                        logger.error(traceback.format_exc())
+                else:
+                    logger.warning("No se pudo determinar el producto anterior para la cantidad")
+            except Exception as e:
+                logger.error(f"Error al procesar mensaje de cantidad: {e}")
+                logger.error(traceback.format_exc())
+        
         # Detectar si es consulta de medicamento
         es_consulta_medicamento, producto_detectado = self.detectar_consulta_medicamento(mensaje)
         
         # Si no detectamos localmente, intentar con Gemini
         if not es_consulta_medicamento or not producto_detectado:
             try:
-                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
+                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje, historial)
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
                     es_consulta_medicamento = True
                     producto_detectado = producto_detectado_gemini
