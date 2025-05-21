@@ -32,13 +32,20 @@ class SheetsService:
         Inicializa el servicio de Google Sheets utilizando las credenciales
         predeterminadas del entorno o un archivo específico.
         """
+        # Inicializar variables críticas PRIMERO, antes de cualquier código que pueda fallar
+        self.data = []
+        self.last_refresh = 0
+        self.cache_ttl = 300  # Segundos de validez del caché (5 minutos)
+        self.sheet_id = None
+        self.client = None
+        self.spreadsheet = None
+        self.sheet = None
+        
         try:
             # ID de la hoja de cálculo (extraído de la URL)
             self.sheet_id = os.getenv('SHEETS_ID')
             if not self.sheet_id:
                 logger.warning("SHEETS_ID no está configurado en las variables de entorno")
-                self.sheet_id = None
-                self.data = []
                 return
             
             # Definir el alcance (scope) para la autenticación
@@ -58,7 +65,6 @@ class SheetsService:
                 credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
                 if not credentials_path:
                     logger.error("No se encontraron credenciales predeterminadas ni GOOGLE_APPLICATION_CREDENTIALS")
-                    self.data = []
                     return
                 
                 credentials = service_account.Credentials.from_service_account_file(
@@ -71,18 +77,14 @@ class SheetsService:
             self.spreadsheet = self.client.open_by_key(self.sheet_id)
             self.sheet = self.spreadsheet.sheet1  # Primera hoja por defecto
             
-            # Variables para caché
-            self.data = []
-            self.last_refresh = 0
-            self.cache_ttl = 300  # Segundos de validez del caché (5 minutos)
-            
             # Cargar datos iniciales
             self.refresh_cache_if_needed(force=True)
             
             logger.info(f"SheetsService inicializado correctamente. Cargados {len(self.data)} productos.")
         except Exception as e:
             logger.error(f"Error al inicializar SheetsService: {e}")
-            self.data = []
+            import traceback
+            logger.error(traceback.format_exc())
     
     def refresh_cache_if_needed(self, force=False) -> bool:
         """
@@ -98,6 +100,11 @@ class SheetsService:
         
         # Si no es forzado y el caché aún es válido, no hacer nada
         if not force and (current_time - self.last_refresh) < self.cache_ttl:
+            return False
+        
+        # Verificar que tengamos una conexión a la hoja
+        if not self.sheet:
+            logger.error("No hay conexión a la hoja de cálculo, no se puede actualizar caché")
             return False
         
         try:
@@ -414,7 +421,7 @@ class SheetsService:
             # Asegurar que los datos estén actualizados
             self.refresh_cache_if_needed()
             
-            # Filtrar productos con existencia > a
+            # Filtrar productos con existencia > 0
             productos_con_stock = []
             for p in self.data:
                 try:
