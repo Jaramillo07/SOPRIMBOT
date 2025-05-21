@@ -141,14 +141,14 @@ class GeminiService:
     def _es_mensaje_cantidad(self, user_message):
         """
         Determina si el mensaje del usuario es solo para indicar una cantidad
-        (por ejemplo: "quiero 5", "dame 2", etc.)
+        (por ejemplo: "quiero 5", "dame 2", "ambas", "todas", etc.)
         Versión mejorada para detectar más patrones y ser más robusta.
         
         Args:
             user_message (str): Mensaje del usuario
             
         Returns:
-            bool, int: (True/False, cantidad detectada o None)
+            bool, int/str: (True/False, cantidad detectada o palabra especial)
         """
         if not user_message or not isinstance(user_message, str):
             return False, None
@@ -161,13 +161,37 @@ class GeminiService:
             logger.info(f"Mensaje es solo un número: {cantidad}")
             return True, cantidad
         
+        # NUEVO: Detectar palabras que implican cantidad total o múltiple
+        palabras_cantidad_especial = [
+            "ambas", "ambos", "todas", "todos", "las dos", "los dos", 
+            "las tres", "los tres", "las cuatro", "los cuatro",
+            "las cinco", "los cinco", "completo", "completa",
+            "todo", "toda", "total", "disponibles", "existentes"
+        ]
+        
+        # Verificar si el mensaje contiene solo palabras de cantidad especial
+        for palabra in palabras_cantidad_especial:
+            if palabra in mensaje_lower:
+                # Patrones para detectar uso de estas palabras como cantidad
+                patrones_especiales = [
+                    rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+{palabra}$',
+                    rf'^{palabra}$',
+                    rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*{palabra}$',
+                    rf'^(?:si|sí|ok|okay|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+){palabra}$'
+                ]
+                
+                for patron in patrones_especiales:
+                    if re.search(patron, mensaje_lower):
+                        logger.info(f"Detectado mensaje de cantidad especial: '{palabra}'")
+                        return True, palabra
+        
         # Patrones extendidos para detectar mensajes de cantidad
         patrones_cantidad = [
             # Patrones simples: "quiero 5", "dame 2"
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(\d+)$',
             
             # Patrones con "los/las": "quiero los 2", "dame las 3"
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(?:los|las|le|el|la)\s+(\d+)$',
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(?:los|las|le|el|la)\s+(\d+)$',
             
             # Patrones de confirmación: "ok, 2", "sí, 3"
             r'^(?:ok|okay|vale|si|sí|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+)(\d+)$',
@@ -176,7 +200,7 @@ class GeminiService:
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             
             # Confirmaciones con unidades: "sí, 2 cajas", "quiero 3 unidades"
-            r'^(?:si|sí|ok|okay|quiero|necesito)\s*(?:,\s*)?\s*(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
+            r'^(?:si|sí|ok|okay|quiero|necesito|requiero|solicito)\s*(?:,\s*)?\s*(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             
             # "Son 5", "serían 3"
             r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
@@ -186,13 +210,27 @@ class GeminiService:
             
             # "Con 2" o "con las 3"
             r'^con\s+(?:las|los)?\s*(\d+)$',
+            
+            # NUEVO: Patrones con números escritos
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)$',
         ]
         
         # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_cantidad:
             match = re.search(patron, mensaje_lower)
             if match:
-                cantidad = int(match.group(1))
+                cantidad_str = match.group(1)
+                # Convertir números escritos a dígitos
+                numeros_escritos = {
+                    "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+                    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+                }
+                
+                if cantidad_str in numeros_escritos:
+                    cantidad = numeros_escritos[cantidad_str]
+                else:
+                    cantidad = int(cantidad_str)
+                    
                 logger.info(f"Detectado mensaje de cantidad con patrón '{patron}': {cantidad}")
                 return True, cantidad
         
@@ -466,18 +504,49 @@ Mensaje: "{user_message}"
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
             
-            # Detectar cantidad en el mensaje del usuario - MODIFICADO
+            # Detectar cantidad en el mensaje del usuario - MODIFICADO PARA MANEJAR PALABRAS ESPECIALES
             cantidad = 1  # Valor por defecto
             es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
+
             if es_mensaje_cantidad and cantidad_detectada:
-                cantidad = cantidad_detectada
+                # Si es una palabra especial, necesitamos convertirla a número basado en el contexto
+                if isinstance(cantidad_detectada, str):
+                    # Obtener las existencias del producto para calcular la cantidad correcta
+                    producto_ref = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
+                    if producto_ref:
+                        existencias_disponibles = int(producto_ref.get('existencia', '0')) if producto_ref.get('existencia', '0').isdigit() else 0
+                        
+                        if cantidad_detectada in ["ambas", "ambos", "las dos", "los dos"]:
+                            cantidad = min(2, existencias_disponibles) if existencias_disponibles > 0 else 2
+                        elif cantidad_detectada in ["todas", "todos", "disponibles", "existentes", "completo", "completa", "todo", "toda", "total"]:
+                            cantidad = existencias_disponibles if existencias_disponibles > 0 else 1
+                        elif "tres" in cantidad_detectada:
+                            cantidad = min(3, existencias_disponibles) if existencias_disponibles > 0 else 3
+                        elif "cuatro" in cantidad_detectada:
+                            cantidad = min(4, existencias_disponibles) if existencias_disponibles > 0 else 4
+                        elif "cinco" in cantidad_detectada:
+                            cantidad = min(5, existencias_disponibles) if existencias_disponibles > 0 else 5
+                        else:
+                            cantidad = 1
+                        
+                        logger.info(f"Palabra especial '{cantidad_detectada}' convertida a cantidad: {cantidad} (existencias: {existencias_disponibles})")
+                    else:
+                        # Si no tenemos información de existencias, usar valores por defecto
+                        if cantidad_detectada in ["ambas", "ambos", "las dos", "los dos"]:
+                            cantidad = 2
+                        elif cantidad_detectada in ["todas", "todos"]:
+                            cantidad = 1  # Sin contexto, asumir 1
+                        else:
+                            cantidad = 1
+                else:
+                    cantidad = cantidad_detectada
             else:
                 # VERSIÓN CORREGIDA: Sólo buscar números seguidos explícitamente por palabras de unidades
                 # para evitar confundir números en nombres de productos con cantidades
                 cantidad_match = re.search(r'(\d+)\s+(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)', user_message.lower())
                 if cantidad_match:
                     cantidad = int(cantidad_match.group(1))
-            
+
             logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
             
             # Conversión de nombre de fuente a código interno
