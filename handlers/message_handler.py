@@ -4,6 +4,7 @@ Adaptado para trabajar con múltiples scrapers y procesar imágenes.
 """
 import logging
 import re
+import traceback
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService
@@ -121,7 +122,7 @@ class MessageHandler:
                 return "consulta_producto", producto_detectado
         
         # Palabras clave que podrían indicar que se está hablando de un medicamento
-        palabras_medicamento = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", "loratadina", "antibiotico", "ampicilina", "penicilina", "clindamicina"]
+        palabras_medicamento = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", "loratadina", "antibiotico", "ampicilina", "penicilina", "clindamicina", "rapamune", "sirolimus"]
         for palabra in palabras_medicamento:
             if palabra in mensaje_lower:
                 logger.info(f"Medicamento detectado por palabra clave: {palabra}")
@@ -154,7 +155,7 @@ class MessageHandler:
         """
         logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
         if media_urls:
-            logger.info(f"El mensaje incluye {len(media_urls)} imágenes")
+            logger.info(f"El mensaje incluye {len(media_urls)} imágenes: {media_urls}")
         
         # Limpiar el número de teléfono para Firestore
         clean_phone = phone_number.replace("whatsapp:", "")
@@ -173,32 +174,46 @@ class MessageHandler:
         else:
             logger.info(f"Número {formatted_number} está permitido para interacción")
         
-        # NUEVO: Procesar imágenes si hay alguna
+        # NUEVO: Procesar imágenes si hay alguna con mejor manejo de errores
         texto_extraido = ""
         if media_urls:
-            logger.info("Procesando imágenes con OCR...")
-            texto_extraido = await self.ocr_service.process_images(media_urls)
-            
-            if texto_extraido:
-                logger.info(f"Texto extraído de las imágenes: {texto_extraido[:100]}...")
-                # Si no hay mensaje de texto, usamos solo el texto extraído
-                if not mensaje or mensaje.strip() == "":
-                    mensaje = texto_extraido
+            logger.info(f"Procesando {len(media_urls)} imágenes con OCR...")
+            try:
+                texto_extraido = await self.ocr_service.process_images(media_urls)
+                logger.info(f"Resultado del procesamiento OCR: {texto_extraido[:200] if texto_extraido else 'No hay texto'}")
+                
+                if texto_extraido and not texto_extraido.startswith("No se pudo"):
+                    logger.info(f"Texto extraído con éxito: {texto_extraido[:100]}...")
+                    # Si no hay mensaje de texto, usamos solo el texto extraído
+                    if not mensaje or mensaje.strip() == "":
+                        mensaje = texto_extraido
+                    else:
+                        # Si hay ambos, los combinamos
+                        mensaje = f"{mensaje}\n\n[Texto de la imagen: {texto_extraido}]"
+                    
+                    logger.info(f"Mensaje combinado: {mensaje[:100]}...")
                 else:
-                    # Si hay ambos, los combinamos
-                    mensaje = f"{mensaje}\n\n[Texto de la imagen: {texto_extraido}]"
-                    
-                logger.info(f"Mensaje combinado: {mensaje[:100]}...")
-            else:
-                logger.warning("No se pudo extraer texto de las imágenes")
-                # Si no se extrajo texto y no hay mensaje, respondemos con error
+                    logger.warning("No se pudo extraer texto de las imágenes")
+                    if not mensaje or mensaje.strip() == "":
+                        # Si solo recibimos una imagen sin texto y no pudimos extraer texto
+                        respuesta = "He recibido tu imagen pero no he podido extraer texto de ella. ¿Podrías enviar el mensaje en formato texto o una imagen más clara?"
+                        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                        return {
+                            "success": True,
+                            "message_type": "error_ocr",
+                            "respuesta": respuesta
+                        }
+            except Exception as e:
+                logger.error(f"Error al procesar imágenes: {e}")
+                logger.error(traceback.format_exc())
+                # Si solo tenemos imagen y falló el procesamiento, informar al usuario
                 if not mensaje or mensaje.strip() == "":
-                    respuesta = "He recibido tu imagen pero no he podido extraer texto de ella. ¿Podrías enviar el mensaje en formato texto o una imagen más clara?"
-                    
+                    respuesta = "Lo siento, hubo un problema técnico al procesar tu imagen. ¿Podrías enviar tu consulta en formato texto?"
                     result = self.whatsapp_service.send_text_message(phone_number, respuesta)
                     return {
-                        "success": True,
-                        "message_type": "error_ocr",
+                        "success": False,
+                        "message_type": "error_imagen",
+                        "error": str(e),
                         "respuesta": respuesta
                     }
         
@@ -311,6 +326,7 @@ class MessageHandler:
                     }
             except Exception as e:
                 logger.error(f"Error durante el scraping: {e}")
+                logger.error(traceback.format_exc())
                 # En caso de error, caer en respuesta general
         
         # 4) En cualquier otro caso, respuesta general
@@ -318,7 +334,7 @@ class MessageHandler:
         
         # NUEVO: Verificar si el mensaje incluía una imagen procesada con OCR
         contexto_imagen = ""
-        if texto_extraido and media_urls:
+        if texto_extraido and media_urls and not texto_extraido.startswith("No se pudo"):
             contexto_imagen = f"El usuario envió una imagen que contiene el siguiente texto: {texto_extraido}"
             logger.info("Añadiendo contexto de imagen procesada")
         
