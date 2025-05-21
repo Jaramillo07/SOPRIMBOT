@@ -424,10 +424,14 @@ Mensaje: "{user_message}"
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
                 
-                # Formato para doble opción
+                # Incluir información de existencias disponibles
+                existencias_entrega = opcion_entrega_inmediata.get('existencia', '0')
+                existencias_precio = opcion_mejor_precio.get('existencia', '0')
+                
+                # Formato para doble opción con información de existencias
                 respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
-                respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
-                respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
+                respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata} (Disponible: {existencias_entrega})\n"
+                respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio} (Disponible: {existencias_precio})\n"
                 respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
                 
                 return respuesta
@@ -443,6 +447,10 @@ Mensaje: "{user_message}"
                 producto['precio'],
                 producto.get('fuente', '')
             )
+            
+            # Obtener existencias disponibles
+            existencias = producto.get('existencia', '0')
+            existencias_num = int(existencias) if existencias.isdigit() else 0
             
             # Ajustar precio según la cantidad solicitada
             if cantidad > 1:
@@ -463,10 +471,26 @@ Mensaje: "{user_message}"
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
             # Formato para opción única
-            respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
-            respuesta += f"Precio total: {precio_con_margen}\n"
-            respuesta += f"{mensaje_entrega}\n"
-            respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
+            # Si es de Base Interna, mostrar existencias y advertir si se pide más de lo disponible
+            if producto.get("fuente") == "Base Interna":
+                if cantidad > existencias_num and existencias_num > 0:
+                    # Advertir que no hay suficiente stock
+                    respuesta = f"⚠️ Atención: Solo tenemos {existencias} unidad(es) disponible(s).\n"
+                    respuesta += f"Precio por unidad: {precio_con_margen}\n"
+                    respuesta += f"{mensaje_entrega}\n"
+                    respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
+                else:
+                    # Respuesta normal con indicación de stock
+                    respuesta = f"✅ {cantidad} unidad(es) solicitada(s). (Disponible: {existencias} en stock)\n"
+                    respuesta += f"Precio total: {precio_con_margen}\n"
+                    respuesta += f"{mensaje_entrega}\n"
+                    respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
+            else:
+                # Formato estándar para otras fuentes
+                respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
+                respuesta += f"Precio total: {precio_con_margen}\n"
+                respuesta += f"{mensaje_entrega}\n"
+                respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
             
             return respuesta
                 
