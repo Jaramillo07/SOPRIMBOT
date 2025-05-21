@@ -54,23 +54,15 @@ class SheetsService:
                 'https://www.googleapis.com/auth/drive'
             ]
             
-            # Intentar usar credenciales predeterminadas primero (recomendado para producción)
+            # Usar Autenticación Predeterminada de Aplicaciones (ADC)
             try:
                 credentials, project = google.auth.default(scopes=scopes)
                 logger.info(f"Usando credenciales predeterminadas del proyecto: {project}")
             except Exception as e:
-                logger.warning(f"No se pudieron cargar credenciales predeterminadas: {e}")
-                
-                # Intentar con archivo de credenciales como respaldo
-                credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-                if not credentials_path:
-                    logger.error("No se encontraron credenciales predeterminadas ni GOOGLE_APPLICATION_CREDENTIALS")
-                    return
-                
-                credentials = service_account.Credentials.from_service_account_file(
-                    credentials_path, scopes=scopes
-                )
-                logger.info(f"Usando credenciales del archivo: {credentials_path}")
+                logger.error(f"Error al cargar credenciales predeterminadas: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return
             
             # Inicializar cliente y conectar a la hoja
             self.client = gspread.authorize(credentials)
