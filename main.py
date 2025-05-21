@@ -57,7 +57,7 @@ async def webhook(request: Request):
         msg_text = form.get("Body", "")
         phone_number = form.get("From", "")
         
-        # NUEVO: Detectar si hay una imagen
+        # ACTUALIZADO: Mejorar la detección de imágenes
         num_media = int(form.get("NumMedia", "0"))
         media_urls = []
         
@@ -68,11 +68,11 @@ async def webhook(request: Request):
                 media_url = form.get(f"MediaUrl{i}")
                 media_type = form.get(f"MediaContentType{i}")
                 
-                if media_url and "image" in media_type:
+                if media_url and media_type and "image" in media_type:
                     media_urls.append(media_url)
                     logger.info(f"Imagen recibida: {media_url}")
 
-        logger.info(f"Procesando mensaje: '{msg_text}' de {phone_number}")
+        logger.info(f"Procesando mensaje: '{msg_text}' de {phone_number} con {len(media_urls)} imágenes")
 
         # Llamar a tu lógica modificada para incluir procesamiento de imágenes
         result = await message_handler.procesar_mensaje(msg_text, phone_number, media_urls)
@@ -83,9 +83,11 @@ async def webhook(request: Request):
 
     except Exception as e:
         logger.error(f"Error procesando webhook: {e}")
+        # Imprimir el traceback completo para depuración
+        import traceback
+        logger.error(traceback.format_exc())
         # Devuelve 200 para que Twilio no reintente
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=200)
-
 
 @app.get("/")
 async def root():
