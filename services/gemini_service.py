@@ -1,7 +1,7 @@
 """
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
-Optimizado para consultas farmacéuticas sin mencionar nombres específicos de medicamentos.
+Actualizado para manejar información de la fuente del producto e historial de conversación.
 """
 import logging
 import re
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """
     Clase que proporciona métodos para interactuar con la API de Gemini.
-    Optimizada para consultas farmacéuticas con respuestas genéricas.
     """
     
     def __init__(self):
@@ -143,22 +142,15 @@ class GeminiService:
         """
         Determina si el mensaje del usuario es solo para indicar una cantidad
         (por ejemplo: "quiero 5", "dame 2", etc.)
-    
+        
         Args:
             user_message (str): Mensaje del usuario
-        
+            
         Returns:
             bool, int: (True/False, cantidad detectada o None)
         """
         mensaje_lower = user_message.lower().strip()
-    
-        # NUEVO: Verificar si hay números seguidos de unidades de medida (mg, ml, etc.)
-        # Patrón para buscar especificaciones de medicamentos (ej: 10.8mg, 500mg, 20ml, etc.)
-        patron_especificacion = r'\d+(?:\.\d+)?\s*(?:mg|ml|g|mcg|kg|oz|cc|ui|u\.i\.|mm)'
-        if re.search(patron_especificacion, mensaje_lower):
-            # Si encuentra números con unidades de medida, NO considerar como mensaje de cantidad
-            return False, None
-    
+        
         # Patrones para detectar mensajes de cantidad
         patrones_cantidad = [
             r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
@@ -166,7 +158,7 @@ class GeminiService:
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             r'^(?:son|serían|serian|serán|seran)\s+(\d+)$'
         ]
-    
+        
         # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_cantidad:
             match = re.search(patron, mensaje_lower)
@@ -174,9 +166,9 @@ class GeminiService:
                 cantidad = int(match.group(1))
                 logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
                 return True, cantidad
-            
+                
         return False, None
-    
+
     def _extraer_ultimo_producto(self, conversation_history):
         """
         Extrae el último producto mencionado en el historial de conversación.
@@ -277,12 +269,7 @@ Mensaje: "{user_message}"
             else:
                 final_message = user_message
             
-            # Modificado: Añadir instrucción para no mencionar nombres específicos de medicamentos
-            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\n"
-            prompt += "IMPORTANTE: No menciones nombres específicos de medicamentos en tu respuesta. "
-            prompt += "Refiérete a ellos siempre como 'producto', 'medicamento' o 'artículo'. "
-            prompt += f"\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
-            
+            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
             logger.info(f"Enviando prompt a Gemini para respuesta general. Mensaje: '{user_message[:50]}...'")
             
             response = self.model.generate_content(prompt)
@@ -294,19 +281,18 @@ Mensaje: "{user_message}"
             return response_text
         except Exception as e:
             logger.error(f"Error en generate_response: {e}")
-            return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo o contáctanos directamente."
+            return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
     
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
-        Optimizada para no mencionar nombres específicos de medicamentos.
-    
+        
         Args:
             user_message (str): Mensaje del usuario para procesar
             producto_info (dict): Diccionario con las opciones de productos disponibles
             additional_context (str): Contexto adicional opcional
             conversation_history (list, optional): Historial de conversación
-        
+            
         Returns:
             str: Respuesta generada para el usuario
         """
@@ -317,17 +303,22 @@ Mensaje: "{user_message}"
             # Si es una consulta explícita sobre entregas, dar respuesta directa
             if es_consulta_entrega:
                 logger.info("Detectada consulta sobre entrega - generando respuesta específica")
-            
-                # Si tiene opción de entrega inmediata (Sufarmed)
-                if producto_info.get("opcion_entrega_inmediata") and producto_info["opcion_entrega_inmediata"].get("fuente") == "Sufarmed":
-                    return "La entrega del producto se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: SF)"
+                
+                # Si tiene opción de entrega inmediata (Sufarmed o Base Interna)
+                if (producto_info.get("opcion_entrega_inmediata") and 
+                    (producto_info["opcion_entrega_inmediata"].get("fuente") == "Sufarmed" or 
+                     producto_info["opcion_entrega_inmediata"].get("fuente") == "Base Interna")):
+                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: SF)"
+                elif (producto_info.get("opcion_mejor_precio") and 
+                    producto_info["opcion_mejor_precio"].get("fuente") == "Base Interna"):
+                    return "La entrega se puede realizar hoy mismo. Para confirmar disponibilidad, por favor contáctanos directamente. (Origen: BI)"
                 else:
-                    return "La entrega del producto normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
-        
+                    return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
+            
             # Verificar si es una consulta sobre descuentos o promociones
             if self._es_consulta_descuento(user_message):
                 logger.info("Detectada consulta sobre descuentos o promociones")
-            
+                
                 # Lista de respuestas posibles para consultas de descuentos
                 respuestas_descuento = [
                     "Podemos ofrecer descuentos por volumen. Por favor, comunícate directamente para más detalles.",
@@ -336,60 +327,56 @@ Mensaje: "{user_message}"
                     "Contamos con descuentos especiales dependiendo del producto y cantidad. Comunícate directamente con nosotros para conocer las opciones disponibles.",
                     "Para información sobre descuentos y promociones, te invitamos a contactarnos directamente por teléfono o mensaje."
                 ]
-            
+                
                 # Seleccionar una respuesta basada en un hash simple del mensaje del usuario
                 indice = hash(user_message) % len(respuestas_descuento)
                 response_text = respuestas_descuento[indice]
-            
+                
                 logger.info(f"Respuesta de descuento seleccionada: '{response_text}'")
                 return response_text
-        
+            
             # Mensaje estándar para agregar al final
             mensaje_final = "Para más información o confirmar tu pedido, responde este mensaje."
-        
+            
             # Verificar si hay opciones disponibles
             if not producto_info.get("opcion_entrega_inmediata") and not producto_info.get("opcion_mejor_precio"):
                 logger.warning("No se encontraron opciones de producto disponibles")
-                return f"Lo siento, no tenemos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
-        
-            # Función para aplicar margen y formatear precio
-            def aplicar_margen_precio(precio_str):
+                return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
+            
+            # Función para aplicar margen y formatear precio - MODIFICADA
+            def aplicar_margen_precio(precio_str, fuente):
+                """Aplica margen solo si NO es de la Base Interna"""
                 try:
                     # Eliminar símbolos de moneda y convertir a float
                     precio_limpio = precio_str.replace('$', '').replace(',', '').strip()
                     precio_float = float(precio_limpio)
-                
-                    # Aplicar margen del 45%
+                    
+                    # NO aplicar margen si es de la base interna
+                    if fuente == "Base Interna":
+                        return f"${precio_float:.2f}"
+                    
+                    # Aplicar margen del 45% solo para productos externos
                     precio_con_margen = precio_float * 1.45
-                
+                    
                     # Formatear de vuelta a string con formato de moneda
                     return f"${precio_con_margen:.2f}"
                 except (ValueError, AttributeError):
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
-        
-            # MODIFICADO: Detectar cantidad en el mensaje del usuario
+            
+            # Detectar cantidad en el mensaje del usuario
             cantidad = 1  # Valor por defecto
-        
-            # NUEVO: Verificar primero si el mensaje contiene especificaciones de medicamentos
-            patron_especificacion = r'\d+(?:\.\d+)?\s*(?:mg|ml|g|mcg|kg|oz|cc|ui|u\.i\.|mm)'
-            if re.search(patron_especificacion, user_message.lower()):
-                # Si tiene especificaciones de medicamentos, NO buscar cantidad
-                logger.info(f"Detectada especificación de medicamento ({re.search(patron_especificacion, user_message.lower()).group(0)}), no se procesa como cantidad")
-                cantidad = 1
+            es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
+            if es_mensaje_cantidad and cantidad_detectada:
+                cantidad = cantidad_detectada
             else:
-                # Si no tiene especificaciones, proceder con detección normal de cantidad
-                es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
-                if es_mensaje_cantidad and cantidad_detectada:
-                    cantidad = cantidad_detectada
-                else:
-                    # Buscar cantidad en el texto completo
-                    cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
-                    if cantidad_match:
-                        cantidad = int(cantidad_match.group(1))
-        
+                # Si no es un mensaje simple de cantidad, buscar cantidad en el texto completo
+                cantidad_match = re.search(r'(\d+)\s*(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)?', user_message.lower())
+                if cantidad_match:
+                    cantidad = int(cantidad_match.group(1))
+            
             logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
-        
+            
             # Conversión de nombre de fuente a código interno
             fuente_mapping = {
                 "Sufarmed": "SF",
@@ -400,79 +387,88 @@ Mensaje: "{user_message}"
                 "NADRO": "ND",
                 "Base Interna": "BI"
             }
-        
+            
             # Si hay doble opción (entrega inmediata y mejor precio son diferentes)
             if producto_info.get("tiene_doble_opcion", False):
                 logger.info("Generando respuesta con doble opción")
-            
+                
                 opcion_entrega_inmediata = producto_info["opcion_entrega_inmediata"]
                 opcion_mejor_precio = producto_info["opcion_mejor_precio"]
-            
-                # Aplicar margen del 45% a los precios
-                precio_entrega_inmediata = aplicar_margen_precio(opcion_entrega_inmediata['precio'])
-                precio_mejor_precio = aplicar_margen_precio(opcion_mejor_precio['precio'])
-            
+                
+                # Aplicar margen según corresponda
+                precio_entrega_inmediata = aplicar_margen_precio(
+                    opcion_entrega_inmediata['precio'], 
+                    opcion_entrega_inmediata.get('fuente', '')
+                )
+                precio_mejor_precio = aplicar_margen_precio(
+                    opcion_mejor_precio['precio'],
+                    opcion_mejor_precio.get('fuente', '')
+                )
+                
                 # Ajustar precio según la cantidad solicitada
                 if cantidad > 1:
                     # Extraer valores numéricos
                     valor_entrega = float(precio_entrega_inmediata.replace('$', '').replace(',', ''))
                     valor_mejor = float(precio_mejor_precio.replace('$', '').replace(',', ''))
-                
+                    
                     # Multiplicar por la cantidad
                     total_entrega = valor_entrega * cantidad
                     total_mejor = valor_mejor * cantidad
-                
+                    
                     # Formatear de vuelta
                     precio_entrega_inmediata = f"${total_entrega:.2f}"
                     precio_mejor_precio = f"${total_mejor:.2f}"
-            
+                
                 # Obtener códigos de fuente para referencia interna
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
-            
-                # Formato para doble opción - MODIFICADO para no mencionar nombres específicos
-                respuesta = f"📦 {cantidad} unidad(es) del producto solicitado:\n"
+                
+                # Formato para doble opción
+                respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
                 respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
                 respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
-            
+                
                 return respuesta
-        
+            
             # Si solo hay una opción
             logger.info("Generando respuesta con una sola opción")
-        
+            
             # Determinar cuál opción está disponible
             producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
-        
-            # Aplicar margen del 45% al precio
-            precio_con_margen = aplicar_margen_precio(producto['precio'])
-        
+            
+            # Aplicar margen según corresponda
+            precio_con_margen = aplicar_margen_precio(
+                producto['precio'],
+                producto.get('fuente', '')
+            )
+            
             # Ajustar precio según la cantidad solicitada
             if cantidad > 1:
                 # Extraer valor numérico
                 valor = float(precio_con_margen.replace('$', '').replace(',', ''))
-            
+                
                 # Multiplicar por la cantidad
                 total = valor * cantidad
-            
+                
                 # Formatear de vuelta
                 precio_con_margen = f"${total:.2f}"
-        
-            # Verificar si es entrega inmediata (Sufarmed)
-            es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
+            
+            # Verificar si es entrega inmediata (Sufarmed o Base Interna)
+            es_entrega_inmediata = producto.get("fuente") == "Sufarmed" or producto.get("fuente") == "Base Interna"
             mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
-        
+            
             # Obtener código de fuente para referencia interna
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
-        
-            # Formato para opción única - MODIFICADO para no mencionar nombres específicos
-            respuesta = f"✅ {cantidad} unidad(es) del producto solicitado.\n"
+            
+            # Formato para opción única
+            respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
             respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
             respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
-        
-            return respuesta
             
+            return respuesta
+                
         except Exception as e:
             logger.error(f"Error en generate_product_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, intenta nuevamente más tarde."
