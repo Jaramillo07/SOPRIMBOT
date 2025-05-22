@@ -222,105 +222,92 @@ EJEMPLOS:
                 
         return False
         
-    def _es_mensaje_cantidad(self, user_message):
-        """Determina si el mensaje del usuario es solo para indicar una cantidad."""
-        if not user_message or not isinstance(user_message, str):
-            return False, None
-            
-        mensaje_lower = user_message.lower().strip()
-        
-        # Si el mensaje es solo un número, es casi seguro una cantidad
-        if mensaje_lower.isdigit():
-            cantidad = int(mensaje_lower)
-            logger.info(f"Mensaje es solo un número: {cantidad}")
-            return True, cantidad
-        
-        # NUEVO: Detectar palabras que implican cantidad total o múltiple
-        palabras_cantidad_especial = [
-            "ambas", "ambos", "todas", "todos", "las dos", "los dos", 
-            "las tres", "los tres", "las cuatro", "los cuatro",
-            "las cinco", "los cinco", "completo", "completa",
-            "todo", "toda", "total", "disponibles", "existentes"
-        ]
-        
-        # Verificar si el mensaje contiene solo palabras de cantidad especial
-        for palabra in palabras_cantidad_especial:
-            if palabra in mensaje_lower:
-                # Patrones para detectar uso de estas palabras como cantidad
-                patrones_especiales = [
-                    rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+{palabra}$',
-                    rf'^{palabra}$',
-                    rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*{palabra}$',
-                    rf'^(?:si|sí|ok|okay|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+){palabra}$'
-                ]
-                
-                for patron in patrones_especiales:
-                    if re.search(patron, mensaje_lower):
-                        logger.info(f"Detectado mensaje de cantidad especial: '{palabra}'")
-                        return True, palabra
-        
-        # Patrones extendidos para detectar mensajes de cantidad
-        patrones_cantidad = [
-            # Patrones simples: "quiero 5", "dame 2"
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(\d+)$',
-            
-            # Patrones con "los/las": "quiero los 2", "dame las 3"
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(?:los|las|le|el|la)\s+(\d+)$',
-            
-            # Patrones de confirmación: "ok, 2", "sí, 3"
-            r'^(?:ok|okay|vale|si|sí|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+)(\d+)$',
-            
-            # Solo cantidad + unidades: "2 cajas", "3 unidades"
-            r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
-            
-            # Confirmaciones con unidades: "sí, 2 cajas", "quiero 3 unidades"
-            r'^(?:si|sí|ok|okay|quiero|necesito|requiero|solicito)\s*(?:,\s*)?\s*(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
-            
-            # "Son 5", "serían 3"
-            r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
-            
-            # "Las 2" o "los 3" 
-            r'^(?:las|los)\s+(\d+)$',
-            
-            # "Con 2" o "con las 3"
-            r'^con\s+(?:las|los)?\s*(\d+)$',
-            
-            # NUEVO: Patrones con números escritos
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)$',
-        ]
-        
-        # Verificar si algún patrón coincide con el mensaje
-        for patron in patrones_cantidad:
-            match = re.search(patron, mensaje_lower)
-            if match:
-                cantidad_str = match.group(1)
-                # Convertir números escritos a dígitos
-                numeros_escritos = {
-                    "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
-                    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
-                }
-                
-                if cantidad_str in numeros_escritos:
-                    cantidad = numeros_escritos[cantidad_str]
-                else:
-                    cantidad = int(cantidad_str)
-                    
-                logger.info(f"Detectado mensaje de cantidad con patrón '{patron}': {cantidad}")
-                return True, cantidad
-        
-        # Buscar patrones más generales (si el mensaje es muy corto, probablemente sea una cantidad)
-        if len(mensaje_lower.split()) <= 3:  # Mensaje de 3 palabras o menos
-            # Buscar cualquier número en el mensaje corto
-            match = re.search(r'(\d+)', mensaje_lower)
-            if match:
-                # Verificar que este número no sea parte de un nombre de medicamento (ej. "B12", "COVID-19")
-                contexto = mensaje_lower.replace(match.group(0), "")
-                if not any(term in contexto for term in ["covid", "vitamina", "b12", "d3", "mg", "ml"]):
-                    cantidad = int(match.group(1))
-                    logger.info(f"Detectado número en mensaje corto: {cantidad}")
-                    return True, cantidad
-        
+    
+
+
+def _es_mensaje_cantidad(self, user_message):
+    """Determina si el mensaje del usuario es solo para indicar una cantidad."""
+    if not user_message or not isinstance(user_message, str):
         return False, None
+
+    mensaje_lower = user_message.lower().strip()
+
+    # ─── Evitar confundir dosis médicas con cantidad ───
+    # Si contiene un número seguido de mg, ml, mcg o g, asumimos que es dosificación
+    if re.search(r'\d+\s*(?:mg|ml|mcg|g)\b', mensaje_lower):
+        logger.info("Mensaje contiene unidades médicas, no es cantidad.")
+        return False, None
+
+    # Si el mensaje es solo un número, es casi seguro una cantidad
+    if mensaje_lower.isdigit():
+        cantidad = int(mensaje_lower)
+        logger.info(f"Mensaje es solo un número: {cantidad}")
+        return True, cantidad
+
+    # NUEVO: Detectar palabras que implican cantidad total o múltiple
+    palabras_cantidad_especial = [
+        "ambas", "ambos", "todas", "todos", "las dos", "los dos",
+        "las tres", "los tres", "las cuatro", "los cuatro",
+        "las cinco", "los cinco", "completo", "completa",
+        "todo", "toda", "total", "disponibles", "existentes"
+    ]
+    for palabra in palabras_cantidad_especial:
+        if palabra in mensaje_lower:
+            patrones_especiales = [
+                rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+{palabra}$',
+                rf'^{palabra}$',
+                rf'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*{palabra}$',
+                rf'^(?:si|sí|ok|okay|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+){palabra}$'
+            ]
+            for patron in patrones_especiales:
+                if re.search(patron, mensaje_lower):
+                    logger.info(f"Detectado mensaje de cantidad especial: '{palabra}'")
+                    return True, palabra
+
+    # Patrones extendidos para detectar mensajes de cantidad explícita
+    patrones_cantidad = [
+        r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(\d+)$',
+        r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame|requiero|solicito)\s+(?:los|las|le|el|la)\s+(\d+)$',
+        r'^(?:ok|okay|vale|si|sí|claro|correcto|exacto|bueno|bien)(?:\s*,\s*|\s+)(\d+)$',
+        r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
+        r'^(?:si|sí|ok|okay|quiero|necesito|requiero|solicito)\s*(?:,\s*)?\s*(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
+        r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
+        r'^(?:las|los)\s+(\d+)$',
+        r'^con\s+(?:las|los)?\s*(\d+)$',
+        r'^(?:quiero|necesito|dame|deme|ocupo|llevo|requiero|solicito)\s+(?:las|los)?\s*(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)$',
+    ]
+    for patron in patrones_cantidad:
+        match = re.search(patron, mensaje_lower)
+        if match:
+            cantidad_str = match.group(1)
+            numeros_escritos = {
+                "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+                "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+            }
+            cantidad = numeros_escritos.get(cantidad_str, int(cantidad_str) if cantidad_str.isdigit() else None)
+            logger.info(f"Detectado mensaje de cantidad con patrón '{patron}': {cantidad}")
+            return True, cantidad
+
+    # Mensajes muy cortos (<4 palabras) pueden ser una cantidad simple
+    if len(mensaje_lower.split()) <= 3:
+        match = re.search(r'(\d+)', mensaje_lower)
+        if match:
+            contexto = mensaje_lower.replace(match.group(0), "")
+            if not any(term in contexto for term in ["covid", "vitamina", "b12", "d3", "mg", "ml"]):
+                cantidad = int(match.group(1))
+                logger.info(f"Detectado número en mensaje corto: {cantidad}")
+                return True, cantidad
+
+    return False, None
+
+
+
+
+
+
+
+
+
 
     def _extraer_ultimo_producto(self, conversation_history):
         """Extrae el último producto mencionado en el historial de conversación."""
