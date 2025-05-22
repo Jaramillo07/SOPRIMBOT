@@ -1,6 +1,5 @@
 """
-MessageHandler actualizado que usa el GeminiService optimizado con clasificación inteligente.
-Mantiene toda la funcionalidad existente pero simplifica la lógica de detección.
+MessageHandler CON LOGS DE DEBUG para diagnosticar problema de precios.
 """
 import logging
 import traceback
@@ -21,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 class MessageHandler:
     """
-    Manejador de mensajes que usa el GeminiService optimizado con clasificación inteligente.
+    MessageHandler con logs de debug para diagnosticar precios.
     """
     
     def __init__(self):
         """Inicializa el manejador con sus servicios."""
-        logger.info("Inicializando MessageHandler con GeminiService optimizado")
+        logger.info("Inicializando MessageHandler con DEBUG para precios")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
@@ -166,6 +165,19 @@ class MessageHandler:
         producto_interno = None
         try:
             producto_interno = self.sheets_service.buscar_producto(ultimo_producto, threshold=0.7)
+            
+            # 🔍 DEBUG CRÍTICO - LOGS PARA PRODUCTO INTERNO
+            if producto_interno:
+                logger.error(f"🔍 PRODUCTO INTERNO DEBUG (CANTIDAD):")
+                logger.error(f"   - Nombre: {producto_interno.get('nombre')}")
+                logger.error(f"   - Precio: '{producto_interno.get('precio')}'")  
+                logger.error(f"   - Fuente: '{producto_interno.get('fuente')}'")
+                logger.error(f"   - Tipo precio: {type(producto_interno.get('precio'))}")
+                logger.error(f"   - Existencia: {producto_interno.get('existencia')}")
+                logger.error(f"   - Precio numérico: {producto_interno.get('precio_numerico')}")
+            else:
+                logger.error(f"🔍 NO SE ENCONTRÓ PRODUCTO INTERNO para: {ultimo_producto}")
+                
         except Exception as e:
             logger.error(f"Error buscando en base interna: {e}")
         
@@ -176,6 +188,10 @@ class MessageHandler:
                 "opcion_entrega_inmediata": None,
                 "tiene_doble_opcion": False
             }
+            
+            # 🔍 DEBUG - LOG DEL PRODUCT_INFO
+            logger.error(f"🔍 PRODUCT_INFO (CANTIDAD):")
+            logger.error(f"   - opcion_mejor_precio: {product_info['opcion_mejor_precio']}")
             
             # Usar la función completa del GeminiService
             respuesta = self.gemini_service.generate_product_response(
@@ -236,8 +252,24 @@ class MessageHandler:
         producto_interno = None
         try:
             producto_interno = self.sheets_service.buscar_producto(producto, threshold=0.7)
+            
+            # 🔍 DEBUG CRÍTICO - LOGS PARA PRODUCTO INTERNO
+            if producto_interno:
+                logger.error(f"🔍 PRODUCTO INTERNO DEBUG (BÚSQUEDA):")
+                logger.error(f"   - Nombre: {producto_interno.get('nombre')}")
+                logger.error(f"   - Precio: '{producto_interno.get('precio')}'")  
+                logger.error(f"   - Fuente: '{producto_interno.get('fuente')}'")
+                logger.error(f"   - Tipo precio: {type(producto_interno.get('precio'))}")
+                logger.error(f"   - Existencia: {producto_interno.get('existencia')}")
+                logger.error(f"   - Precio numérico: {producto_interno.get('precio_numerico')}")
+                logger.error(f"   - Farmacia: {producto_interno.get('nombre_farmacia')}")
+                logger.error(f"   - Estado: {producto_interno.get('estado')}")
+            else:
+                logger.error(f"🔍 NO SE ENCONTRÓ PRODUCTO INTERNO para: {producto}")
+                
         except Exception as e:
             logger.error(f"Error en base interna: {e}")
+            logger.error(traceback.format_exc())
         
         if producto_interno:
             logger.info(f"Producto encontrado en base interna: {producto_interno.get('nombre')}")
@@ -247,6 +279,14 @@ class MessageHandler:
                 "opcion_entrega_inmediata": None,
                 "tiene_doble_opcion": False
             }
+            
+            # 🔍 DEBUG - LOG DEL PRODUCT_INFO COMPLETO
+            logger.error(f"🔍 PRODUCT_INFO COMPLETO (BÚSQUEDA):")
+            logger.error(f"   - tiene_doble_opcion: {product_info['tiene_doble_opcion']}")
+            logger.error(f"   - opcion_entrega_inmediata: {product_info['opcion_entrega_inmediata']}")
+            logger.error(f"   - opcion_mejor_precio keys: {list(product_info['opcion_mejor_precio'].keys())}")
+            logger.error(f"   - opcion_mejor_precio fuente: '{product_info['opcion_mejor_precio'].get('fuente')}'")
+            logger.error(f"   - opcion_mejor_precio precio: '{product_info['opcion_mejor_precio'].get('precio')}'")
             
             # Usar la función completa del GeminiService
             respuesta = self.gemini_service.generate_product_response(
