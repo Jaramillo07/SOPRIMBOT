@@ -2,6 +2,7 @@
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
 Actualizado para manejar información de la fuente del producto e historial de conversación.
+VERSIÓN SIN REFERENCIAS MÉDICAS - Solo información comercial.
 """
 import logging
 import re
@@ -160,13 +161,19 @@ class GeminiService:
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
             r'^(?:por|para)\s+(\d+)\s+(?:productos?|unidades|piezas)?$',  # "Por 2 productos"
-            r'^(\d+)\s+(?:productos?|unidades?)$'  # "2 productos"
+            r'^(\d+)\s+(?:productos?|unidades?)$',  # "2 productos"
+            r'^(?:me\s+interesa\s+comprarlo|me\s+interesa\s+)\s*$'  # "me interesa comprarlo"
         ]
         
         # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_cantidad:
             match = re.search(patron, mensaje_lower)
             if match:
+                # Si es "me interesa comprarlo", devolver cantidad 1
+                if "me interesa" in mensaje_lower:
+                    logger.info(f"Detectado mensaje de interés: 1 unidad")
+                    return True, 1
+                    
                 cantidad = int(match.group(1))
                 # Validación: rechazar cantidades absurdas (probablemente son concentraciones)
                 if 1 <= cantidad <= 100:  # Cantidades razonables para compras
@@ -224,8 +231,8 @@ class GeminiService:
         Versión privada que usa Gemini para determinar si el mensaje pregunta por un medicamento.
         """
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
-Determina SI el siguiente mensaje está preguntando por un medicamento específico.
-- Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
+Determina SI el siguiente mensaje está preguntando por un producto específico.
+- Si SÍ, responde SOLO con el nombre del producto (p. ej. "paracetamol", "ibuprofeno").
 - Si NO, responde exactamente con la palabra GENERAL.
 Mensaje: "{user_message}"
 """
@@ -289,6 +296,7 @@ Mensaje: "{user_message}"
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
+        ACTUALIZADO: Sin referencias médicas - solo información comercial.
         
         Args:
             user_message (str): Mensaje del usuario para procesar
@@ -338,7 +346,7 @@ Mensaje: "{user_message}"
                 logger.info(f"Respuesta de descuento seleccionada: '{response_text}'")
                 return response_text
             
-            # Mensaje estándar para agregar al final
+            # ✅ MENSAJE ESTÁNDAR SIN REFERENCIAS MÉDICAS
             mensaje_final = "Para más información o confirmar tu pedido, responde este mensaje."
             
             # Verificar si hay opciones disponibles
@@ -429,7 +437,7 @@ Mensaje: "{user_message}"
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
                 
-                # Formato para doble opción
+                # ✅ FORMATO PARA DOBLE OPCIÓN - SIN REFERENCIAS MÉDICAS
                 respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
                 respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
@@ -460,7 +468,7 @@ Mensaje: "{user_message}"
                 # Formatear de vuelta
                 precio_con_margen = f"${total:.2f}"
             
-            # ✅ FIX: Formato especial para productos de Base Interna
+            # ✅ FIX: Formato especial para productos de Base Interna - SIN REFERENCIAS MÉDICAS
             if producto.get("fuente") == "Base Interna":
                 # Obtener stock disponible
                 stock_disponible = producto.get('existencia', '0')
@@ -473,7 +481,7 @@ Mensaje: "{user_message}"
                 except:
                     stock_text = "📦 Consultar disponibilidad"
                 
-                # Formato especial para Base Interna
+                # ✅ FORMATO ESPECIAL PARA BASE INTERNA - SOLO COMERCIAL
                 respuesta = f"✅ {cantidad} unidad(es) solicitada(s)\n"
                 respuesta += f"Precio total: {precio_con_margen}\n"
                 respuesta += f"🚚 Entrega hoy mismo\n"
@@ -489,7 +497,7 @@ Mensaje: "{user_message}"
             # Obtener código de fuente para referencia interna
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
-            # Formato para opción única (productos externos)
+            # ✅ FORMATO PARA OPCIÓN ÚNICA - SIN REFERENCIAS MÉDICAS
             respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
             respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
@@ -526,8 +534,8 @@ Mensaje: "{user_message}"
         
         # Si no es mensaje de cantidad o no se encontró producto previo, proceder normalmente
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
-Determina SI el siguiente mensaje está preguntando por un medicamento específico.
-- Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
+Determina SI el siguiente mensaje está preguntando por un producto específico.
+- Si SÍ, responde SOLO con el nombre del producto (p. ej. "paracetamol", "ibuprofeno").
 - Si NO, responde exactamente con la palabra GENERAL.
 Mensaje: "{user_message}"
 """
@@ -536,7 +544,7 @@ Mensaje: "{user_message}"
             
             # Detección local para medicamentos comunes
             medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
-                                    "loratadina", "antibiotico", "motrin", "ampicilina"]
+                                    "loratadina", "antibiotico", "motrin", "ampicilina", "rituximab"]
             mensaje_lower = user_message.lower()
             for med in medicamentos_comunes:
                 if med in mensaje_lower:
