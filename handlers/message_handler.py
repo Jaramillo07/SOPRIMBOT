@@ -227,7 +227,173 @@ class MessageHandler:
         historial = obtener_historial(clean_phone)
         logger.info(f"Recuperado historial para {clean_phone}: {len(historial)} turnos")
         
-        # Detectar si es consulta de medicamento
+        # ✅ NUEVA LÓGICA: PRIMERO analizar contexto con Gemini
+        contexto_analisis = self.gemini_service.analizar_contexto_con_gemini(mensaje, historial)
+        logger.info(f"Análisis de contexto Gemini: {contexto_analisis}")
+        
+        # Si Gemini detecta que es una consulta de CANTIDAD para un producto anterior
+        if (contexto_analisis.get("es_cantidad") and 
+            contexto_analisis.get("producto_contexto")):
+            
+            producto_del_contexto = contexto_analisis["producto_contexto"]
+            cantidad_solicitada = contexto_analisis.get("cantidad", 1)
+            
+            logger.info(f"🎯 DETECTADA CONSULTA DE CANTIDAD: {cantidad_solicitada} unidades de {producto_del_contexto}")
+            
+            # Buscar el producto del contexto en base interna
+            producto_interno = None
+            try:
+                logger.info(f"Buscando en base interna: {producto_del_contexto}")
+                producto_interno = self.sheets_service.buscar_producto(producto_del_contexto, threshold=0.7)
+            except Exception as e:
+                logger.error(f"Error al buscar en base interna: {e}")
+
+            if producto_interno:
+                logger.info(f"[DEBUG] PRODUCTO DEL CONTEXTO encontrado en base interna: {producto_interno.get('nombre', 'desconocido')}")
+                
+                try:
+                    # Preparar formato para la respuesta del bot
+                    product_info = {
+                        "opcion_mejor_precio": producto_interno,
+                        "opcion_entrega_inmediata": None,
+                        "tiene_doble_opcion": False
+                    }
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context=f"Cliente solicita {cantidad_solicitada} unidades del producto {producto_del_contexto} de nuestra base de datos interna.",
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    # Intentar enviar respuesta
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("status") == "error":
+                        logger.error("Error al enviar respuesta de cantidad producto interno")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result.get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    # IMPORTANTE: Retornar aquí para NO ejecutar los scrapers
+                    return {
+                        "success": True,
+                        "message_type": "cantidad_producto_interno",
+                        "producto": producto_del_contexto,
+                        "cantidad": cantidad_solicitada,
+                        "fuente": "Base Interna",
+                        "respuesta": respuesta
+                    }
+                except Exception as e:
+                    logger.error(f"Error al procesar cantidad producto interno: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continuar con scrapers si hay error procesando el producto interno
+            
+            # Si no está en base interna, buscar con scrapers
+            logger.info(f"[DEBUG] Producto del contexto NO encontrado en base interna, procediendo con scrapers: {producto_del_contexto}")
+            try:
+                # Llamar al servicio de scraping integrado
+                product_info = self.scraping_service.buscar_producto(producto_del_contexto)
+                
+                if product_info:
+                    logger.info(f"Información encontrada para cantidad de {producto_del_contexto} en {product_info.get('fuente', 'farmacia')}")
+                    
+                    # Añadir información sobre la farmacia para inclusión en la respuesta
+                    farmacia_nombre = product_info.get('nombre_farmacia', product_info.get('fuente', 'farmacia'))
+                    additional_context = f"Cliente solicita {cantidad_solicitada} unidades. Esta información proviene de {farmacia_nombre}."
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context=additional_context,
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    # Intentar enviar respuesta
+                    result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("text", {}).get("status") == "error":
+                        logger.error("Error al enviar respuesta de cantidad producto scraper")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result["text"].get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    return {
+                        "success": True,
+                        "message_type": "cantidad_producto_scraper",
+                        "producto": producto_del_contexto,
+                        "cantidad": cantidad_solicitada,
+                        "fuente": product_info.get('fuente', 'farmacia'),
+                        "tiene_imagen": bool(product_info.get("imagen")),
+                        "respuesta": respuesta
+                    }
+                else:
+                    logger.info(f"No se encontró información para cantidad de {producto_del_contexto} en ninguna farmacia")
+                    
+                    # Generar respuesta personalizada para producto no encontrado
+                    respuesta = f"Lo siento, no encontré disponibilidad de {producto_del_contexto} para {cantidad_solicitada} unidades. ¿Te gustaría que busque alternativas similares?"
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("status") == "error":
+                        logger.error("Error al enviar respuesta de cantidad producto no encontrado")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result.get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    return {
+                        "success": True,
+                        "message_type": "cantidad_producto_no_encontrado",
+                        "producto": producto_del_contexto,
+                        "cantidad": cantidad_solicitada,
+                        "respuesta": respuesta
+                    }
+            except Exception as e:
+                logger.error(f"Error durante el scraping para cantidad: {e}")
+                logger.error(traceback.format_exc())
+                
+                # Respuesta de error genérica
+                respuesta = f"Lo siento, hubo un problema técnico al buscar {producto_del_contexto} para {cantidad_solicitada} unidades. Por favor, intenta nuevamente."
+                guardar_interaccion(clean_phone, mensaje, respuesta)
+                result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                
+                return {
+                    "success": False,
+                    "message_type": "error_scraping_cantidad",
+                    "error": str(e),
+                    "producto": producto_del_contexto,
+                    "cantidad": cantidad_solicitada,
+                    "respuesta": respuesta
+                }
+        
+        # ✅ Si NO es consulta de cantidad, continuar con el flujo normal
+        # Detectar si es consulta de medicamento NUEVO
         es_consulta_medicamento, producto_detectado = self.detectar_consulta_medicamento(mensaje)
         
         # Si no detectamos localmente, intentar con Gemini
@@ -241,19 +407,19 @@ class MessageHandler:
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
                     es_consulta_medicamento = True
                     producto_detectado = producto_detectado_gemini
-                    logger.info(f"Gemini detectó medicamento: {producto_detectado}")
+                    logger.info(f"Gemini detectó medicamento NUEVO: {producto_detectado}")
             except Exception as e:
                 logger.error(f"Error al detectar producto con Gemini: {e}")
         
-        # Si es consulta de medicamento, primero buscamos en Google Sheets
+        # Si es consulta de medicamento NUEVO, primero buscamos en Google Sheets
         if es_consulta_medicamento and producto_detectado:
-            logger.info(f"Iniciando búsqueda para: {producto_detectado}")
+            logger.info(f"Iniciando búsqueda para producto NUEVO: {producto_detectado}")
             
             # PRIMERO: Buscar en la base interna (Google Sheets)
             # IMPORTANTE: Esta llamada debe estar FUERA de cualquier bloque try/except
             producto_interno = None
             try:
-                logger.info(f"[DEBUG] Buscando producto en base interna: '{producto_detectado}'")
+                logger.info(f"[DEBUG] Buscando producto NUEVO en base interna: '{producto_detectado}'")
                 producto_interno = self.sheets_service.buscar_producto(producto_detectado, threshold=0.7)
                 logger.info(f"[DEBUG] Resultado de búsqueda interna: {producto_interno}")
             except Exception as e:
@@ -263,7 +429,7 @@ class MessageHandler:
             
             # Si encontramos el producto en la base interna, procesarlo FUERA del bloque try/except de búsqueda
             if producto_interno:
-                logger.info(f"[DEBUG] ÉXITO: Producto encontrado en base interna: {producto_interno.get('nombre', 'desconocido')}")
+                logger.info(f"[DEBUG] ÉXITO: Producto NUEVO encontrado en base interna: {producto_interno.get('nombre', 'desconocido')}")
                 
                 try:
                     # Preparar formato para la respuesta del bot
@@ -319,7 +485,7 @@ class MessageHandler:
                     }
             
             # SOLO si no encuentra en la base interna o hay error, continuar con los scrapers
-            logger.info(f"[DEBUG] Producto NO encontrado en base interna, procediendo con scrapers: {producto_detectado}")
+            logger.info(f"[DEBUG] Producto NUEVO NO encontrado en base interna, procediendo con scrapers: {producto_detectado}")
             try:
                 # Llamar al servicio de scraping integrado
                 product_info = self.scraping_service.buscar_producto(producto_detectado)
