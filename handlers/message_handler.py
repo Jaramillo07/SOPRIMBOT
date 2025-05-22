@@ -233,7 +233,11 @@ class MessageHandler:
         # Si no detectamos localmente, intentar con Gemini
         if not es_consulta_medicamento or not producto_detectado:
             try:
-                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
+                # ✅ FIX: Pasar historial para contexto de conversación
+                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(
+                    mensaje, 
+                    conversation_history=historial
+                )
                 if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
                     es_consulta_medicamento = True
                     producto_detectado = producto_detectado_gemini
