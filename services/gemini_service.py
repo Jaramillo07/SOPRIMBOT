@@ -142,6 +142,7 @@ class GeminiService:
         """
         Determina si el mensaje del usuario es solo para indicar una cantidad
         (por ejemplo: "quiero 5", "dame 2", etc.)
+        MEJORADO: No confunde números de medicamentos con cantidades.
         
         Args:
             user_message (str): Mensaje del usuario
@@ -151,12 +152,15 @@ class GeminiService:
         """
         mensaje_lower = user_message.lower().strip()
         
-        # Patrones para detectar mensajes de cantidad
+        # Patrones ESPECÍFICOS para detectar mensajes de cantidad
+        # Evitan confundir "500 MG" con "quiero 500"
         patrones_cantidad = [
             r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
-            r'^(\d+)$',
+            r'^(\d+)$',  # Solo número
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
-            r'^(?:son|serían|serian|serán|seran)\s+(\d+)$'
+            r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
+            r'^(?:por|para)\s+(\d+)\s+(?:productos?|unidades|piezas)?$',  # "Por 2 productos"
+            r'^(\d+)\s+(?:productos?|unidades?)$'  # "2 productos"
         ]
         
         # Verificar si algún patrón coincide con el mensaje
@@ -164,8 +168,13 @@ class GeminiService:
             match = re.search(patron, mensaje_lower)
             if match:
                 cantidad = int(match.group(1))
-                logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
-                return True, cantidad
+                # Validación: rechazar cantidades absurdas (probablemente son concentraciones)
+                if 1 <= cantidad <= 100:  # Cantidades razonables para compras
+                    logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
+                    return True, cantidad
+                else:
+                    logger.info(f"Cantidad rechazada por ser muy alta: {cantidad} (probablemente concentración)")
+                    return False, None
                 
         return False, None
 
@@ -182,37 +191,31 @@ class GeminiService:
         if not conversation_history:
             return None
             
-        # Buscar en los últimos 3 mensajes del bot (son respuestas a consultas de producto)
-        mensajes_bot = [msg for msg in conversation_history if msg.get("role") == "bot"][-3:]
+        # Buscar en los últimos 4 mensajes (2 turnos)
+        ultimos_mensajes = conversation_history[-4:]
         
-        for msg in reversed(mensajes_bot):
+        # Recorrer desde el más reciente hacia atrás
+        for msg in reversed(ultimos_mensajes):
+            role = msg.get("role", "")
             content = msg.get("content", "")
-            # Buscar patrones típicos de respuestas sobre productos
-            if "Precio:" in content or "Entrega" in content or "opciones:" in content:
-                # Buscar el último mensaje del usuario antes de esta respuesta
-                indice_bot = conversation_history.index(msg)
-                for i in range(indice_bot-1, -1, -1):
-                    if conversation_history[i].get("role") == "user":
-                        # Analizar este mensaje para extraer el producto
-                        user_msg = conversation_history[i].get("content", "")
-                        # Buscar nombres de productos comunes
-                        productos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
-                                            "loratadina", "antibiotico", "motrin", "ampicilina"]
-                        for producto in productos_comunes:
-                            if producto in user_msg.lower():
-                                logger.info(f"Producto extraído del historial: {producto}")
-                                return producto
-                        
-                        # Si no encontramos un producto conocido, intentar detectarlo con Gemini
-                        try:
-                            tipo, producto = self._detectar_producto_con_gemini(user_msg)
-                            if tipo == "consulta_producto" and producto:
-                                logger.info(f"Producto extraído con Gemini: {producto}")
-                                return producto
-                        except Exception as e:
-                            logger.error(f"Error al extraer producto con Gemini: {e}")
-                        
-                        break
+            
+            # Si es un mensaje del bot que menciona precio/entrega, extraer producto del contexto
+            if role == "assistant" and content:
+                if any(word in content.lower() for word in ["precio", "entrega", "disponible", "unidad"]):
+                    # Buscar el mensaje del usuario anterior
+                    indice_actual = conversation_history.index(msg)
+                    for i in range(indice_actual-1, -1, -1):
+                        if conversation_history[i].get("role") == "user":
+                            user_msg = conversation_history[i].get("content", "")
+                            # Intentar extraer producto con detección local
+                            try:
+                                tipo, producto = self._detectar_producto_con_gemini(user_msg)
+                                if tipo == "consulta_producto" and producto:
+                                    logger.info(f"Producto extraído del historial: {producto}")
+                                    return producto
+                            except Exception as e:
+                                logger.error(f"Error al extraer producto con Gemini: {e}")
+                            break
         
         return None
         
@@ -364,17 +367,19 @@ Mensaje: "{user_message}"
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
             
-            # Detectar cantidad en el mensaje del usuario - MODIFICADO
+            # Detectar cantidad en el mensaje del usuario - MEJORADO
             cantidad = 1  # Valor por defecto
             es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
             if es_mensaje_cantidad and cantidad_detectada:
                 cantidad = cantidad_detectada
             else:
-                # VERSIÓN CORREGIDA: Sólo buscar números seguidos explícitamente por palabras de unidades
-                # para evitar confundir números en nombres de productos con cantidades
+                # ✅ FIX: Solo buscar cantidades con palabras de unidad específicas
+                # No confundir "500 MG" con cantidad
                 cantidad_match = re.search(r'(\d+)\s+(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)', user_message.lower())
                 if cantidad_match:
-                    cantidad = int(cantidad_match.group(1))
+                    cantidad_temp = int(cantidad_match.group(1))
+                    if 1 <= cantidad_temp <= 100:  # Validar rango razonable
+                        cantidad = cantidad_temp
             
             logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
             
@@ -455,14 +460,36 @@ Mensaje: "{user_message}"
                 # Formatear de vuelta
                 precio_con_margen = f"${total:.2f}"
             
-            # Verificar si es entrega inmediata (Sufarmed o Base Interna)
-            es_entrega_inmediata = producto.get("fuente") == "Sufarmed" or producto.get("fuente") == "Base Interna"
+            # ✅ FIX: Formato especial para productos de Base Interna
+            if producto.get("fuente") == "Base Interna":
+                # Obtener stock disponible
+                stock_disponible = producto.get('existencia', '0')
+                try:
+                    stock_num = int(float(stock_disponible))
+                    if stock_num > 0:
+                        stock_text = f"📦 Tenemos {stock_num} unidades disponibles"
+                    else:
+                        stock_text = "📦 Consultar disponibilidad"
+                except:
+                    stock_text = "📦 Consultar disponibilidad"
+                
+                # Formato especial para Base Interna
+                respuesta = f"✅ {cantidad} unidad(es) solicitada(s)\n"
+                respuesta += f"Precio total: {precio_con_margen}\n"
+                respuesta += f"🚚 Entrega hoy mismo\n"
+                respuesta += f"{stock_text}\n"
+                respuesta += f"{mensaje_final} (Origen: BI)"
+                
+                return respuesta
+            
+            # Verificar si es entrega inmediata (Sufarmed)
+            es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
             mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
             
             # Obtener código de fuente para referencia interna
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
-            # Formato para opción única
+            # Formato para opción única (productos externos)
             respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
             respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
