@@ -1,8 +1,7 @@
 """
 Servicio para interactuar con la API de Gemini.
-Encapsula toda la lógica relacionada con la generación de respuestas de IA.
-Actualizado para manejar información de la fuente del producto e historial de conversación.
-VERSIÓN FINAL: Sin referencias médicas + detección mejorada de cantidades + mejor extracción de productos.
+VERSIÓN: GEMINI GESTIONA CONTEXTOS COMPLETOS
+Gemini entiende y maneja todo el contexto de la conversación inteligentemente.
 """
 import logging
 import re
@@ -19,6 +18,7 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """
     Clase que proporciona métodos para interactuar con la API de Gemini.
+    GEMINI gestiona contextos completos.
     """
     
     def __init__(self):
@@ -59,19 +59,17 @@ class GeminiService:
             role = turn.get("role", "")
             content = turn.get("content", "")
             if role and content:
-                formatted_history += f"{role}: {content} "
+                if role == "user":
+                    formatted_history += f"Usuario: {content}\n"
+                elif role == "assistant":
+                    formatted_history += f"Bot: {content}\n"
         
         return formatted_history.strip()
     
     def _es_consulta_descuento(self, user_message):
         """
         Determina si el mensaje del usuario está relacionado con descuentos o promociones.
-        
-        Args:
-            user_message (str): Mensaje del usuario
-            
-        Returns:
-            bool: True si es una consulta de descuento, False si no
+        MANTIENE REGEX para consultas simples de descuento.
         """
         mensaje_lower = user_message.lower()
         
@@ -88,31 +86,12 @@ class GeminiService:
             if palabra in mensaje_lower:
                 return True
                 
-        # Patrones comunes de preguntas sobre descuentos
-        patrones_descuento = [
-            r'(?:hay|tienen|manejan|aplican?)\s+(?:algún|algun|alguna)?\s*(?:descuento|rebaja|promoción|promocion|oferta)',
-            r'(?:cuánto|cuanto)\s+(?:si|por)\s+(?:compro|llevo)\s+(?:varias|más|mas|muchas)',
-            r'(?:precio)\s+(?:por|de)\s+(?:mayoreo|volumen|cantidad)',
-            r'(?:más|mas)\s+(?:barato|económico|economico)',
-            r'(?:puedes?|podrías?|podrias?)\s+(?:mejorar|bajar|reducir)\s+(?:el|ese)?\s*precio'
-        ]
-        
-        # Verificar si algún patrón coincide con el mensaje
-        for patron in patrones_descuento:
-            if re.search(patron, mensaje_lower):
-                return True
-                
         return False
     
     def _es_consulta_entrega_hoy(self, user_message):
         """
-        Determina si el mensaje del usuario hace referencia a la entrega o disponibilidad inmediata (hoy).
-        
-        Args:
-            user_message (str): Mensaje del usuario
-            
-        Returns:
-            bool: True si es una consulta de entrega para hoy, False si no
+        Determina si el mensaje del usuario hace referencia a la entrega inmediata.
+        MANTIENE REGEX para consultas simples de entrega.
         """
         mensaje_lower = user_message.lower()
         
@@ -122,13 +101,8 @@ class GeminiService:
             r'entrega\s+(?:para|de)?\s*hoy',
             r'disponibilidad\s+(?:para|de)?\s*hoy',
             r'recib(?:o|ir)\s+hoy',
-            r'(?:nada|algo)\s+para\s+(?:el\s+)?(?:día\s+)?(?:de\s+)?hoy',
-            r'tienen\s+(?:algo|nada)\s+(?:para|de)\s+hoy',
-            r'puedo\s+recibir\s+hoy',
-            r'para\s+(?:el\s+)?día\s+de\s+hoy',
             r'(?:hoy\s+(?:mismo|ya))',
-            r'(?:ya|ahorita|inmediata(?:mente)?)\s+(?:mismo)?',
-            r'(?:hay\s+entrega\s+(?:el\s+)?mismo\s+día)'
+            r'(?:ya|ahorita|inmediata(?:mente)?)'
         ]
         
         # Verificar si algún patrón coincide con el mensaje
@@ -138,165 +112,102 @@ class GeminiService:
                 return True
                 
         return False
-        
-    def _es_mensaje_cantidad(self, user_message):
+    
+    def _analizar_contexto_con_gemini(self, user_message, conversation_history):
         """
-        Determina si el mensaje del usuario es solo para indicar una cantidad
-        (por ejemplo: "quiero 5", "dame 2", "ok quiero 5 unidades", etc.)
-        MEJORADO: No confunde números de medicamentos con cantidades.
+        ✅ NUEVO: Usa Gemini para analizar el contexto completo de la conversación.
+        Determina si es consulta de cantidad y extrae el producto del contexto.
         
         Args:
-            user_message (str): Mensaje del usuario
-            
-        Returns:
-            bool, int: (True/False, cantidad detectada o None)
-        """
-        mensaje_lower = user_message.lower().strip()
-        
-        # Patrones ESPECÍFICOS para detectar mensajes de cantidad
-        # Evitan confundir "500 MG" con "quiero 500"
-        patrones_cantidad = [
-            # Patrones básicos
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
-            r'^(\d+)$',  # Solo número
-            r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
-            r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
-            r'^(?:por|para)\s+(\d+)\s+(?:productos?|unidades|piezas)?$',  # "Por 2 productos"
-            r'^(\d+)\s+(?:productos?|unidades?)$',  # "2 productos"
-            
-            # ✅ NUEVOS PATRONES para casos como "ok, quiero 5 unidades!"
-            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)(?:\s+(?:unidades|piezas|productos?))?$',
-            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(\d+)\s+(?:unidades|piezas|productos?)$',
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)\s+(?:unidades|piezas|productos?)!?$',
-            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)$',
-            
-            # Casos con signos de exclamación
-            r'^(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)\s*!+$',
-            r'^(\d+)\s+(?:unidades|piezas|productos?)\s*!+$',
-            
-            # Mensaje de interés sin cantidad específica
-            r'^(?:me\s+interesa\s+comprarlo|me\s+interesa|está\s+bien|perfecto|ok)$'  # "me interesa comprarlo"
-        ]
-        
-        # Verificar si algún patrón coincide con el mensaje
-        for patron in patrones_cantidad:
-            match = re.search(patron, mensaje_lower)
-            if match:
-                # Si es "me interesa comprarlo" o similar, devolver cantidad 1
-                if any(word in mensaje_lower for word in ["me interesa", "está bien", "perfecto"]) and not any(char.isdigit() for char in mensaje_lower):
-                    logger.info(f"Detectado mensaje de interés: 1 unidad")
-                    return True, 1
-                
-                # Si hay grupo de captura (número)
-                if match.groups():
-                    cantidad = int(match.group(1))
-                    # Validación: rechazar cantidades absurdas (probablemente son concentraciones)
-                    if 1 <= cantidad <= 100:  # Cantidades razonables para compras
-                        logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
-                        return True, cantidad
-                    else:
-                        logger.info(f"Cantidad rechazada por ser muy alta: {cantidad} (probablemente concentración)")
-                        return False, None
-                else:
-                    # Patrón sin captura de número (como "me interesa")
-                    logger.info(f"Detectado mensaje de interés: 1 unidad")
-                    return True, 1
-                    
-        return False, None
-
-    def _extraer_ultimo_producto(self, conversation_history):
-        """
-        Extrae el último producto mencionado en el historial de conversación.
-        MEJORADO: Busca mejor en respuestas del bot.
-        
-        Args:
+            user_message (str): Mensaje actual del usuario
             conversation_history (list): Historial de conversación
             
         Returns:
-            str: Último producto mencionado o None si no se encuentra
+            dict: {
+                "es_cantidad": bool,
+                "cantidad": int or None,
+                "producto_contexto": str or None,
+                "tipo_consulta": str
+            }
         """
         if not conversation_history:
-            return None
+            return {
+                "es_cantidad": False,
+                "cantidad": None,
+                "producto_contexto": None,
+                "tipo_consulta": "nueva_consulta"
+            }
+        
+        # Formatear historial para Gemini
+        historial_formateado = self._format_conversation_history(conversation_history)
+        
+        prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
+
+ANÁLISIS DE CONTEXTO:
+Analiza el siguiente historial de conversación y el mensaje actual del usuario.
+
+HISTORIAL PREVIO:
+{historial_formateado}
+
+MENSAJE ACTUAL DEL USUARIO: "{user_message}"
+
+Tu tarea es determinar:
+1. ¿Es este mensaje una indicación de CANTIDAD para un producto ya mencionado?
+2. Si es cantidad, ¿cuántas unidades quiere?
+3. ¿Cuál es el producto del contexto anterior?
+
+RESPONDE EXACTAMENTE en este formato JSON:
+{{
+    "es_cantidad": true/false,
+    "cantidad": número_entero_o_null,
+    "producto_contexto": "nombre_del_producto_o_null",
+    "tipo_consulta": "cantidad" o "producto_nuevo" o "general"
+}}
+
+EJEMPLOS:
+- Si dice "quiero 5 unidades" después de preguntar por paracetamol → {{"es_cantidad": true, "cantidad": 5, "producto_contexto": "paracetamol", "tipo_consulta": "cantidad"}}
+- Si dice "tienes ibuprofeno?" → {{"es_cantidad": false, "cantidad": null, "producto_contexto": null, "tipo_consulta": "producto_nuevo"}}
+- Si dice "hola" → {{"es_cantidad": false, "cantidad": null, "producto_contexto": null, "tipo_consulta": "general"}}
+"""
+
+        try:
+            logger.info(f"Analizando contexto con Gemini para: '{user_message}'")
+            response = self.model.generate_content(prompt)
+            resp_text = response.text.strip()
             
-        # Buscar en los últimos 6 mensajes (3 turnos) para tener más contexto
-        ultimos_mensajes = conversation_history[-6:]
-        
-        # Recorrer desde el más reciente hacia atrás
-        for msg in reversed(ultimos_mensajes):
-            role = msg.get("role", "")
-            content = msg.get("content", "")
+            # Extraer JSON de la respuesta
+            import json
+            import re
             
-            # Si es un mensaje del bot que menciona información de producto
-            if role == "assistant" and content:
-                # Buscar indicadores de respuesta de producto
-                if any(word in content.lower() for word in ["precio", "entrega", "disponible", "unidad", "tenemos", "origen:"]):
-                    # Buscar el mensaje del usuario que desencadenó esta respuesta
-                    indice_actual = None
-                    try:
-                        indice_actual = conversation_history.index(msg)
-                    except ValueError:
-                        # Si no encuentra el índice, continuar con el siguiente mensaje
-                        continue
-                        
-                    # Buscar el mensaje del usuario anterior
-                    for i in range(indice_actual-1, max(-1, indice_actual-3), -1):
-                        if i >= 0 and conversation_history[i].get("role") == "user":
-                            user_msg = conversation_history[i].get("content", "")
-                            
-                            # ✅ MEJORADO: Buscar productos directamente en el mensaje del usuario
-                            # Lista expandida de productos comunes
-                            productos_comunes = [
-                                "paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
-                                "loratadina", "antibiotico", "motrin", "ampicilina", 
-                                "rituximab", "oxazanov", "ifosfamida", "amoxicilina",
-                                "azitromicina", "cefalexina", "ciprofloxacino"
-                            ]
-                            
-                            user_msg_lower = user_msg.lower()
-                            for producto in productos_comunes:
-                                if producto in user_msg_lower:
-                                    logger.info(f"Producto extraído del historial (directo): {producto}")
-                                    return producto
-                            
-                            # ✅ NUEVO: Extraer nombres más complejos usando regex
-                            # Buscar palabras que parezcan nombres de productos farmacéuticos
-                            # Patrones: PALABRA + MG/G/ML + PALABRA, o nombres en mayúsculas
-                            patrones_productos = [
-                                r'([A-Z][A-Z]{2,}(?:\s+[A-Z][A-Z]+)*)',  # Palabras en mayúsculas como "OXAZANOV IFOSFAMIDA"
-                                r'([a-zA-Z]+(?:\s+\d+\s*(?:mg|g|ml|mcg))+)',  # producto + concentración
-                                r'([a-zA-Z]{4,}(?:\s+[a-zA-Z]{4,})*)',  # Palabras largas (nombres de productos)
-                            ]
-                            
-                            for patron in patrones_productos:
-                                matches = re.findall(patron, user_msg, re.IGNORECASE)
-                                for match in matches:
-                                    # Filtrar palabras comunes que no son productos
-                                    palabras_excluir = ["tienes", "tienen", "disponible", "precio", "cuanto", "cuesta", "para", "donde"]
-                                    match_lower = match.lower()
-                                    
-                                    if (len(match) > 4 and 
-                                        not any(excluir in match_lower for excluir in palabras_excluir) and
-                                        not match_lower.startswith("para")):
-                                        logger.info(f"Producto extraído del historial (regex): {match}")
-                                        return match
-                            
-                            # ✅ ÚLTIMO RECURSO: Usar Gemini para extraer el producto
-                            try:
-                                tipo, producto = self._detectar_producto_con_gemini(user_msg)
-                                if tipo == "consulta_producto" and producto:
-                                    logger.info(f"Producto extraído del historial (Gemini): {producto}")
-                                    return producto
-                            except Exception as e:
-                                logger.error(f"Error al extraer producto con Gemini: {e}")
-                            
-                            # Si llegamos aquí, salir del bucle de mensajes de usuario
-                            break
-        
-        return None
-        
+            # Buscar el JSON en la respuesta
+            json_match = re.search(r'\{.*\}', resp_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                resultado = json.loads(json_str)
+                
+                logger.info(f"Análisis de contexto: {resultado}")
+                return resultado
+            else:
+                logger.warning(f"No se pudo extraer JSON de la respuesta: {resp_text}")
+                return {
+                    "es_cantidad": False,
+                    "cantidad": None,
+                    "producto_contexto": None,
+                    "tipo_consulta": "general"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error en análisis de contexto con Gemini: {e}")
+            return {
+                "es_cantidad": False,
+                "cantidad": None,
+                "producto_contexto": None,
+                "tipo_consulta": "general"
+            }
+    
     def _detectar_producto_con_gemini(self, user_message):
         """
-        Versión privada que usa Gemini para determinar si el mensaje pregunta por un medicamento.
+        Usa Gemini para determinar si el mensaje pregunta por un producto específico.
         """
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Determina SI el siguiente mensaje está preguntando por un producto específico.
@@ -322,18 +233,11 @@ Mensaje: "{user_message}"
     def generate_response(self, user_message, conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
-        
-        Args:
-            user_message (str): Mensaje del usuario para procesar
-            conversation_history (list, optional): Historial de conversación
-            
-        Returns:
-            str: Respuesta generada por Gemini
         """
         try:
             # Verificar si es una consulta sobre entrega para hoy
             if self._es_consulta_entrega_hoy(user_message):
-                logger.info("Detectada consulta sobre entrega para HOY - respuesta directa sin consultar a Gemini")
+                logger.info("Detectada consulta sobre entrega para HOY - respuesta directa")
                 return "La entrega normalmente se realiza al día siguiente, sujeta a disponibilidad. Para confirmar stock o programar la entrega, por favor contáctanos directamente. (Origen: DF)"
             
             # Formatear el historial de conversación si está disponible
@@ -341,20 +245,14 @@ Mensaje: "{user_message}"
             if conversation_history:
                 context = self._format_conversation_history(conversation_history)
                 logger.info(f"Incluyendo historial de conversación ({len(conversation_history)} turnos)")
-                
-                # Añadir el mensaje actual al contexto
-                final_message = f"{context} user: {user_message}"
-            else:
-                final_message = user_message
             
-            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nContexto de conversación: {context}\n\nMensaje del cliente: {user_message}"
+            prompt = f"{GEMINI_SYSTEM_INSTRUCTIONS}\n\nContexto de conversación:\n{context}\n\nMensaje del cliente: {user_message}"
             logger.info(f"Enviando prompt a Gemini para respuesta general. Mensaje: '{user_message[:50]}...'")
             
             response = self.model.generate_content(prompt)
             response_text = response.text.strip()
             
             logger.info(f"Respuesta recibida de Gemini ({len(response_text)} caracteres)")
-            logger.debug(f"Respuesta: {response_text[:100]}...")
             
             return response_text
         except Exception as e:
@@ -364,16 +262,7 @@ Mensaje: "{user_message}"
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
-        ACTUALIZADO: Sin referencias médicas - solo información comercial.
-        
-        Args:
-            user_message (str): Mensaje del usuario para procesar
-            producto_info (dict): Diccionario con las opciones de productos disponibles
-            additional_context (str): Contexto adicional opcional
-            conversation_history (list, optional): Historial de conversación
-            
-        Returns:
-            str: Respuesta generada para el usuario
+        ACTUALIZADO: Usa análisis de contexto con Gemini para determinar cantidad.
         """
         try:
             # Verificar si es una consulta sobre entregas
@@ -398,7 +287,6 @@ Mensaje: "{user_message}"
             if self._es_consulta_descuento(user_message):
                 logger.info("Detectada consulta sobre descuentos o promociones")
                 
-                # Lista de respuestas posibles para consultas de descuentos
                 respuestas_descuento = [
                     "Podemos ofrecer descuentos por volumen. Por favor, comunícate directamente para más detalles.",
                     "Los descuentos pueden aplicar dependiendo del producto o la cantidad. Llámanos para confirmarlo.",
@@ -407,14 +295,12 @@ Mensaje: "{user_message}"
                     "Para información sobre descuentos y promociones, te invitamos a contactarnos directamente por teléfono o mensaje."
                 ]
                 
-                # Seleccionar una respuesta basada en un hash simple del mensaje del usuario
                 indice = hash(user_message) % len(respuestas_descuento)
                 response_text = respuestas_descuento[indice]
                 
                 logger.info(f"Respuesta de descuento seleccionada: '{response_text}'")
                 return response_text
             
-            # ✅ MENSAJE ESTÁNDAR SIN REFERENCIAS MÉDICAS
             mensaje_final = "Para más información o confirmar tu pedido, responde este mensaje."
             
             # Verificar si hay opciones disponibles
@@ -422,42 +308,32 @@ Mensaje: "{user_message}"
                 logger.warning("No se encontraron opciones de producto disponibles")
                 return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
-            # Función para aplicar margen y formatear precio - MODIFICADA
+            # ✅ USAR GEMINI PARA DETECTAR CANTIDAD EN CONTEXTO
+            contexto_analisis = self._analizar_contexto_con_gemini(user_message, conversation_history)
+            
+            # Determinar cantidad basada en análisis de Gemini
+            cantidad = 1  # Valor por defecto
+            if contexto_analisis.get("es_cantidad") and contexto_analisis.get("cantidad"):
+                cantidad = contexto_analisis["cantidad"]
+                logger.info(f"Gemini detectó cantidad en contexto: {cantidad}")
+            
+            # Función para aplicar margen y formatear precio
             def aplicar_margen_precio(precio_str, fuente):
                 """Aplica margen solo si NO es de la Base Interna"""
                 try:
-                    # Eliminar símbolos de moneda y convertir a float
                     precio_limpio = precio_str.replace('$', '').replace(',', '').strip()
                     precio_float = float(precio_limpio)
                     
-                    # NO aplicar margen si es de la base interna
                     if fuente == "Base Interna":
                         return f"${precio_float:.2f}"
                     
-                    # Aplicar margen del 45% solo para productos externos
                     precio_con_margen = precio_float * 1.45
-                    
-                    # Formatear de vuelta a string con formato de moneda
                     return f"${precio_con_margen:.2f}"
                 except (ValueError, AttributeError):
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
             
-            # Detectar cantidad en el mensaje del usuario - MEJORADO
-            cantidad = 1  # Valor por defecto
-            es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
-            if es_mensaje_cantidad and cantidad_detectada:
-                cantidad = cantidad_detectada
-            else:
-                # ✅ FIX: Solo buscar cantidades con palabras de unidad específicas
-                # No confundir "500 MG" con cantidad
-                cantidad_match = re.search(r'(\d+)\s+(unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)', user_message.lower())
-                if cantidad_match:
-                    cantidad_temp = int(cantidad_match.group(1))
-                    if 1 <= cantidad_temp <= 100:  # Validar rango razonable
-                        cantidad = cantidad_temp
-            
-            logger.info(f"Cantidad detectada en el mensaje: {cantidad}")
+            logger.info(f"Cantidad final detectada: {cantidad}")
             
             # Conversión de nombre de fuente a código interno
             fuente_mapping = {
@@ -489,23 +365,18 @@ Mensaje: "{user_message}"
                 
                 # Ajustar precio según la cantidad solicitada
                 if cantidad > 1:
-                    # Extraer valores numéricos
                     valor_entrega = float(precio_entrega_inmediata.replace('$', '').replace(',', ''))
                     valor_mejor = float(precio_mejor_precio.replace('$', '').replace(',', ''))
                     
-                    # Multiplicar por la cantidad
                     total_entrega = valor_entrega * cantidad
                     total_mejor = valor_mejor * cantidad
                     
-                    # Formatear de vuelta
                     precio_entrega_inmediata = f"${total_entrega:.2f}"
                     precio_mejor_precio = f"${total_mejor:.2f}"
                 
-                # Obtener códigos de fuente para referencia interna
                 fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
                 fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
                 
-                # ✅ FORMATO PARA DOBLE OPCIÓN - SIN REFERENCIAS MÉDICAS
                 respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
                 respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
@@ -516,10 +387,8 @@ Mensaje: "{user_message}"
             # Si solo hay una opción
             logger.info("Generando respuesta con una sola opción")
             
-            # Determinar cuál opción está disponible
             producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
             
-            # Aplicar margen según corresponda
             precio_con_margen = aplicar_margen_precio(
                 producto['precio'],
                 producto.get('fuente', '')
@@ -527,18 +396,12 @@ Mensaje: "{user_message}"
             
             # Ajustar precio según la cantidad solicitada
             if cantidad > 1:
-                # Extraer valor numérico
                 valor = float(precio_con_margen.replace('$', '').replace(',', ''))
-                
-                # Multiplicar por la cantidad
                 total = valor * cantidad
-                
-                # Formatear de vuelta
                 precio_con_margen = f"${total:.2f}"
             
-            # ✅ FIX: Formato especial para productos de Base Interna - SIN REFERENCIAS MÉDICAS
+            # Formato especial para productos de Base Interna
             if producto.get("fuente") == "Base Interna":
-                # Obtener stock disponible
                 stock_disponible = producto.get('existencia', '0')
                 try:
                     stock_num = int(float(stock_disponible))
@@ -549,7 +412,6 @@ Mensaje: "{user_message}"
                 except:
                     stock_text = "📦 Consultar disponibilidad"
                 
-                # ✅ FORMATO ESPECIAL PARA BASE INTERNA - SOLO COMERCIAL
                 respuesta = f"✅ {cantidad} unidad(es) solicitada(s)\n"
                 respuesta += f"Precio total: {precio_con_margen}\n"
                 respuesta += f"🚚 Entrega hoy mismo\n"
@@ -558,14 +420,12 @@ Mensaje: "{user_message}"
                 
                 return respuesta
             
-            # Verificar si es entrega inmediata (Sufarmed)
+            # Para productos externos
             es_entrega_inmediata = producto.get("fuente") == "Sufarmed"
             mensaje_entrega = "🚚 Entrega hoy mismo." if es_entrega_inmediata else "📦 Entrega mañana."
             
-            # Obtener código de fuente para referencia interna
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
-            # ✅ FORMATO PARA OPCIÓN ÚNICA - SIN REFERENCIAS MÉDICAS
             respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
             respuesta += f"Precio total: {precio_con_margen}\n"
             respuesta += f"{mensaje_entrega}\n"
@@ -579,8 +439,7 @@ Mensaje: "{user_message}"
     
     def detectar_producto(self, user_message, conversation_history=None):
         """
-        Determina si el mensaje pregunta por un medicamento específico o es una indicación
-        de cantidad para un producto previo.
+        ✅ NUEVO: Usa Gemini para analizar contexto completo y detectar productos.
         
         Args:
             user_message (str): Mensaje del usuario
@@ -589,61 +448,27 @@ Mensaje: "{user_message}"
         Returns:
             tuple: ('consulta_producto', nombre_producto) o ('consulta_general', None)
         """
-        # Primero verificar si es un mensaje simple de cantidad
-        es_mensaje_cantidad, cantidad = self._es_mensaje_cantidad(user_message)
+        # ✅ USAR ANÁLISIS DE CONTEXTO CON GEMINI
+        contexto_analisis = self._analizar_contexto_con_gemini(user_message, conversation_history)
         
-        if es_mensaje_cantidad and conversation_history:
-            # Si es un mensaje de cantidad, buscar el último producto en el historial
-            ultimo_producto = self._extraer_ultimo_producto(conversation_history)
+        # Si Gemini detectó que es una consulta de cantidad para un producto previo
+        if (contexto_analisis.get("es_cantidad") and 
+            contexto_analisis.get("producto_contexto")):
             
-            if ultimo_producto:
-                logger.info(f"Mensaje de cantidad ({cantidad}) para el producto anterior: {ultimo_producto}")
-                return "consulta_producto", ultimo_producto
+            producto_contexto = contexto_analisis["producto_contexto"]
+            cantidad = contexto_analisis.get("cantidad", 1)
+            
+            logger.info(f"Gemini detectó consulta de cantidad ({cantidad}) para producto: {producto_contexto}")
+            return "consulta_producto", producto_contexto
         
-        # Si no es mensaje de cantidad o no se encontró producto previo, proceder normalmente
-        prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
-Determina SI el siguiente mensaje está preguntando por un producto específico.
-- Si SÍ, responde SOLO con el nombre del producto (p. ej. "paracetamol", "ibuprofeno").
-- Si NO, responde exactamente con la palabra GENERAL.
-Mensaje: "{user_message}"
-"""
-        try:
-            logger.info(f"Enviando prompt a Gemini para detectar producto. Mensaje: '{user_message}'")
-            
-            # Detección local para medicamentos comunes
-            medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
-                                    "loratadina", "antibiotico", "motrin", "ampicilina", 
-                                    "rituximab", "oxazanov", "ifosfamida"]
-            mensaje_lower = user_message.lower()
-            for med in medicamentos_comunes:
-                if med in mensaje_lower:
-                    logger.info(f"Producto detectado localmente: {med}")
-                    return "consulta_producto", med
-            
-            # Si no se detectó localmente, consultar a Gemini
-            response = self.model.generate_content(prompt)
-            resp = response.text.strip()
-            
-            logger.info(f"Respuesta de Gemini para detección de producto: '{resp}'")
-            
-            # Procesar la respuesta
-            if resp.upper() == "GENERAL":
-                logger.info("Detectado como consulta general")
-                return "consulta_general", None
-            else:
-                # Limpiar la respuesta para obtener solo el nombre del medicamento
-                producto = resp.strip()
-                logger.info(f"Detectado como consulta de producto: '{producto}'")
-                return "consulta_producto", producto
-        except Exception as e:
-            logger.error(f"Error en detectar_producto: {e}")
-            # En caso de error, usar detección local básica (palabras clave) como respaldo
-            mensaje_lower = user_message.lower()
-            if "tienes" in mensaje_lower or "tienen" in mensaje_lower or "hay" in mensaje_lower:
-                for palabra in mensaje_lower.split():
-                    if len(palabra) > 4 and palabra not in ["tienes", "tienen", "ustedes", "algún", "alguna", "donde", "cuánto", "cuanto"]:
-                        logger.info(f"Respaldo: Producto detectado: {palabra}")
-                        return "consulta_producto", palabra
-            
-            logger.info("Respaldo: Consulta general")
+        # Si no es cantidad en contexto, determinar si es consulta de producto nuevo
+        if contexto_analisis.get("tipo_consulta") == "producto_nuevo":
+            # Usar Gemini para extraer el producto del mensaje actual
+            tipo, producto = self._detectar_producto_con_gemini(user_message)
+            return tipo, producto
+        elif contexto_analisis.get("tipo_consulta") == "general":
             return "consulta_general", None
+        else:
+            # Fallback: usar detección con Gemini para casos no claros
+            tipo, producto = self._detectar_producto_con_gemini(user_message)
+            return tipo, producto
