@@ -113,9 +113,9 @@ class GeminiService:
                 
         return False
     
-    def _analizar_contexto_con_gemini(self, user_message, conversation_history):
+    def analizar_contexto_con_gemini(self, user_message, conversation_history):
         """
-        ✅ NUEVO: Usa Gemini para analizar el contexto completo de la conversación.
+        ✅ PÚBLICO: Usa Gemini para analizar el contexto completo de la conversación.
         Determina si es consulta de cantidad y extrae el producto del contexto.
         
         Args:
@@ -309,7 +309,7 @@ Mensaje: "{user_message}"
                 return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
             # ✅ USAR GEMINI PARA DETECTAR CANTIDAD EN CONTEXTO
-            contexto_analisis = self._analizar_contexto_con_gemini(user_message, conversation_history)
+            contexto_analisis = self.analizar_contexto_con_gemini(user_message, conversation_history)
             
             # Determinar cantidad basada en análisis de Gemini
             cantidad = 1  # Valor por defecto
@@ -439,7 +439,7 @@ Mensaje: "{user_message}"
     
     def detectar_producto(self, user_message, conversation_history=None):
         """
-        ✅ NUEVO: Usa Gemini para analizar contexto completo y detectar productos.
+        ✅ ACTUALIZADO: Usa Gemini para analizar contexto completo y detectar productos.
         
         Args:
             user_message (str): Mensaje del usuario
@@ -449,7 +449,7 @@ Mensaje: "{user_message}"
             tuple: ('consulta_producto', nombre_producto) o ('consulta_general', None)
         """
         # ✅ USAR ANÁLISIS DE CONTEXTO CON GEMINI
-        contexto_analisis = self._analizar_contexto_con_gemini(user_message, conversation_history)
+        contexto_analisis = self.analizar_contexto_con_gemini(user_message, conversation_history)
         
         # Si Gemini detectó que es una consulta de cantidad para un producto previo
         if (contexto_analisis.get("es_cantidad") and 
