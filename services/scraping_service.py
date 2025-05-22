@@ -612,6 +612,8 @@ class ScrapingService:
         - Opción de entrega inmediata (Sufarmed con stock)
         - Opción de mejor precio (producto más barato con stock)
         
+        ACTUALIZADO: FASE 1 ahora ejecuta scrapers secuencialmente con delay de 5 segundos
+        
         Args:
             nombre_producto (str): Nombre del producto a buscar
             
@@ -623,7 +625,7 @@ class ScrapingService:
         # Lista para almacenar resultados de todas las fuentes
         resultados = []
         
-        # FASE 1: Difarmer y Sufarmed en paralelo (ya probados y funcionan juntos)
+        # ✅ FASE 1: Difarmer y Sufarmed secuencial con delay de 5 segundos
         fase1_scrapers = []
         if self.difarmer_available:
             fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
@@ -631,26 +633,30 @@ class ScrapingService:
             fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
         
         if fase1_scrapers:
-            logger.info(f"FASE 1: Ejecutando scrapers {', '.join([x[0] for x in fase1_scrapers])}")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
-                futures = {}
-                for source_name, search_func in fase1_scrapers:
-                    future = executor.submit(search_func, nombre_producto)
-                    futures[future] = source_name
+            logger.info(f"FASE 1: Ejecutando scrapers secuencialmente {', '.join([x[0] for x in fase1_scrapers])}")
+            
+            for i, (source_name, search_func) in enumerate(fase1_scrapers):
+                try:
+                    logger.info(f"🔍 Ejecutando scraper {source_name} ({i+1}/{len(fase1_scrapers)})")
+                    resultado = search_func(nombre_producto)
+                    
+                    if resultado:
+                        # Verificar que el precio no sea cero antes de añadirlo
+                        if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
+                            logger.info(f"✅ Resultado obtenido de {source_name}")
+                            resultados.append(resultado)
+                        else:
+                            logger.warning(f"⚠️ Resultado de {source_name} descartado por precio cero o inválido")
+                    else:
+                        logger.info(f"❌ No se encontraron resultados en {source_name}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error en búsqueda de {source_name}: {e}")
                 
-                for future in concurrent.futures.as_completed(futures):
-                    source_name = futures[future]
-                    try:
-                        resultado = future.result()
-                        if resultado:
-                            # Verificar que el precio no sea cero antes de añadirlo
-                            if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
-                                logger.info(f"Resultado obtenido de {source_name}")
-                                resultados.append(resultado)
-                            else:
-                                logger.warning(f"Resultado de {source_name} descartado por precio cero o inválido")
-                    except Exception as e:
-                        logger.error(f"Error en búsqueda de {source_name}: {e}")
+                # ✅ DELAY de 5 segundos entre scrapers de FASE 1
+                if i < len(fase1_scrapers) - 1:  # No hacer delay después del último scraper
+                    logger.info("⏱️ Esperando 5 segundos antes del siguiente scraper de FASE 1...")
+                    time.sleep(5)
         
         # Delay de 5 segundos entre Fase 1 y Fase 2
         logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 2...")
@@ -664,12 +670,14 @@ class ScrapingService:
                 if resultado_nadro:
                     # Verificar que el precio no sea cero antes de añadirlo
                     if resultado_nadro['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info("Resultado obtenido de NADRO")
+                        logger.info("✅ Resultado obtenido de NADRO")
                         resultados.append(resultado_nadro)
                     else:
-                        logger.warning("Resultado de NADRO descartado por precio cero o inválido")
+                        logger.warning("⚠️ Resultado de NADRO descartado por precio cero o inválido")
+                else:
+                    logger.info("❌ No se encontraron resultados en NADRO")
             except Exception as e:
-                logger.error(f"Error en búsqueda de NADRO: {e}")
+                logger.error(f"❌ Error en búsqueda de NADRO: {e}")
         
         # Delay de 5 segundos entre Fase 2 y Fase 3
         logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 3...")
@@ -688,12 +696,14 @@ class ScrapingService:
                 if resultado_fanasa:
                     # Verificar que el precio no sea cero antes de añadirlo
                     if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info("Resultado obtenido de FANASA")
+                        logger.info("✅ Resultado obtenido de FANASA")
                         resultados.append(resultado_fanasa)
                     else:
-                        logger.warning("Resultado de FANASA descartado por precio cero o inválido")
+                        logger.warning("⚠️ Resultado de FANASA descartado por precio cero o inválido")
+                else:
+                    logger.info("❌ No se encontraron resultados en FANASA")
             except Exception as e:
-                logger.error(f"Error en búsqueda de FANASA: {e}")
+                logger.error(f"❌ Error en búsqueda de FANASA: {e}")
         
         # COMIENZA PROCESO DE COMPARACIÓN Y SELECCIÓN
         logger.info("🔍 COMENZANDO ANÁLISIS Y COMPARACIÓN DE RESULTADOS 🔍")
@@ -786,49 +796,3 @@ class ScrapingService:
             "opcion_mejor_precio": opcion_mejor_precio,
             "tiene_doble_opcion": tiene_doble_opcion
         }
-
-# Función para generar respuestas a partir de los resultados de búsqueda
-def generate_product_response(producto_info, query=None, additional_context=None):
-    """
-    Genera una respuesta para el usuario basada en las opciones de productos disponibles.
-    
-    Args:
-        producto_info (dict): Diccionario con las opciones de productos disponibles
-        query (str, opcional): La consulta original del usuario
-        additional_context (dict, opcional): Contexto adicional para la generación
-        
-    Returns:
-        str: Respuesta generada para el usuario
-    """
-    # Si no hay opciones disponibles
-    if not producto_info["opcion_entrega_inmediata"] and not producto_info["opcion_mejor_precio"]:
-        return f"Lo siento, no encontré información sobre {query} en nuestras farmacias asociadas."
-    
-    # Si solo hay una opción (sea entrega inmediata o mejor precio)
-    if not producto_info["tiene_doble_opcion"]:
-        producto = producto_info["opcion_entrega_inmediata"] or producto_info["opcion_mejor_precio"]
-        
-        # Determinar si la entrega es inmediata o no
-        delivery_text = "hoy mismo" if producto["fuente"] == "Sufarmed" else "mañana"
-        
-        # Generar respuesta para una sola opción
-        response = f"Encontré el producto {producto['nombre']}. El precio es {producto['precio']} y está disponible para entrega {delivery_text}."
-        
-        return response
-    
-    # Si hay dos opciones diferentes
-    else:
-        entrega_inmediata = producto_info["opcion_entrega_inmediata"]
-        mejor_precio = producto_info["opcion_mejor_precio"]
-        
-        nombre_producto = entrega_inmediata['nombre'] or mejor_precio['nombre']
-        
-        response = f"📦 Tenemos dos opciones para {nombre_producto}:\n\n"
-        
-        # Añadir opción de entrega inmediata
-        response += f"🚚 *Entrega inmediata* hoy mismo con un precio de {entrega_inmediata['precio']}\n\n"
-        
-        # Añadir opción de mejor precio
-        response += f"💲 *Mejor precio* con entrega mañana por {mejor_precio['precio']}"
-        
-        return response
