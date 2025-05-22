@@ -2,7 +2,7 @@
 Servicio para interactuar con la API de Gemini.
 Encapsula toda la lógica relacionada con la generación de respuestas de IA.
 Actualizado para manejar información de la fuente del producto e historial de conversación.
-VERSIÓN SIN REFERENCIAS MÉDICAS - Solo información comercial.
+VERSIÓN FINAL: Sin referencias médicas + detección mejorada de cantidades + mejor extracción de productos.
 """
 import logging
 import re
@@ -142,7 +142,7 @@ class GeminiService:
     def _es_mensaje_cantidad(self, user_message):
         """
         Determina si el mensaje del usuario es solo para indicar una cantidad
-        (por ejemplo: "quiero 5", "dame 2", etc.)
+        (por ejemplo: "quiero 5", "dame 2", "ok quiero 5 unidades", etc.)
         MEJORADO: No confunde números de medicamentos con cantidades.
         
         Args:
@@ -156,38 +156,58 @@ class GeminiService:
         # Patrones ESPECÍFICOS para detectar mensajes de cantidad
         # Evitan confundir "500 MG" con "quiero 500"
         patrones_cantidad = [
+            # Patrones básicos
             r'^(?:quiero|necesito|dame|deme|ocupo|llevo|mándame|mandame|enviame|envíame|reserva|reservame|resérvame|aparta|apartame|apártame)\s+(\d+)$',
             r'^(\d+)$',  # Solo número
             r'^(\d+)\s+(?:unidades|piezas|cajas|tabletas|paquetes|frascos|ampolletas|unidad|pieza|caja|tableta|paquete|frasco|ampolleta)$',
             r'^(?:son|serían|serian|serán|seran)\s+(\d+)$',
             r'^(?:por|para)\s+(\d+)\s+(?:productos?|unidades|piezas)?$',  # "Por 2 productos"
             r'^(\d+)\s+(?:productos?|unidades?)$',  # "2 productos"
-            r'^(?:me\s+interesa\s+comprarlo|me\s+interesa\s+)\s*$'  # "me interesa comprarlo"
+            
+            # ✅ NUEVOS PATRONES para casos como "ok, quiero 5 unidades!"
+            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)(?:\s+(?:unidades|piezas|productos?))?$',
+            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(\d+)\s+(?:unidades|piezas|productos?)$',
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)\s+(?:unidades|piezas|productos?)!?$',
+            r'^(?:ok|perfecto|bien|está bien|vale|okey),?\s*(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)$',
+            
+            # Casos con signos de exclamación
+            r'^(?:quiero|necesito|dame|deme|ocupo|llevo)\s+(\d+)\s*!+$',
+            r'^(\d+)\s+(?:unidades|piezas|productos?)\s*!+$',
+            
+            # Mensaje de interés sin cantidad específica
+            r'^(?:me\s+interesa\s+comprarlo|me\s+interesa|está\s+bien|perfecto|ok)$'  # "me interesa comprarlo"
         ]
         
         # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_cantidad:
             match = re.search(patron, mensaje_lower)
             if match:
-                # Si es "me interesa comprarlo", devolver cantidad 1
-                if "me interesa" in mensaje_lower:
+                # Si es "me interesa comprarlo" o similar, devolver cantidad 1
+                if any(word in mensaje_lower for word in ["me interesa", "está bien", "perfecto"]) and not any(char.isdigit() for char in mensaje_lower):
+                    logger.info(f"Detectado mensaje de interés: 1 unidad")
+                    return True, 1
+                
+                # Si hay grupo de captura (número)
+                if match.groups():
+                    cantidad = int(match.group(1))
+                    # Validación: rechazar cantidades absurdas (probablemente son concentraciones)
+                    if 1 <= cantidad <= 100:  # Cantidades razonables para compras
+                        logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
+                        return True, cantidad
+                    else:
+                        logger.info(f"Cantidad rechazada por ser muy alta: {cantidad} (probablemente concentración)")
+                        return False, None
+                else:
+                    # Patrón sin captura de número (como "me interesa")
                     logger.info(f"Detectado mensaje de interés: 1 unidad")
                     return True, 1
                     
-                cantidad = int(match.group(1))
-                # Validación: rechazar cantidades absurdas (probablemente son concentraciones)
-                if 1 <= cantidad <= 100:  # Cantidades razonables para compras
-                    logger.info(f"Detectado mensaje simple de cantidad: {cantidad}")
-                    return True, cantidad
-                else:
-                    logger.info(f"Cantidad rechazada por ser muy alta: {cantidad} (probablemente concentración)")
-                    return False, None
-                
         return False, None
 
     def _extraer_ultimo_producto(self, conversation_history):
         """
         Extrae el último producto mencionado en el historial de conversación.
+        MEJORADO: Busca mejor en respuestas del bot.
         
         Args:
             conversation_history (list): Historial de conversación
@@ -198,30 +218,78 @@ class GeminiService:
         if not conversation_history:
             return None
             
-        # Buscar en los últimos 4 mensajes (2 turnos)
-        ultimos_mensajes = conversation_history[-4:]
+        # Buscar en los últimos 6 mensajes (3 turnos) para tener más contexto
+        ultimos_mensajes = conversation_history[-6:]
         
         # Recorrer desde el más reciente hacia atrás
         for msg in reversed(ultimos_mensajes):
             role = msg.get("role", "")
             content = msg.get("content", "")
             
-            # Si es un mensaje del bot que menciona precio/entrega, extraer producto del contexto
+            # Si es un mensaje del bot que menciona información de producto
             if role == "assistant" and content:
-                if any(word in content.lower() for word in ["precio", "entrega", "disponible", "unidad"]):
+                # Buscar indicadores de respuesta de producto
+                if any(word in content.lower() for word in ["precio", "entrega", "disponible", "unidad", "tenemos", "origen:"]):
+                    # Buscar el mensaje del usuario que desencadenó esta respuesta
+                    indice_actual = None
+                    try:
+                        indice_actual = conversation_history.index(msg)
+                    except ValueError:
+                        # Si no encuentra el índice, continuar con el siguiente mensaje
+                        continue
+                        
                     # Buscar el mensaje del usuario anterior
-                    indice_actual = conversation_history.index(msg)
-                    for i in range(indice_actual-1, -1, -1):
-                        if conversation_history[i].get("role") == "user":
+                    for i in range(indice_actual-1, max(-1, indice_actual-3), -1):
+                        if i >= 0 and conversation_history[i].get("role") == "user":
                             user_msg = conversation_history[i].get("content", "")
-                            # Intentar extraer producto con detección local
+                            
+                            # ✅ MEJORADO: Buscar productos directamente en el mensaje del usuario
+                            # Lista expandida de productos comunes
+                            productos_comunes = [
+                                "paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
+                                "loratadina", "antibiotico", "motrin", "ampicilina", 
+                                "rituximab", "oxazanov", "ifosfamida", "amoxicilina",
+                                "azitromicina", "cefalexina", "ciprofloxacino"
+                            ]
+                            
+                            user_msg_lower = user_msg.lower()
+                            for producto in productos_comunes:
+                                if producto in user_msg_lower:
+                                    logger.info(f"Producto extraído del historial (directo): {producto}")
+                                    return producto
+                            
+                            # ✅ NUEVO: Extraer nombres más complejos usando regex
+                            # Buscar palabras que parezcan nombres de productos farmacéuticos
+                            # Patrones: PALABRA + MG/G/ML + PALABRA, o nombres en mayúsculas
+                            patrones_productos = [
+                                r'([A-Z][A-Z]{2,}(?:\s+[A-Z][A-Z]+)*)',  # Palabras en mayúsculas como "OXAZANOV IFOSFAMIDA"
+                                r'([a-zA-Z]+(?:\s+\d+\s*(?:mg|g|ml|mcg))+)',  # producto + concentración
+                                r'([a-zA-Z]{4,}(?:\s+[a-zA-Z]{4,})*)',  # Palabras largas (nombres de productos)
+                            ]
+                            
+                            for patron in patrones_productos:
+                                matches = re.findall(patron, user_msg, re.IGNORECASE)
+                                for match in matches:
+                                    # Filtrar palabras comunes que no son productos
+                                    palabras_excluir = ["tienes", "tienen", "disponible", "precio", "cuanto", "cuesta", "para", "donde"]
+                                    match_lower = match.lower()
+                                    
+                                    if (len(match) > 4 and 
+                                        not any(excluir in match_lower for excluir in palabras_excluir) and
+                                        not match_lower.startswith("para")):
+                                        logger.info(f"Producto extraído del historial (regex): {match}")
+                                        return match
+                            
+                            # ✅ ÚLTIMO RECURSO: Usar Gemini para extraer el producto
                             try:
                                 tipo, producto = self._detectar_producto_con_gemini(user_msg)
                                 if tipo == "consulta_producto" and producto:
-                                    logger.info(f"Producto extraído del historial: {producto}")
+                                    logger.info(f"Producto extraído del historial (Gemini): {producto}")
                                     return producto
                             except Exception as e:
                                 logger.error(f"Error al extraer producto con Gemini: {e}")
+                            
+                            # Si llegamos aquí, salir del bucle de mensajes de usuario
                             break
         
         return None
@@ -544,7 +612,8 @@ Mensaje: "{user_message}"
             
             # Detección local para medicamentos comunes
             medicamentos_comunes = ["paracetamol", "ibuprofeno", "aspirina", "omeprazol", 
-                                    "loratadina", "antibiotico", "motrin", "ampicilina", "rituximab"]
+                                    "loratadina", "antibiotico", "motrin", "ampicilina", 
+                                    "rituximab", "oxazanov", "ifosfamida"]
             mensaje_lower = user_message.lower()
             for med in medicamentos_comunes:
                 if med in mensaje_lower:
