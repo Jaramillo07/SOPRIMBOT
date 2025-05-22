@@ -1,15 +1,17 @@
 """
-MessageHandler CON LOGS DE DEBUG para diagnosticar problema de precios.
+Manejador de mensajes para SOPRIM BOT.
+Optimizado para servicio farmacéutico con búsqueda en base interna y scrapers.
 """
 import logging
+import re
 import traceback
 from services.gemini_service import GeminiService
 from services.whatsapp_service import WhatsAppService
 from services.scraping_service import ScrapingService
 from services.ocr_service import OCRService
-from services.sheets_service import SheetsService
+from services.sheets_service import SheetsService  # Servicio para base interna
 from services.firestore_service import obtener_historial, guardar_interaccion
-from config.settings import ALLOWED_TEST_NUMBERS
+from config.settings import ALLOWED_TEST_NUMBERS, GEMINI_SYSTEM_INSTRUCTIONS
 
 # Configurar logging
 logging.basicConfig(
@@ -20,396 +22,421 @@ logger = logging.getLogger(__name__)
 
 class MessageHandler:
     """
-    MessageHandler con logs de debug para diagnosticar precios.
+    Clase que maneja los mensajes entrantes y coordina las respuestas
+    con enfoque en consultas de productos farmacéuticos.
     """
     
     def __init__(self):
-        """Inicializa el manejador con sus servicios."""
-        logger.info("Inicializando MessageHandler con DEBUG para precios")
+        """
+        Inicializa el manejador de mensajes con sus servicios asociados.
+        """
+        logger.info("Inicializando MessageHandler optimizado para servicio farmacéutico")
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService()
         self.ocr_service = OCRService()
-        self.sheets_service = SheetsService()
+        self.sheets_service = SheetsService()  # Servicio para base interna
         logger.info("MessageHandler inicializado correctamente")
-    
-    def _convertir_cantidad_especial(self, cantidad_str: str, existencias_disponibles: int = 0) -> int:
-        """Convierte palabras especiales a números."""
-        if isinstance(cantidad_str, int):
-            return cantidad_str
-            
-        cantidad_str = str(cantidad_str).lower()
-        
-        conversiones = {
-            "una": 1, "uno": 1,
-            "dos": 2, "ambas": 2, "ambos": 2, "las dos": 2, "los dos": 2,
-            "tres": 3,
-            "cuatro": 4,
-            "cinco": 5,
-            "todas": max(existencias_disponibles, 1),
-            "todos": max(existencias_disponibles, 1),
-            "disponibles": max(existencias_disponibles, 1),
-            "completo": max(existencias_disponibles, 1),
-            "completa": max(existencias_disponibles, 1),
-            "total": max(existencias_disponibles, 1)
-        }
-        
-        # Si es número directo
-        if cantidad_str.isdigit():
-            return int(cantidad_str)
-        
-        # Si es palabra especial
-        for palabra, numero in conversiones.items():
-            if palabra in cantidad_str:
-                return numero
-        
-        return 1  # Por defecto
-    
-    async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
-        """
-        Procesa un mensaje usando el clasificador inteligente del GeminiService.
-        """
-        logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
-        
-        # Limpiar número de teléfono
-        clean_phone = phone_number.replace("whatsapp:", "")
-        formatted_number = self.whatsapp_service.format_phone_number(phone_number)
-        
-        # Verificar números permitidos
-        if ALLOWED_TEST_NUMBERS and formatted_number not in ALLOWED_TEST_NUMBERS:
-            logger.warning(f"Número {formatted_number} no permitido")
-            return {
-                "success": False,
-                "message_type": "error_sandbox",
-                "error": f"Número no autorizado",
-                "respuesta": None
-            }
-        
-        # Procesar imágenes si existen
-        if media_urls:
-            try:
-                texto_extraido = await self.ocr_service.process_images(media_urls)
-                if texto_extraido and not texto_extraido.startswith("No se pudo"):
-                    if not mensaje or mensaje.strip() == "":
-                        mensaje = texto_extraido
-                    else:
-                        mensaje = f"{mensaje}\n\n[Texto de imagen: {texto_extraido}]"
-                    logger.info("Texto de imagen agregado al mensaje")
-                elif not mensaje or mensaje.strip() == "":
-                    respuesta = "No pude extraer texto de la imagen. ¿Podrías escribir tu consulta?"
-                    self.whatsapp_service.send_text_message(phone_number, respuesta)
-                    return {"success": True, "message_type": "error_ocr", "respuesta": respuesta}
-            except Exception as e:
-                logger.error(f"Error procesando imágenes: {e}")
-                if not mensaje or mensaje.strip() == "":
-                    respuesta = "Error procesando imagen. Envía tu consulta en texto."
-                    self.whatsapp_service.send_text_message(phone_number, respuesta)
-                    return {"success": False, "message_type": "error_imagen", "respuesta": respuesta}
-        
-        # Obtener historial
-        historial = obtener_historial(clean_phone)
-        logger.info(f"Historial: {len(historial)} turnos")
-        
-        # 🧠 USAR CLASIFICADOR INTELIGENTE DEL GEMINI SERVICE
-        try:
-            clasificacion = self.gemini_service.classify_message_smart(mensaje, historial)
-            tipo = clasificacion.get("tipo")
-            producto = clasificacion.get("producto")
-            cantidad = clasificacion.get("cantidad")
-            confianza = clasificacion.get("confianza")
-            
-            logger.info(f"🎯 Clasificación: {tipo} | Producto: {producto} | Cantidad: {cantidad} | Confianza: {confianza}")
-        except Exception as e:
-            logger.error(f"Error en clasificación inteligente: {e}")
-            # Usar detección clásica como respaldo
-            tipo, producto = self.gemini_service.detectar_producto(mensaje, historial)
-            cantidad = None
-            if tipo == "consulta_producto":
-                tipo = "producto_especifico"
-            else:
-                tipo = "general"
-            logger.info(f"🔧 Clasificación de respaldo: {tipo} | Producto: {producto}")
-        
-        # 📊 MANEJAR SEGÚN TIPO DETECTADO
-        
-        if tipo == "cantidad":
-            return await self._manejar_cantidad(mensaje, cantidad, historial, phone_number, clean_phone)
-        
-        elif tipo == "producto_especifico":
-            return await self._manejar_producto(mensaje, producto, historial, phone_number, clean_phone)
-        
-        elif tipo == "descuentos":
-            return await self._manejar_descuentos(mensaje, historial, phone_number, clean_phone)
-        
-        elif tipo == "entrega":
-            return await self._manejar_entrega(mensaje, historial, phone_number, clean_phone)
-        
-        else:  # saludo, general
-            return await self._manejar_general(mensaje, historial, phone_number, clean_phone)
-    
-    async def _manejar_cantidad(self, mensaje: str, cantidad: str, historial: list, phone_number: str, clean_phone: str):
-        """Maneja mensajes que solo indican cantidad."""
-        # Usar la función existente del GeminiService para extraer último producto
-        ultimo_producto = self.gemini_service._extraer_ultimo_producto(historial)
-        
-        if not ultimo_producto:
-            respuesta = "¿Para qué producto necesitas esa cantidad? Puedes decirme el nombre del medicamento."
-            result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-            guardar_interaccion(clean_phone, mensaje, respuesta)
-            return {"success": True, "message_type": "solicitud_producto", "respuesta": respuesta}
-        
-        # Convertir cantidad usando función helper
-        cantidad_numerica = self._convertir_cantidad_especial(cantidad)
-        
-        # Buscar producto en base interna primero
-        producto_interno = None
-        try:
-            producto_interno = self.sheets_service.buscar_producto(ultimo_producto, threshold=0.7)
-            
-            # 🔍 DEBUG CRÍTICO - LOGS PARA PRODUCTO INTERNO
-            if producto_interno:
-                logger.error(f"🔍 PRODUCTO INTERNO DEBUG (CANTIDAD):")
-                logger.error(f"   - Nombre: {producto_interno.get('nombre')}")
-                logger.error(f"   - Precio: '{producto_interno.get('precio')}'")  
-                logger.error(f"   - Fuente: '{producto_interno.get('fuente')}'")
-                logger.error(f"   - Tipo precio: {type(producto_interno.get('precio'))}")
-                logger.error(f"   - Existencia: {producto_interno.get('existencia')}")
-                logger.error(f"   - Precio numérico: {producto_interno.get('precio_numerico')}")
-            else:
-                logger.error(f"🔍 NO SE ENCONTRÓ PRODUCTO INTERNO para: {ultimo_producto}")
-                
-        except Exception as e:
-            logger.error(f"Error buscando en base interna: {e}")
-        
-        if producto_interno:
-            # Respuesta con producto interno
-            product_info = {
-                "opcion_mejor_precio": producto_interno,
-                "opcion_entrega_inmediata": None,
-                "tiene_doble_opcion": False
-            }
-            
-            # 🔍 DEBUG - LOG DEL PRODUCT_INFO
-            logger.error(f"🔍 PRODUCT_INFO (CANTIDAD):")
-            logger.error(f"   - opcion_mejor_precio: {product_info['opcion_mejor_precio']}")
-            
-            # Usar la función completa del GeminiService
-            respuesta = self.gemini_service.generate_product_response(
-                f"quiero {cantidad_numerica} {ultimo_producto}", 
-                product_info,
-                additional_context="Actualización de cantidad.",
-                conversation_history=historial
-            )
-            
-            result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-            guardar_interaccion(clean_phone, mensaje, respuesta)
-            
-            return {
-                "success": True,
-                "message_type": "cantidad_actualizada",
-                "producto": ultimo_producto,
-                "cantidad": cantidad_numerica,
-                "respuesta": respuesta
-            }
-        
-        # Si no está en base interna, buscar en scrapers
-        try:
-            product_info = self.scraping_service.buscar_producto(ultimo_producto)
-            
-            if product_info and (product_info.get("opcion_entrega_inmediata") or product_info.get("opcion_mejor_precio")):
-                respuesta = self.gemini_service.generate_product_response(
-                    f"quiero {cantidad_numerica} {ultimo_producto}", 
-                    product_info,
-                    additional_context="Actualización de cantidad.",
-                    conversation_history=historial
-                )
-                
-                result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-                guardar_interaccion(clean_phone, mensaje, respuesta)
-                
-                return {
-                    "success": True,
-                    "message_type": "cantidad_actualizada",
-                    "producto": ultimo_producto,
-                    "cantidad": cantidad_numerica,
-                    "respuesta": respuesta
-                }
-        except Exception as e:
-            logger.error(f"Error en scrapers: {e}")
-        
-        # Si no encontramos el producto
-        respuesta = f"No encontré información actualizada sobre {ultimo_producto}. ¿Podrías confirmar el nombre del producto?"
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-        guardar_interaccion(clean_phone, mensaje, respuesta)
-        
-        return {"success": True, "message_type": "producto_no_encontrado", "respuesta": respuesta}
-    
-    async def _manejar_producto(self, mensaje: str, producto: str, historial: list, phone_number: str, clean_phone: str):
-        """Maneja búsquedas de productos específicos."""
-        logger.info(f"Buscando producto: {producto}")
-        
-        # Buscar en base interna primero
-        producto_interno = None
-        try:
-            producto_interno = self.sheets_service.buscar_producto(producto, threshold=0.7)
-            
-            # 🔍 DEBUG CRÍTICO - LOGS PARA PRODUCTO INTERNO
-            if producto_interno:
-                logger.error(f"🔍 PRODUCTO INTERNO DEBUG (BÚSQUEDA):")
-                logger.error(f"   - Nombre: {producto_interno.get('nombre')}")
-                logger.error(f"   - Precio: '{producto_interno.get('precio')}'")  
-                logger.error(f"   - Fuente: '{producto_interno.get('fuente')}'")
-                logger.error(f"   - Tipo precio: {type(producto_interno.get('precio'))}")
-                logger.error(f"   - Existencia: {producto_interno.get('existencia')}")
-                logger.error(f"   - Precio numérico: {producto_interno.get('precio_numerico')}")
-                logger.error(f"   - Farmacia: {producto_interno.get('nombre_farmacia')}")
-                logger.error(f"   - Estado: {producto_interno.get('estado')}")
-            else:
-                logger.error(f"🔍 NO SE ENCONTRÓ PRODUCTO INTERNO para: {producto}")
-                
-        except Exception as e:
-            logger.error(f"Error en base interna: {e}")
-            logger.error(traceback.format_exc())
-        
-        if producto_interno:
-            logger.info(f"Producto encontrado en base interna: {producto_interno.get('nombre')}")
-            
-            product_info = {
-                "opcion_mejor_precio": producto_interno,
-                "opcion_entrega_inmediata": None,
-                "tiene_doble_opcion": False
-            }
-            
-            # 🔍 DEBUG - LOG DEL PRODUCT_INFO COMPLETO
-            logger.error(f"🔍 PRODUCT_INFO COMPLETO (BÚSQUEDA):")
-            logger.error(f"   - tiene_doble_opcion: {product_info['tiene_doble_opcion']}")
-            logger.error(f"   - opcion_entrega_inmediata: {product_info['opcion_entrega_inmediata']}")
-            logger.error(f"   - opcion_mejor_precio keys: {list(product_info['opcion_mejor_precio'].keys())}")
-            logger.error(f"   - opcion_mejor_precio fuente: '{product_info['opcion_mejor_precio'].get('fuente')}'")
-            logger.error(f"   - opcion_mejor_precio precio: '{product_info['opcion_mejor_precio'].get('precio')}'")
-            
-            # Usar la función completa del GeminiService
-            respuesta = self.gemini_service.generate_product_response(
-                mensaje, 
-                product_info,
-                additional_context="Información de nuestra base interna.",
-                conversation_history=historial
-            )
-            
-            result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-            guardar_interaccion(clean_phone, mensaje, respuesta)
-            
-            return {
-                "success": True,
-                "message_type": "producto_interno",
-                "producto": producto,
-                "fuente": "Base Interna",
-                "respuesta": respuesta
-            }
-        
-        # Buscar en scrapers
-        try:
-            product_info = self.scraping_service.buscar_producto(producto)
-            
-            if product_info and (product_info.get("opcion_entrega_inmediata") or product_info.get("opcion_mejor_precio")):
-                respuesta = self.gemini_service.generate_product_response(
-                    mensaje, 
-                    product_info,
-                    additional_context="Información de farmacias asociadas.",
-                    conversation_history=historial
-                )
-                
-                result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
-                guardar_interaccion(clean_phone, mensaje, respuesta)
-                
-                return {
-                    "success": True,
-                    "message_type": "producto_externo",
-                    "producto": producto,
-                    "respuesta": respuesta
-                }
-        except Exception as e:
-            logger.error(f"Error en scrapers: {e}")
-        
-        # Producto no encontrado
-        respuesta = f"No encontré {producto} en nuestras fuentes. ¿Podrías proporcionar más detalles como marca o presentación?"
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-        guardar_interaccion(clean_phone, mensaje, respuesta)
-        
-        return {"success": True, "message_type": "producto_no_encontrado", "respuesta": respuesta}
-    
-    async def _manejar_descuentos(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
-        """Maneja consultas sobre descuentos y promociones."""
-        # Usar las respuestas de descuento del GeminiService
-        if self.gemini_service._es_consulta_descuento(mensaje):
-            respuestas_descuento = [
-                "Sí manejamos descuentos por volumen. Contáctanos para más detalles.",
-                "Tenemos promociones especiales dependiendo del producto. Llámanos para informarte.",
-                "Los descuentos aplican según cantidad y producto. Comunícate directamente con nosotros."
-            ]
-            
-            # Seleccionar respuesta basada en hash del mensaje
-            indice = hash(mensaje) % len(respuestas_descuento)
-            respuesta = respuestas_descuento[indice]
-        else:
-            # Usar Gemini para generar respuesta más contextual
-            respuesta = self.gemini_service.generate_response(
-                f"{mensaje}\n\n[INSTRUCCIÓN: El usuario pregunta sobre descuentos o promociones. Responde como farmacia que maneja descuentos por volumen]",
-                conversation_history=historial
-            )
-        
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-        guardar_interaccion(clean_phone, mensaje, respuesta)
-        
-        return {"success": True, "message_type": "consulta_descuentos", "respuesta": respuesta}
-    
-    async def _manejar_entrega(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
-        """Maneja consultas sobre entregas."""
-        # Usar la función existente del GeminiService
-        if self.gemini_service._es_consulta_entrega_hoy(mensaje):
-            respuesta = "La entrega normalmente es al día siguiente. Para entrega el mismo día, contáctanos directamente para confirmar disponibilidad."
-        else:
-            # Usar Gemini para respuesta más contextual
-            respuesta = self.gemini_service.generate_response(
-                f"{mensaje}\n\n[INSTRUCCIÓN: El usuario pregunta sobre entregas o tiempos de envío. Menciona que normalmente es al día siguiente]",
-                conversation_history=historial
-            )
-        
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-        guardar_interaccion(clean_phone, mensaje, respuesta)
-        
-        return {"success": True, "message_type": "consulta_entrega", "respuesta": respuesta}
-    
-    async def _manejar_general(self, mensaje: str, historial: list, phone_number: str, clean_phone: str):
-        """Maneja mensajes generales, saludos y otros."""
-        # Usar la función existente del GeminiService
-        respuesta = self.gemini_service.generate_response(
-            f"{mensaje}\n\n[INSTRUCCIÓN: Responde como asistente de farmacia profesional]",
-            conversation_history=historial
-        )
-        
-        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
-        guardar_interaccion(clean_phone, mensaje, respuesta)
-        
-        return {"success": True, "message_type": "respuesta_general", "respuesta": respuesta}
-    
-    # ============================================================================
-    # MANTENER FUNCIÓN LEGACY PARA COMPATIBILIDAD
-    # ============================================================================
     
     def detectar_consulta_medicamento(self, mensaje):
         """
-        Función legacy mantenida para compatibilidad.
-        Ahora usa el clasificador inteligente internamente.
+        Detecta si el mensaje es una consulta sobre un medicamento.
+        Optimizado para el sector farmacéutico.
+        
+        Args:
+            mensaje (str): Mensaje a analizar
+            
+        Returns:
+            tuple: (es_consulta_medicamento, producto_detectado)
         """
-        try:
-            clasificacion = self.gemini_service.classify_message_smart(mensaje)
-            if clasificacion.get("tipo") == "producto_especifico":
-                return True, clasificacion.get("producto")
-            else:
-                return False, None
-        except Exception as e:
-            logger.error(f"Error en detectar_consulta_medicamento: {e}")
-            # Respaldo usando función clásica
-            tipo, producto = self.gemini_service.detectar_producto(mensaje)
-            return tipo == "consulta_producto", producto
+        if not mensaje:
+            return False, None
+            
+        mensaje_lower = mensaje.lower()
+        producto_detectado = None
+        
+        # Patrones para detectar consultas sobre productos farmacéuticos
+        patrones_producto = [
+            r'(?:tienes|tienen|venden|hay|disponible|disponibles)\s+(.+?)(?:\?|$)',
+            r'(?:busco|necesito|quiero|ocupo)\s+(.+?)(?:\?|$)',
+            r'(?:me pueden conseguir|consiguen|habrá|habra)\s+(.+?)(?:\?|$)',
+            r'(?:vende[ns]|tiene[ns]|manejan|traen)\s+(.+?)(?:\?|$)',
+            r'(?:precio de|cuánto cuesta|costo de|valor de|precio del|cuanto vale)\s+(.+?)(?:\?|$)',
+            r'(?:dosis|pastillas|tabletas|comprimidos|jarabe|suspensión|ampolletas)\s+(?:de|del|para)\s+(.+?)(?:\?|$)',
+            r'(?:medicamento|medicina|medicinas|fármaco|remedio)\s+(?:para|de|del|contra)\s+(.+?)(?:\?|$)'
+        ]
+        
+        # Buscar coincidencias en los patrones
+        for patron in patrones_producto:
+            match = re.search(patron, mensaje_lower)
+            if match:
+                producto_detectado = match.group(1).strip()
+                # Limpiar términos comunes
+                terminos_eliminar = ["el", "la", "los", "las", "algún", "alguna", "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas"]
+                for termino in terminos_eliminar:
+                    if producto_detectado.startswith(f"{termino} "):
+                        producto_detectado = producto_detectado[len(termino)+1:]
+                
+                logger.info(f"Producto detectado: {producto_detectado}")
+                return True, producto_detectado
+        
+        # Lista ampliada de medicamentos comunes
+        palabras_medicamento = [
+            # Analgésicos y antiinflamatorios
+            "paracetamol", "ibuprofeno", "aspirina", "naproxeno", "diclofenaco", 
+            "ketorolaco", "indometacina", "meloxicam", "piroxicam", "metamizol",
+            # Antibióticos
+            "amoxicilina", "azitromicina", "ciprofloxacino", "cefalexina", 
+            "ampicilina", "penicilina", "claritromicina", "doxiciclina", 
+            "clindamicina", "levofloxacino", "moxifloxacino", "ceftriaxona",
+            # Antiácidos y protectores gástricos
+            "omeprazol", "pantoprazol", "lansoprazol", "esomeprazol", 
+            "ranitidina", "famotidina", "sucralfato", "magaldrato",
+            # Antialérgicos
+            "loratadina", "cetirizina", "fexofenadina", "desloratadina", 
+            "clorfenamina", "difenhidramina",
+            # Otros medicamentos comunes
+            "metformina", "captopril", "enalapril", "losartan", "atenolol", 
+            "metoprolol", "amlodipino", "simvastatina", "atorvastatina", 
+            "levotiroxina", "alprazolam", "clonazepam", "diazepam", 
+            "fluoxetina", "sertralina", "paroxetina", "sildenafil",
+            "tadalafil", "ambroxol", "salbutamol", "prednisona", 
+            "dexametasona", "betametasona", "aciclovir", "valaciclovir",
+            "loperamida", "metoclopramida", "butilhioscina", "tramadol",
+            "codeína", "fluconazol", "itraconazol", "nistatina",
+            "clotrimazol", "miconazol", "rapamune", "sirolimus",
+            # Nombres comerciales comunes
+            "aspirina", "tylenol", "advil", "motrin", "aleve", "nexium", 
+            "zantac", "pepcid", "claritin", "zyrtec", "allegra", "benadryl",
+            "lipitor", "crestor", "synthroid", "xanax", "valium", "prozac",
+            "zoloft", "viagra", "cialis", "ventolin", "prilosec"
+        ]
+        
+        for palabra in palabras_medicamento:
+            if palabra in mensaje_lower:
+                logger.info(f"Medicamento detectado por palabra clave: {palabra}")
+                return True, palabra
+        
+        # Buscar términos que indiquen síntomas o condiciones médicas
+        sintomas_condiciones = [
+            "dolor", "fiebre", "gripe", "tos", "diarrea", "vómito", "náusea",
+            "alergia", "infección", "inflamación", "presión alta", "diabetes",
+            "colesterol", "tiroides", "ansiedad", "depresión", "insomnio",
+            "artritis", "migraña", "asma", "acidez", "gastritis", "úlcera"
+        ]
+        
+        for sintoma in sintomas_condiciones:
+            if sintoma in mensaje_lower:
+                # Buscar el término más largo que contenga el síntoma
+                palabras = mensaje_lower.split()
+                for i in range(len(palabras)):
+                    if sintoma in palabras[i]:
+                        # Intentar encontrar una frase de contexto (3 palabras antes y después)
+                        inicio = max(0, i-3)
+                        fin = min(len(palabras), i+4)
+                        contexto = " ".join(palabras[inicio:fin])
+                        logger.info(f"Consulta médica detectada por síntoma: {sintoma} (contexto: {contexto})")
+                        return True, contexto
+        
+        # Si no se detecta un producto o síntoma específico, verificar si es consulta general
+        if any(term in mensaje_lower for term in ["medicina", "medicamento", "pastilla", "farmacia", "remedio", "receta"]):
+            logger.info("Consulta general sobre farmacia/medicamentos detectada")
+            return True, None
+        
+        logger.info("No se detectó consulta de medicamento específico")
+        return False, None
+    
+    async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
+        """
+        Procesa un mensaje entrante y genera una respuesta.
+        Optimizado para consultas de farmacia y medicamentos.
+        
+        Args:
+            mensaje (str): Mensaje entrante del usuario
+            phone_number (str): Número de teléfono del remitente
+            media_urls (list, optional): Lista de URLs de imágenes adjuntas
+            
+        Returns:
+            dict: Resultado de la operación
+        """
+        logger.info(f"Procesando mensaje: '{mensaje}' de {phone_number}")
+        if media_urls:
+            logger.info(f"El mensaje incluye {len(media_urls)} imágenes: {media_urls}")
+        
+        # Limpiar el número de teléfono para Firestore
+        clean_phone = phone_number.replace("whatsapp:", "")
+        
+        # Verificar si el número está en la lista de permitidos (solo en pruebas)
+        formatted_number = self.whatsapp_service.format_phone_number(phone_number)
+        logger.info(f"Número formateado: {formatted_number}")
+        if ALLOWED_TEST_NUMBERS and formatted_number not in ALLOWED_TEST_NUMBERS:
+            logger.warning(f"Número {formatted_number} no está en la lista de permitidos: {ALLOWED_TEST_NUMBERS}")
+            return {
+                "success": False,
+                "message_type": "error_sandbox",
+                "error": f"El número {formatted_number} no está en la lista de números permitidos para pruebas",
+                "respuesta": None
+            }
+        else:
+            logger.info(f"Número {formatted_number} está permitido para interacción")
+        
+        # Procesar imágenes si hay alguna
+        texto_extraido = ""
+        if media_urls:
+            logger.info(f"Procesando {len(media_urls)} imágenes con OCR...")
+            try:
+                texto_extraido = await self.ocr_service.process_images(media_urls)
+                logger.info(f"Resultado del procesamiento OCR: {texto_extraido[:200] if texto_extraido else 'No hay texto'}")
+                
+                if texto_extraido and not texto_extraido.startswith("No se pudo"):
+                    logger.info(f"Texto extraído con éxito: {texto_extraido[:100]}...")
+                    # Si no hay mensaje de texto, usamos solo el texto extraído
+                    if not mensaje or mensaje.strip() == "":
+                        mensaje = texto_extraido
+                    else:
+                        # Si hay ambos, los combinamos
+                        mensaje = f"{mensaje}\n\n[Texto de la imagen: {texto_extraido}]"
+                    
+                    logger.info(f"Mensaje combinado: {mensaje[:100]}...")
+                else:
+                    logger.warning("No se pudo extraer texto de las imágenes")
+                    if not mensaje or mensaje.strip() == "":
+                        # Si solo recibimos una imagen sin texto y no pudimos extraer texto
+                        respuesta = "He recibido tu imagen pero no he podido extraer texto de ella. ¿Podrías enviar el mensaje en formato texto o una imagen más clara?"
+                        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                        return {
+                            "success": True,
+                            "message_type": "error_ocr",
+                            "respuesta": respuesta
+                        }
+            except Exception as e:
+                logger.error(f"Error al procesar imágenes: {e}")
+                logger.error(traceback.format_exc())
+                # Si solo tenemos imagen y falló el procesamiento, informar al usuario
+                if not mensaje or mensaje.strip() == "":
+                    respuesta = "Lo siento, hubo un problema técnico al procesar tu imagen. ¿Podrías enviar tu consulta en formato texto?"
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    return {
+                        "success": False,
+                        "message_type": "error_imagen",
+                        "error": str(e),
+                        "respuesta": respuesta
+                    }
+        
+        # Obtener historial de conversación de Firestore
+        historial = obtener_historial(clean_phone)
+        logger.info(f"Recuperado historial para {clean_phone}: {len(historial)} turnos")
+        
+        # Detectar si es consulta de medicamento
+        es_consulta_medicamento, producto_detectado = self.detectar_consulta_medicamento(mensaje)
+        
+        # Si no detectamos localmente, intentar con Gemini
+        if not es_consulta_medicamento or not producto_detectado:
+            try:
+                tipo_mensaje_gemini, producto_detectado_gemini = self.gemini_service.detectar_producto(mensaje)
+                if tipo_mensaje_gemini == "consulta_producto" and producto_detectado_gemini:
+                    es_consulta_medicamento = True
+                    producto_detectado = producto_detectado_gemini
+                    logger.info(f"Gemini detectó medicamento: {producto_detectado}")
+            except Exception as e:
+                logger.error(f"Error al detectar producto con Gemini: {e}")
+        
+        # Si es consulta de medicamento, primero buscamos en Google Sheets
+        if es_consulta_medicamento and producto_detectado:
+            logger.info(f"Iniciando búsqueda para: {producto_detectado}")
+            
+            # PRIMERO: Buscar en la base interna (Google Sheets)
+            # IMPORTANTE: Esta llamada debe estar FUERA de cualquier bloque try/except
+            producto_interno = None
+            try:
+                logger.info(f"[DEBUG] Buscando producto en base interna: '{producto_detectado}'")
+                producto_interno = self.sheets_service.buscar_producto(producto_detectado, threshold=0.7)
+                logger.info(f"[DEBUG] Resultado de búsqueda interna: {producto_interno}")
+            except Exception as e:
+                logger.error(f"Error al buscar en base interna: {e}")
+                logger.error(traceback.format_exc())
+                # No hacemos producto_interno = None para preservar cualquier valor exitoso
+            
+            # Si encontramos el producto en la base interna, procesarlo FUERA del bloque try/except de búsqueda
+            if producto_interno:
+                logger.info(f"[DEBUG] ÉXITO: Producto encontrado en base interna: {producto_interno.get('nombre', 'desconocido')}")
+                
+                try:
+                    # Preparar formato para la respuesta del bot
+                    product_info = {
+                        "opcion_mejor_precio": producto_interno,
+                        "opcion_entrega_inmediata": None,
+                        "tiene_doble_opcion": False
+                    }
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context="Información de nuestra base de datos interna.",
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    # Intentar enviar respuesta
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("status") == "error":
+                        logger.error("Error al enviar respuesta de producto interno")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result.get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    # IMPORTANTE: Retornar aquí para NO ejecutar los scrapers
+                    return {
+                        "success": True,
+                        "message_type": "producto_interno",
+                        "producto": producto_detectado,
+                        "fuente": "Base Interna",
+                        "respuesta": respuesta
+                    }
+                except Exception as e:
+                    logger.error(f"Error al procesar producto interno: {e}")
+                    logger.error(traceback.format_exc())
+                    # Aún así NO continuamos con scrapers si ya encontramos el producto
+                    return {
+                        "success": False,
+                        "message_type": "error_producto_interno",
+                        "error": str(e),
+                        "producto": producto_detectado,
+                        "respuesta": f"Lo siento, encontré información del producto pero hubo un error al procesarla. Por favor, intenta nuevamente."
+                    }
+            
+            # SOLO si no encuentra en la base interna o hay error, continuar con los scrapers
+            logger.info(f"[DEBUG] Producto NO encontrado en base interna, procediendo con scrapers: {producto_detectado}")
+            try:
+                # Llamar al servicio de scraping integrado
+                product_info = self.scraping_service.buscar_producto(producto_detectado)
+                
+                if product_info:
+                    logger.info(f"Información encontrada para {producto_detectado} en {product_info.get('fuente', 'farmacia')}")
+                    
+                    # Añadir información sobre la farmacia para inclusión en la respuesta
+                    farmacia_nombre = product_info.get('nombre_farmacia', product_info.get('fuente', 'farmacia'))
+                    additional_context = f"Esta información proviene de {farmacia_nombre}."
+                    
+                    # Generar respuesta con Gemini incluyendo el historial
+                    respuesta = self.gemini_service.generate_product_response(
+                        mensaje, 
+                        product_info,
+                        additional_context=additional_context,
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    # Intentar enviar respuesta
+                    result = self.whatsapp_service.send_product_response(phone_number, respuesta, product_info)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("text", {}).get("status") == "error":
+                        logger.error("Error al enviar respuesta de producto")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result["text"].get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    return {
+                        "success": True,
+                        "message_type": "producto",
+                        "producto": producto_detectado,
+                        "fuente": product_info.get('fuente', 'farmacia'),
+                        "tiene_imagen": bool(product_info.get("imagen")),
+                        "respuesta": respuesta
+                    }
+                else:
+                    logger.info(f"No se encontró información para {producto_detectado} en ninguna farmacia")
+                    
+                    # Generar respuesta personalizada para producto no encontrado
+                    respuesta = self.gemini_service.generate_response(
+                        f"No encontré información específica sobre {producto_detectado} en ninguna de nuestras fuentes. "
+                        f"Pero podemos ayudarte a conseguirlo. ¿Podrías proporcionar más detalles como "
+                        f"marca, concentración o presentación? {mensaje}",
+                        conversation_history=historial
+                    )
+                    
+                    # Guardar la interacción en Firestore
+                    guardar_interaccion(clean_phone, mensaje, respuesta)
+                    logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+                    
+                    result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+                    
+                    # Verificar si hubo error de sandbox
+                    if result.get("status") == "error":
+                        logger.error("Error al enviar respuesta de producto no encontrado")
+                        return {
+                            "success": False,
+                            "message_type": "error_sandbox",
+                            "error": result.get("message", "Error al enviar mensaje"),
+                            "respuesta": respuesta
+                        }
+                    
+                    return {
+                        "success": True,
+                        "message_type": "producto_no_encontrado",
+                        "producto": producto_detectado,
+                        "respuesta": respuesta
+                    }
+            except Exception as e:
+                logger.error(f"Error durante el scraping: {e}")
+                logger.error(traceback.format_exc())
+        
+        # Para cualquier otro tipo de mensaje (incluyendo saludos o preguntas generales)
+        logger.info("Generando respuesta orientada al negocio farmacéutico con Gemini")
+        
+        # NUEVO: Verificar si el mensaje incluía una imagen procesada con OCR
+        contexto_imagen = ""
+        if texto_extraido and media_urls and not texto_extraido.startswith("No se pudo"):
+            contexto_imagen = f"El usuario envió una imagen que contiene el siguiente texto: {texto_extraido}"
+            logger.info("Añadiendo contexto de imagen procesada")
+        
+        # Generar respuesta con Gemini incluyendo el historial y contexto de imagen
+        mensaje_para_gemini = mensaje
+        if contexto_imagen:
+            mensaje_para_gemini = f"{mensaje}\n\n[CONTEXTO: {contexto_imagen}]"
+            
+        # Instrucción adicional para Gemini: enfoque en farmacia
+        mensaje_con_instruccion = f"{mensaje_para_gemini}\n\n[INSTRUCCIÓN: Responde como asistente de farmacia, orienta la respuesta hacia servicios farmacéuticos o información de salud relevante]"
+        
+        respuesta = self.gemini_service.generate_response(
+            mensaje_con_instruccion,
+            conversation_history=historial
+        )
+        
+        # Guardar la interacción en Firestore
+        guardar_interaccion(clean_phone, mensaje, respuesta)
+        logger.info(f"Guardada interacción en Firestore para {clean_phone}")
+        
+        result = self.whatsapp_service.send_text_message(phone_number, respuesta)
+        
+        # Verificar si hubo error de sandbox
+        if result.get("status") == "error":
+            logger.error("Error al enviar respuesta general")
+            return {
+                "success": False,
+                "message_type": "error_sandbox",
+                "error": result.get("message", "Error al enviar mensaje"),
+                "respuesta": respuesta
+            }
+        
+        return {
+            "success": True,
+            "message_type": "respuesta_farmaceutica",
+            "respuesta": respuesta
+        }
