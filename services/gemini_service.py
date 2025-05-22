@@ -1,6 +1,5 @@
 """
-Servicio Gemini optimizado que mantiene todas las funciones principales
-pero agrega capacidades de clasificación inteligente.
+GeminiService CON LOGS DE DEBUG para diagnosticar problema de precios.
 """
 import logging
 import re
@@ -17,8 +16,7 @@ logger = logging.getLogger(__name__)
 
 class GeminiService:
     """
-    Clase que proporciona métodos para interactuar con la API de Gemini.
-    Versión optimizada que mantiene todas las funciones principales.
+    GeminiService con logs de debug para diagnosticar precios.
     """
     
     def __init__(self):
@@ -42,20 +40,12 @@ class GeminiService:
             raise
     
     # ============================================================================
-    # NUEVO: CLASIFICADOR INTELIGENTE DE MENSAJES
+    # CLASIFICADOR INTELIGENTE DE MENSAJES
     # ============================================================================
     
     def classify_message_smart(self, mensaje: str, historial: list = None) -> dict:
         """
         Clasificador inteligente principal que usa Gemini para determinar el tipo de mensaje.
-        
-        Returns:
-            dict: {
-                "tipo": str,  # producto_especifico, cantidad, descuentos, entrega, general, saludo
-                "producto": str or None,
-                "cantidad": int or str or None,
-                "confianza": str
-            }
         """
         try:
             # Preparar contexto del historial
@@ -155,14 +145,11 @@ EJEMPLOS:
         return {"tipo": "general", "producto": None, "cantidad": None, "confianza": "baja"}
     
     # ============================================================================
-    # MANTENER TODAS LAS FUNCIONES EXISTENTES (SIN CAMBIOS)
+    # FUNCIONES EXISTENTES MANTENIDAS
     # ============================================================================
     
     def _format_conversation_history(self, history):
-        """
-        Formatea el historial de conversación para incluirlo en el prompt.
-        FUNCIÓN MANTENIDA SIN CAMBIOS.
-        """
+        """Formatea el historial de conversación para incluirlo en el prompt."""
         if not history:
             return ""
         
@@ -176,10 +163,7 @@ EJEMPLOS:
         return formatted_history.strip()
     
     def _es_consulta_descuento(self, user_message):
-        """
-        Determina si el mensaje del usuario está relacionado con descuentos o promociones.
-        FUNCIÓN MANTENIDA SIN CAMBIOS.
-        """
+        """Determina si el mensaje del usuario está relacionado con descuentos o promociones."""
         mensaje_lower = user_message.lower()
         
         # Palabras clave relacionadas con descuentos y promociones
@@ -212,10 +196,7 @@ EJEMPLOS:
         return False
     
     def _es_consulta_entrega_hoy(self, user_message):
-        """
-        Determina si el mensaje del usuario hace referencia a la entrega o disponibilidad inmediata (hoy).
-        FUNCIÓN MANTENIDA SIN CAMBIOS.
-        """
+        """Determina si el mensaje del usuario hace referencia a la entrega o disponibilidad inmediata (hoy)."""
         mensaje_lower = user_message.lower()
         
         # Patrones para detectar consultas de entrega para hoy
@@ -242,10 +223,7 @@ EJEMPLOS:
         return False
         
     def _es_mensaje_cantidad(self, user_message):
-        """
-        Determina si el mensaje del usuario es solo para indicar una cantidad.
-        FUNCIÓN MANTENIDA SIN CAMBIOS - MUY COMPLETA Y ÚTIL.
-        """
+        """Determina si el mensaje del usuario es solo para indicar una cantidad."""
         if not user_message or not isinstance(user_message, str):
             return False, None
             
@@ -345,10 +323,7 @@ EJEMPLOS:
         return False, None
 
     def _extraer_ultimo_producto(self, conversation_history):
-        """
-        Extrae el último producto mencionado en el historial de conversación.
-        FUNCIÓN MANTENIDA SIN CAMBIOS - MUY SOFISTICADA Y ÚTIL.
-        """
+        """Extrae el último producto mencionado en el historial de conversación."""
         if not conversation_history:
             return None
             
@@ -446,10 +421,7 @@ EJEMPLOS:
         return None
         
     def _detectar_producto_con_gemini(self, user_message):
-        """
-        Versión privada que usa Gemini para determinar si el mensaje pregunta por un medicamento.
-        FUNCIÓN MANTENIDA SIN CAMBIOS.
-        """
+        """Versión privada que usa Gemini para determinar si el mensaje pregunta por un medicamento."""
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 Determina SI el siguiente mensaje está preguntando por un medicamento específico.
 - Si SÍ, responde SOLO con el nombre del medicamento (p. ej. "paracetamol", "ibuprofeno").
@@ -472,10 +444,7 @@ Mensaje: "{user_message}"
             return "consulta_general", None
 
     def generate_response(self, user_message, conversation_history=None):
-        """
-        Genera una respuesta basada en el mensaje del usuario utilizando Gemini.
-        FUNCIÓN MANTENIDA CON PEQUEÑAS OPTIMIZACIONES.
-        """
+        """Genera una respuesta basada en el mensaje del usuario utilizando Gemini."""
         try:
             # Verificar si es una consulta sobre entrega para hoy
             if self._es_consulta_entrega_hoy(user_message):
@@ -504,9 +473,26 @@ Mensaje: "{user_message}"
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
         """
         Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
-        FUNCIÓN MANTENIDA CON TODAS SUS OPTIMIZACIONES - ES MUY COMPLETA.
+        CON LOGS DE DEBUG PARA DIAGNOSTICAR PRECIOS.
         """
         try:
+            # 🔍 DEBUG INICIAL - LOG DE DATOS RECIBIDOS
+            logger.error(f"🔍 === INICIO generate_product_response ===")
+            logger.error(f"🔍 user_message: '{user_message}'")
+            logger.error(f"🔍 additional_context: '{additional_context}'")
+            logger.error(f"🔍 producto_info keys: {list(producto_info.keys())}")
+            logger.error(f"🔍 tiene_doble_opcion: {producto_info.get('tiene_doble_opcion')}")
+            
+            if producto_info.get("opcion_mejor_precio"):
+                logger.error(f"🔍 opcion_mejor_precio:")
+                for key, value in producto_info["opcion_mejor_precio"].items():
+                    logger.error(f"🔍   - {key}: '{value}' (tipo: {type(value)})")
+            
+            if producto_info.get("opcion_entrega_inmediata"):
+                logger.error(f"🔍 opcion_entrega_inmediata:")
+                for key, value in producto_info["opcion_entrega_inmediata"].items():
+                    logger.error(f"🔍   - {key}: '{value}' (tipo: {type(value)})")
+            
             # Verificar si es una consulta sobre entregas
             es_consulta_entrega = self._es_consulta_entrega_hoy(user_message) or re.search(r'(?:para\s+cuándo|para\s+cuando|cuándo|cuando)\s+(?:sería|seria|es)\s+(?:la\s+)?entrega', user_message.lower())
                 
@@ -529,7 +515,6 @@ Mensaje: "{user_message}"
             if self._es_consulta_descuento(user_message):
                 logger.info("Detectada consulta sobre descuentos o promociones")
                 
-                # Lista de respuestas posibles para consultas de descuentos
                 respuestas_descuento = [
                     "Podemos ofrecer descuentos por volumen. Por favor, comunícate directamente para más detalles.",
                     "Los descuentos pueden aplicar dependiendo del producto o la cantidad. Llámanos para confirmarlo.",
@@ -538,7 +523,6 @@ Mensaje: "{user_message}"
                     "Para información sobre descuentos y promociones, te invitamos a contactarnos directamente por teléfono o mensaje."
                 ]
                 
-                # Seleccionar una respuesta basada en un hash simple del mensaje del usuario
                 indice = hash(user_message) % len(respuestas_descuento)
                 response_text = respuestas_descuento[indice]
                 
@@ -553,28 +537,38 @@ Mensaje: "{user_message}"
                 logger.warning("No se encontraron opciones de producto disponibles")
                 return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
-            # Función para aplicar margen y formatear precio - MODIFICADA
+            # 🔍 FUNCIÓN CON DEBUG PARA APLICAR MARGEN
             def aplicar_margen_precio(precio_str, fuente):
-                """Aplica margen solo si NO es de la Base Interna"""
+                """Aplica margen solo si NO es de la Base Interna - CON DEBUG"""
+                logger.error(f"🔍 === aplicar_margen_precio INICIO ===")
+                logger.error(f"🔍 precio_str recibido: '{precio_str}' (tipo: {type(precio_str)})")
+                logger.error(f"🔍 fuente recibida: '{fuente}' (tipo: {type(fuente)})")
+                
                 try:
                     # Eliminar símbolos de moneda y convertir a float
-                    precio_limpio = precio_str.replace('$', '').replace(',', '').strip()
+                    precio_limpio = str(precio_str).replace('$', '').replace(',', '').strip()
+                    logger.error(f"🔍 precio_limpio: '{precio_limpio}'")
+                    
                     precio_float = float(precio_limpio)
+                    logger.error(f"🔍 precio_float: {precio_float}")
                     
                     # NO aplicar margen si es de la base interna
                     if fuente == "Base Interna":
-                        return f"${precio_float:.2f}"
+                        resultado = f"${precio_float:.2f}"
+                        logger.error(f"🔍 ✅ ES BASE INTERNA - SIN MARGEN: {precio_str} → {resultado}")
+                        return resultado
                     
                     # Aplicar margen del 45% solo para productos externos
                     precio_con_margen = precio_float * 1.45
+                    resultado = f"${precio_con_margen:.2f}"
+                    logger.error(f"🔍 💰 ES EXTERNO - CON MARGEN 45%: {precio_str} → {resultado}")
+                    return resultado
                     
-                    # Formatear de vuelta a string con formato de moneda
-                    return f"${precio_con_margen:.2f}"
-                except (ValueError, AttributeError):
-                    logger.warning(f"No se pudo convertir el precio: {precio_str}")
+                except (ValueError, AttributeError) as e:
+                    logger.error(f"🔍 ❌ ERROR convirtiendo precio '{precio_str}': {e}")
                     return precio_str
             
-            # Detectar cantidad en el mensaje del usuario - MEJORADO
+            # Detectar cantidad en el mensaje del usuario
             cantidad = 1  # Valor por defecto
             es_mensaje_cantidad, cantidad_detectada = self._es_mensaje_cantidad(user_message)
 
@@ -636,6 +630,11 @@ Mensaje: "{user_message}"
                 opcion_entrega_inmediata = producto_info["opcion_entrega_inmediata"]
                 opcion_mejor_precio = producto_info["opcion_mejor_precio"]
                 
+                # 🔍 DEBUG - LOG ANTES DE APLICAR MARGEN (DOBLE OPCIÓN)
+                logger.error(f"🔍 === DOBLE OPCIÓN - ANTES MARGEN ===")
+                logger.error(f"🔍 Entrega inmediata - Precio: '{opcion_entrega_inmediata['precio']}', Fuente: '{opcion_entrega_inmediata.get('fuente', '')}'")
+                logger.error(f"🔍 Mejor precio - Precio: '{opcion_mejor_precio['precio']}', Fuente: '{opcion_mejor_precio.get('fuente', '')}'")
+                
                 # Aplicar margen según corresponda
                 precio_entrega_inmediata = aplicar_margen_precio(
                     opcion_entrega_inmediata['precio'], 
@@ -645,6 +644,11 @@ Mensaje: "{user_message}"
                     opcion_mejor_precio['precio'],
                     opcion_mejor_precio.get('fuente', '')
                 )
+                
+                # 🔍 DEBUG - LOG DESPUÉS DE APLICAR MARGEN (DOBLE OPCIÓN)
+                logger.error(f"🔍 === DOBLE OPCIÓN - DESPUÉS MARGEN ===")
+                logger.error(f"🔍 Entrega inmediata - Precio final: '{precio_entrega_inmediata}'")
+                logger.error(f"🔍 Mejor precio - Precio final: '{precio_mejor_precio}'")
                 
                 # Ajustar precio según la cantidad solicitada
                 if cantidad > 1:
@@ -674,6 +678,9 @@ Mensaje: "{user_message}"
                 respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio} (Disponible: {existencias_precio})\n"
                 respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
                 
+                logger.error(f"🔍 === RESPUESTA FINAL DOBLE OPCIÓN ===")
+                logger.error(f"🔍 {respuesta}")
+                
                 return respuesta
             
             # Si solo hay una opción
@@ -682,11 +689,19 @@ Mensaje: "{user_message}"
             # Determinar cuál opción está disponible
             producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
             
+            # 🔍 DEBUG - LOG ANTES DE APLICAR MARGEN (UNA OPCIÓN)
+            logger.error(f"🔍 === UNA OPCIÓN - ANTES MARGEN ===")
+            logger.error(f"🔍 Producto - Precio: '{producto['precio']}', Fuente: '{producto.get('fuente', '')}'")
+            
             # Aplicar margen según corresponda
             precio_con_margen = aplicar_margen_precio(
                 producto['precio'],
                 producto.get('fuente', '')
             )
+            
+            # 🔍 DEBUG - LOG DESPUÉS DE APLICAR MARGEN (UNA OPCIÓN)
+            logger.error(f"🔍 === UNA OPCIÓN - DESPUÉS MARGEN ===")
+            logger.error(f"🔍 Producto - Precio final: '{precio_con_margen}'")
             
             # Obtener existencias disponibles
             existencias = producto.get('existencia', '0')
@@ -732,6 +747,9 @@ Mensaje: "{user_message}"
                 respuesta += f"{mensaje_entrega}\n"
                 respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
             
+            logger.error(f"🔍 === RESPUESTA FINAL UNA OPCIÓN ===")
+            logger.error(f"🔍 {respuesta}")
+            
             return respuesta
                 
         except Exception as e:
@@ -739,11 +757,7 @@ Mensaje: "{user_message}"
             return f"Lo siento, hubo un error al procesar tu solicitud. Por favor, intenta nuevamente más tarde."
     
     def detectar_producto(self, user_message, conversation_history=None):
-        """
-        Determina si el mensaje pregunta por un medicamento específico o es una indicación
-        de cantidad para un producto previo.
-        FUNCIÓN MANTENIDA CON TODAS SUS OPTIMIZACIONES.
-        """
+        """Determina si el mensaje pregunta por un medicamento específico."""
         # Primero verificar si es un mensaje simple de cantidad
         es_mensaje_cantidad, cantidad = self._es_mensaje_cantidad(user_message)
         
