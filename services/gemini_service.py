@@ -539,6 +539,9 @@ Mensaje: "{user_message}"
             
             # 🔍 FUNCIÓN CON DEBUG PARA APLICAR MARGEN
             def aplicar_margen_precio(precio_str, fuente):
+                
+    
+
                 """Aplica margen solo si NO es de la Base Interna - CON DEBUG"""
                 logger.error(f"🔍 === aplicar_margen_precio INICIO ===")
                 logger.error(f"🔍 precio_str recibido: '{precio_str}' (tipo: {type(precio_str)})")
@@ -553,10 +556,9 @@ Mensaje: "{user_message}"
                     logger.error(f"🔍 precio_float: {precio_float}")
                     
                     # NO aplicar margen si es de la base interna
-                    if fuente == "Base Interna":
-                        resultado = f"${precio_float:.2f}"
-                        logger.error(f"🔍 ✅ ES BASE INTERNA - SIN MARGEN: {precio_str} → {resultado}")
-                        return resultado
+                    if fuente and fuente.strip().replace("_", " ").lower() in ["base interna", "bi"]:
+                        return f"${precio_float:.2f}"
+
                     
                     # Aplicar margen del 45% solo para productos externos
                     precio_con_margen = precio_float * 1.45
