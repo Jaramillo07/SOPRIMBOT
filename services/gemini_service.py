@@ -1,7 +1,6 @@
 """
 Servicio para interactuar con la API de Gemini.
-VERSIÓN: GEMINI GESTIONA CONTEXTOS COMPLETOS
-Gemini entiende y maneja todo el contexto de la conversación inteligentemente.
+VERSIÓN CORREGIDA: Mejor manejo de contexto y cantidad
 """
 import logging
 import re
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """
     Clase que proporciona métodos para interactuar con la API de Gemini.
-    GEMINI gestiona contextos completos.
+    CORREGIDO: Mejor manejo de contexto y cantidad.
     """
     
     def __init__(self):
@@ -69,11 +68,9 @@ class GeminiService:
     def _es_consulta_descuento(self, user_message):
         """
         Determina si el mensaje del usuario está relacionado con descuentos o promociones.
-        MANTIENE REGEX para consultas simples de descuento.
         """
         mensaje_lower = user_message.lower()
         
-        # Palabras clave relacionadas con descuentos y promociones
         palabras_descuento = [
             'descuento', 'rebaja', 'promoción', 'promocion', 'oferta', 'más barato', 'mas barato',
             'mejor precio', 'precio especial', 'precio por volumen', 'mayoreo', 'por mayor',
@@ -81,7 +78,6 @@ class GeminiService:
             'promociones', 'rebajado', 'económico', 'economico', 'ahorrar', 'ahorro'
         ]
         
-        # Verificar si alguna palabra clave está en el mensaje
         for palabra in palabras_descuento:
             if palabra in mensaje_lower:
                 return True
@@ -91,11 +87,9 @@ class GeminiService:
     def _es_consulta_entrega_hoy(self, user_message):
         """
         Determina si el mensaje del usuario hace referencia a la entrega inmediata.
-        MANTIENE REGEX para consultas simples de entrega.
         """
         mensaje_lower = user_message.lower()
         
-        # Patrones para detectar consultas de entrega para hoy
         patrones_entrega_hoy = [
             r'entregan?\s+hoy',
             r'entrega\s+(?:para|de)?\s*hoy',
@@ -105,7 +99,6 @@ class GeminiService:
             r'(?:ya|ahorita|inmediata(?:mente)?)'
         ]
         
-        # Verificar si algún patrón coincide con el mensaje
         for patron in patrones_entrega_hoy:
             if re.search(patron, mensaje_lower):
                 logger.info(f"Detectada consulta de entrega para HOY con patrón: {patron}")
@@ -115,7 +108,7 @@ class GeminiService:
     
     def analizar_contexto_con_gemini(self, user_message, conversation_history):
         """
-        ✅ PÚBLICO: Usa Gemini para analizar el contexto completo de la conversación.
+        ✅ MEJORADO: Usa Gemini para analizar el contexto completo de la conversación.
         Determina si es consulta de cantidad y extrae el producto del contexto.
         
         Args:
@@ -143,7 +136,7 @@ class GeminiService:
         
         prompt = f"""{GEMINI_SYSTEM_INSTRUCTIONS}
 
-ANÁLISIS DE CONTEXTO:
+ANÁLISIS DE CONTEXTO MEJORADO:
 Analiza el siguiente historial de conversación y el mensaje actual del usuario.
 
 HISTORIAL PREVIO:
@@ -152,9 +145,14 @@ HISTORIAL PREVIO:
 MENSAJE ACTUAL DEL USUARIO: "{user_message}"
 
 Tu tarea es determinar:
-1. ¿Es este mensaje una indicación de CANTIDAD para un producto ya mencionado?
+1. ¿Es este mensaje una indicación de CANTIDAD para un producto ya mencionado en el historial?
 2. Si es cantidad, ¿cuántas unidades quiere?
 3. ¿Cuál es el producto del contexto anterior?
+
+REGLAS IMPORTANTES:
+- Solo marca como "cantidad" si el usuario ESPECÍFICAMENTE indica una cantidad numérica o palabras como "quiero X", "necesito X unidades"
+- Si solo pregunta por disponibilidad ("tienes X?", "hay X?") NO es consulta de cantidad
+- Si pregunta por un producto nuevo, marca como "producto_nuevo"
 
 RESPONDE EXACTAMENTE en este formato JSON:
 {{
@@ -167,11 +165,12 @@ RESPONDE EXACTAMENTE en este formato JSON:
 EJEMPLOS:
 - Si dice "quiero 5 unidades" después de preguntar por paracetamol → {{"es_cantidad": true, "cantidad": 5, "producto_contexto": "paracetamol", "tipo_consulta": "cantidad"}}
 - Si dice "tienes ibuprofeno?" → {{"es_cantidad": false, "cantidad": null, "producto_contexto": null, "tipo_consulta": "producto_nuevo"}}
-- Si dice "hola" → {{"es_cantidad": false, "cantidad": null, "producto_contexto": null, "tipo_consulta": "general"}}
+- Si dice "2" después de hablar de dualgos → {{"es_cantidad": true, "cantidad": 2, "producto_contexto": "dualgos", "tipo_consulta": "cantidad"}}
+- Si dice "tienes dualgos?" → {{"es_cantidad": false, "cantidad": null, "producto_contexto": null, "tipo_consulta": "producto_nuevo"}}
 """
 
         try:
-            logger.info(f"Analizando contexto con Gemini para: '{user_message}'")
+            logger.info(f"🔍 Analizando contexto con Gemini para: '{user_message}'")
             response = self.model.generate_content(prompt)
             resp_text = response.text.strip()
             
@@ -185,10 +184,10 @@ EJEMPLOS:
                 json_str = json_match.group(0)
                 resultado = json.loads(json_str)
                 
-                logger.info(f"Análisis de contexto: {resultado}")
+                logger.info(f"📊 Análisis de contexto: {resultado}")
                 return resultado
             else:
-                logger.warning(f"No se pudo extraer JSON de la respuesta: {resp_text}")
+                logger.warning(f"⚠️ No se pudo extraer JSON de la respuesta: {resp_text}")
                 return {
                     "es_cantidad": False,
                     "cantidad": None,
@@ -197,7 +196,7 @@ EJEMPLOS:
                 }
                 
         except Exception as e:
-            logger.error(f"Error en análisis de contexto con Gemini: {e}")
+            logger.error(f"❌ Error en análisis de contexto con Gemini: {e}")
             return {
                 "es_cantidad": False,
                 "cantidad": None,
@@ -259,10 +258,17 @@ Mensaje: "{user_message}"
             logger.error(f"Error en generate_response: {e}")
             return f"Lo siento, hubo un error al procesar tu solicitud: {e}"
     
-    def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None):
+    def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None, es_consulta_cantidad=False, cantidad_solicitada=None):
         """
-        Genera una respuesta basada en el mensaje del usuario y las opciones de productos disponibles.
-        ACTUALIZADO: Usa análisis de contexto con Gemini para determinar cantidad.
+        ✅ CORREGIDO: Genera respuesta basada en el tipo de consulta (disponibilidad vs cantidad específica).
+        
+        Args:
+            user_message (str): Mensaje del usuario
+            producto_info (dict): Información del producto
+            additional_context (str): Contexto adicional
+            conversation_history (list): Historial de conversación
+            es_consulta_cantidad (bool): Si es consulta específica de cantidad
+            cantidad_solicitada (int): Cantidad específica solicitada
         """
         try:
             # Verificar si es una consulta sobre entregas
@@ -308,32 +314,29 @@ Mensaje: "{user_message}"
                 logger.warning("No se encontraron opciones de producto disponibles")
                 return f"Lo siento, no encontramos este producto disponible en nuestro inventario en este momento. {mensaje_final}"
             
-            # ✅ USAR GEMINI PARA DETECTAR CANTIDAD EN CONTEXTO
-            contexto_analisis = self.analizar_contexto_con_gemini(user_message, conversation_history)
+            # ✅ CORREGIDO: Solo usar cantidad específica si es consulta de cantidad
+            cantidad = cantidad_solicitada if es_consulta_cantidad and cantidad_solicitada else None
             
-            # Determinar cantidad basada en análisis de Gemini
-            cantidad = 1  # Valor por defecto
-            if contexto_analisis.get("es_cantidad") and contexto_analisis.get("cantidad"):
-                cantidad = contexto_analisis["cantidad"]
-                logger.info(f"Gemini detectó cantidad en contexto: {cantidad}")
+            logger.info(f"📊 Tipo de consulta: {'cantidad específica' if es_consulta_cantidad else 'disponibilidad general'}")
+            if cantidad:
+                logger.info(f"📦 Cantidad solicitada: {cantidad}")
             
             # Función para aplicar margen y formatear precio
-            def aplicar_margen_precio(precio_str, fuente):
+            def aplicar_margen_precio(precio_str, fuente, cantidad_calc=1):
                 """Aplica margen solo si NO es de la Base Interna"""
                 try:
                     precio_limpio = precio_str.replace('$', '').replace(',', '').strip()
                     precio_float = float(precio_limpio)
                     
                     if fuente == "Base Interna":
-                        return f"${precio_float:.2f}"
+                        precio_final = precio_float * cantidad_calc
+                        return f"${precio_final:.2f}"
                     
-                    precio_con_margen = precio_float * 1.45
+                    precio_con_margen = precio_float * 1.45 * cantidad_calc
                     return f"${precio_con_margen:.2f}"
                 except (ValueError, AttributeError):
                     logger.warning(f"No se pudo convertir el precio: {precio_str}")
                     return precio_str
-            
-            logger.info(f"Cantidad final detectada: {cantidad}")
             
             # Conversión de nombre de fuente a código interno
             fuente_mapping = {
@@ -353,52 +356,62 @@ Mensaje: "{user_message}"
                 opcion_entrega_inmediata = producto_info["opcion_entrega_inmediata"]
                 opcion_mejor_precio = producto_info["opcion_mejor_precio"]
                 
-                # Aplicar margen según corresponda
-                precio_entrega_inmediata = aplicar_margen_precio(
-                    opcion_entrega_inmediata['precio'], 
-                    opcion_entrega_inmediata.get('fuente', '')
-                )
-                precio_mejor_precio = aplicar_margen_precio(
-                    opcion_mejor_precio['precio'],
-                    opcion_mejor_precio.get('fuente', '')
-                )
-                
-                # Ajustar precio según la cantidad solicitada
-                if cantidad > 1:
-                    valor_entrega = float(precio_entrega_inmediata.replace('$', '').replace(',', ''))
-                    valor_mejor = float(precio_mejor_precio.replace('$', '').replace(',', ''))
+                # ✅ CORREGIDO: Solo mostrar cantidad si es consulta específica
+                if es_consulta_cantidad and cantidad:
+                    # Respuesta con cantidad específica
+                    precio_entrega_inmediata = aplicar_margen_precio(
+                        opcion_entrega_inmediata['precio'], 
+                        opcion_entrega_inmediata.get('fuente', ''),
+                        cantidad
+                    )
+                    precio_mejor_precio = aplicar_margen_precio(
+                        opcion_mejor_precio['precio'],
+                        opcion_mejor_precio.get('fuente', ''),
+                        cantidad
+                    )
                     
-                    total_entrega = valor_entrega * cantidad
-                    total_mejor = valor_mejor * cantidad
+                    fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
+                    fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
                     
-                    precio_entrega_inmediata = f"${total_entrega:.2f}"
-                    precio_mejor_precio = f"${total_mejor:.2f}"
-                
-                fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
-                fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
-                
-                respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
-                respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
-                respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
-                respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
-                
-                return respuesta
+                    respuesta = f"📦 {cantidad} unidad(es) solicitada(s):\n"
+                    respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
+                    respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
+                    respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
+                    
+                    return respuesta
+                else:
+                    # ✅ CORREGIDO: Respuesta general de disponibilidad
+                    precio_entrega_inmediata = aplicar_margen_precio(
+                        opcion_entrega_inmediata['precio'], 
+                        opcion_entrega_inmediata.get('fuente', '')
+                    )
+                    precio_mejor_precio = aplicar_margen_precio(
+                        opcion_mejor_precio['precio'],
+                        opcion_mejor_precio.get('fuente', '')
+                    )
+                    
+                    fuente_entrega = fuente_mapping.get(opcion_entrega_inmediata.get('fuente', ''), 'XX')
+                    fuente_precio = fuente_mapping.get(opcion_mejor_precio.get('fuente', ''), 'XX')
+                    
+                    respuesta = f"✅ Sí, tenemos disponible:\n"
+                    respuesta += f"🚚 Entrega hoy mismo por {precio_entrega_inmediata}\n"
+                    respuesta += f"💲 Mejor precio con entrega mañana por {precio_mejor_precio}\n"
+                    respuesta += f"{mensaje_final} (Origen: {fuente_entrega}/{fuente_precio})"
+                    
+                    return respuesta
             
             # Si solo hay una opción
             logger.info("Generando respuesta con una sola opción")
             
             producto = producto_info.get("opcion_entrega_inmediata") or producto_info.get("opcion_mejor_precio")
             
+            # ✅ CORREGIDO: Aplicar cantidad solo si es consulta específica
+            cantidad_calculo = cantidad if es_consulta_cantidad and cantidad else 1
             precio_con_margen = aplicar_margen_precio(
                 producto['precio'],
-                producto.get('fuente', '')
+                producto.get('fuente', ''),
+                cantidad_calculo
             )
-            
-            # Ajustar precio según la cantidad solicitada
-            if cantidad > 1:
-                valor = float(precio_con_margen.replace('$', '').replace(',', ''))
-                total = valor * cantidad
-                precio_con_margen = f"${total:.2f}"
             
             # Formato especial para productos de Base Interna
             if producto.get("fuente") == "Base Interna":
@@ -412,11 +425,20 @@ Mensaje: "{user_message}"
                 except:
                     stock_text = "📦 Consultar disponibilidad"
                 
-                respuesta = f"✅ {cantidad} unidad(es) solicitada(s)\n"
-                respuesta += f"Precio total: {precio_con_margen}\n"
-                respuesta += f"🚚 Entrega hoy mismo\n"
-                respuesta += f"{stock_text}\n"
-                respuesta += f"{mensaje_final} (Origen: BI)"
+                if es_consulta_cantidad and cantidad:
+                    # Respuesta con cantidad específica
+                    respuesta = f"✅ {cantidad} unidad(es) solicitada(s)\n"
+                    respuesta += f"Precio total: {precio_con_margen}\n"
+                    respuesta += f"🚚 Entrega hoy mismo\n"
+                    respuesta += f"{stock_text}\n"
+                    respuesta += f"{mensaje_final} (Origen: BI)"
+                else:
+                    # Respuesta general de disponibilidad
+                    respuesta = f"✅ Sí, tenemos disponible\n"
+                    respuesta += f"Precio: {precio_con_margen}\n"
+                    respuesta += f"🚚 Entrega hoy mismo\n"
+                    respuesta += f"{stock_text}\n"
+                    respuesta += f"{mensaje_final} (Origen: BI)"
                 
                 return respuesta
             
@@ -426,10 +448,18 @@ Mensaje: "{user_message}"
             
             codigo_fuente = fuente_mapping.get(producto.get('fuente', ''), 'XX')
             
-            respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
-            respuesta += f"Precio total: {precio_con_margen}\n"
-            respuesta += f"{mensaje_entrega}\n"
-            respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
+            if es_consulta_cantidad and cantidad:
+                # Respuesta con cantidad específica
+                respuesta = f"✅ {cantidad} unidad(es) solicitada(s).\n"
+                respuesta += f"Precio total: {precio_con_margen}\n"
+                respuesta += f"{mensaje_entrega}\n"
+                respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
+            else:
+                # ✅ CORREGIDO: Respuesta general de disponibilidad
+                respuesta = f"✅ Sí, tenemos disponible.\n"
+                respuesta += f"Precio: {precio_con_margen}\n"
+                respuesta += f"{mensaje_entrega}\n"
+                respuesta += f"{mensaje_final} (Origen: {codigo_fuente})"
             
             return respuesta
                 
@@ -439,7 +469,7 @@ Mensaje: "{user_message}"
     
     def detectar_producto(self, user_message, conversation_history=None):
         """
-        ✅ ACTUALIZADO: Usa Gemini para analizar contexto completo y detectar productos.
+        ✅ MEJORADO: Usa Gemini para analizar contexto completo y detectar productos.
         
         Args:
             user_message (str): Mensaje del usuario
