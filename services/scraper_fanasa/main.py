@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 USERNAME = "ventas@insumosjip.com"  # Usuario para FANASA
 PASSWORD = "210407"                # Contraseña para FANASA
 LOGIN_URL = "https://carrito.fanasa.com/login"  # URL correcta del portal de carrito
-TIMEOUT = 20                       # Tiempo de espera para elementos (segundos) - AUMENTADO A 20
-LOGIN_TIMEOUT = 20                 # Timeout específico para login (segundos)
+TIMEOUT = 20                       # Tiempo de espera para elementos (segundos)
+LOGIN_TIMEOUT = 20                 # ✅ NUEVO: Timeout específico para login
 
 def inicializar_navegador(headless=True):
     """
@@ -56,18 +56,9 @@ def inicializar_navegador(headless=True):
     # Reducir el nivel de logging para evitar mostrar errores SSL
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
     
-    # Configurar timeouts más agresivos
-    options.add_argument("--timeout=20")
-    options.add_argument("--page-load-strategy=none")  # No esperar a que cargue todo
-    
     try:
         # Inicializar el navegador Chrome
         driver = webdriver.Chrome(options=options)
-        
-        # Configurar timeouts del driver
-        driver.set_page_load_timeout(LOGIN_TIMEOUT)
-        driver.implicitly_wait(5)  # Timeout implícito más corto
-        
         logger.info("Navegador Chrome inicializado correctamente")
         return driver
     except Exception as e:
@@ -76,8 +67,7 @@ def inicializar_navegador(headless=True):
 
 def login_fanasa_carrito():
     """
-    Realiza el proceso de login en el portal de carrito de FANASA.
-    CON TIMEOUT DE 20 SEGUNDOS - Si no responde, continúa con el proceso.
+    ✅ VERSIÓN OPTIMIZADA: Login original que funcionaba al 100% + timeout de 20 segundos
     
     Returns:
         tuple: (webdriver.Chrome, bool) - (driver, login_exitoso)
@@ -87,29 +77,21 @@ def login_fanasa_carrito():
         logger.error("No se pudo inicializar el navegador. Abortando.")
         return None, False
     
+    # ✅ NUEVO: Control de tiempo
+    start_time = time.time()
     login_exitoso = False
     
     try:
-        logger.info(f"🔄 Iniciando proceso de login con timeout de {LOGIN_TIMEOUT} segundos")
+        logger.info(f"⏰ Iniciando login con timeout de {LOGIN_TIMEOUT} segundos")
         
-        # Marcar tiempo de inicio
-        start_time = time.time()
-        
-        # 1. Navegar a la página de login con timeout
+        # 1. Navegar a la página de login
         logger.info(f"Navegando a la página de login: {LOGIN_URL}")
-        try:
-            driver.get(LOGIN_URL)
-            # Esperar máximo 10 segundos para que cargue la página
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-            logger.info("✅ Página de login cargada correctamente")
-        except TimeoutException:
-            logger.warning("⚠️ Timeout cargando página de login, pero continuando...")
+        driver.get(LOGIN_URL)
+        time.sleep(5)  # Esperar a que cargue la página
         
-        # Verificar si ya pasaron 20 segundos
+        # ✅ VERIFICAR TIMEOUT
         if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado al cargar página")
+            logger.warning(f"⏰ Timeout alcanzado al cargar página de login")
             return driver, False
         
         # Tomar captura de pantalla inicial
@@ -119,291 +101,327 @@ def login_fanasa_carrito():
         except:
             logger.warning("No se pudo guardar captura de pantalla")
         
-        # 2. Buscar campo de usuario con timeout reducido
-        logger.info("🔍 Buscando campo de usuario...")
+        # 2. Buscar campo de usuario
+        logger.info("Buscando campo de usuario...")
         
+        # Basado en la captura, el campo tiene una etiqueta "Usuario o correo"
         username_field = None
-        try:
-            # Usar WebDriverWait con timeout corto
-            wait_short = WebDriverWait(driver, 5)
-            
-            username_selectors = [
-                "input[placeholder='Usuario o correo']",
-                "#email",
-                "input[type='email']",
-                "input[type='text']:first-of-type",
-                ".form-control:first-of-type"
-            ]
-            
-            for selector in username_selectors:
-                try:
-                    username_field = wait_short.until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    logger.info(f"✅ Campo de usuario encontrado con selector: {selector}")
-                    break
-                except TimeoutException:
-                    continue
+        username_selectors = [
+            "input[placeholder='Usuario o correo']",
+            "#email",  # Posible ID
+            "input[type='email']",
+            "input[type='text']:first-of-type",
+            ".form-control:first-of-type"
+        ]
+        
+        for selector in username_selectors:
+            # ✅ VERIFICAR TIMEOUT
+            if time.time() - start_time > LOGIN_TIMEOUT:
+                logger.warning(f"⏰ Timeout alcanzado buscando campo usuario")
+                return driver, False
                 
-                # Verificar timeout general
-                if time.time() - start_time > LOGIN_TIMEOUT:
-                    logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado buscando usuario")
-                    return driver, False
-            
-            # Si no encontramos con selectores específicos, buscar cualquier input visible
-            if not username_field:
-                try:
-                    all_inputs = driver.find_elements(By.TAG_NAME, "input")
-                    visible_inputs = [inp for inp in all_inputs if inp.is_displayed()]
-                    
-                    if visible_inputs:
-                        username_field = visible_inputs[0]
-                        logger.info("✅ Campo de usuario encontrado como primer input visible")
-                except:
-                    pass
-            
-        except Exception as e:
-            logger.warning(f"Error buscando campo de usuario: {e}")
-        
-        # Verificar timeout y campo de usuario
-        if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado")
-            return driver, False
-            
-        if not username_field:
-            logger.warning("❌ No se pudo encontrar el campo de usuario, pero continuando...")
-            return driver, False
-        
-        # 3. Ingresar usuario
-        try:
-            username_field.clear()
-            username_field.send_keys(USERNAME)
-            logger.info(f"✅ Usuario ingresado: {USERNAME}")
-            time.sleep(0.5)  # Pausa corta
-        except Exception as e:
-            logger.warning(f"Error ingresando usuario: {e}")
-            return driver, False
-        
-        # Verificar timeout
-        if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado después de ingresar usuario")
-            return driver, False
-        
-        # 4. Buscar campo de contraseña
-        logger.info("🔍 Buscando campo de contraseña...")
-        
-        password_field = None
-        try:
-            password_selectors = [
-                "input[placeholder='Contraseña']",
-                "#password",
-                "input[type='password']",
-                "input.form-control[type='password']"
-            ]
-            
-            for selector in password_selectors:
-                try:
-                    password_field = wait_short.until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    logger.info(f"✅ Campo de contraseña encontrado con selector: {selector}")
+            try:
+                fields = driver.find_elements(By.CSS_SELECTOR, selector)
+                for field in fields:
+                    if field.is_displayed():
+                        username_field = field
+                        logger.info(f"Campo de usuario encontrado con selector: {selector}")
+                        break
+                if username_field:
                     break
-                except TimeoutException:
-                    continue
-            
-            # Si no encontramos, buscar por tipo password
-            if not password_field:
-                try:
-                    password_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-                    if password_inputs:
-                        for inp in password_inputs:
-                            if inp.is_displayed():
-                                password_field = inp
-                                logger.info("✅ Campo de contraseña encontrado por tipo 'password'")
-                                break
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.warning(f"Error buscando campo de contraseña: {e}")
+            except:
+                continue
         
-        # Verificar timeout y campo de contraseña
+        # Si no encontramos con los selectores específicos, buscar cualquier input visible
+        if not username_field:
+            try:
+                # Buscar todos los inputs visibles
+                inputs = driver.find_elements(By.TAG_NAME, "input")
+                visible_inputs = [inp for inp in inputs if inp.is_displayed()]
+                
+                if visible_inputs:
+                    # Primer input visible probablemente sea el de usuario
+                    username_field = visible_inputs[0]
+                    logger.info("Campo de usuario encontrado como primer input visible")
+            except:
+                pass
+        
+        # Si no se encuentra el campo de usuario, no podemos continuar
+        if not username_field:
+            logger.error("No se pudo encontrar el campo de usuario")
+            driver.save_screenshot("error_no_campo_usuario.png")
+            return driver, False
+        
+        # ✅ VERIFICAR TIMEOUT
         if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado buscando contraseña")
-            return driver, False
-            
-        if not password_field:
-            logger.warning("❌ No se pudo encontrar el campo de contraseña, pero continuando...")
+            logger.warning(f"⏰ Timeout alcanzado antes de ingresar usuario")
             return driver, False
         
-        # 5. Ingresar contraseña
+        # Limpiar e ingresar el usuario
+        username_field.clear()
+        username_field.send_keys(USERNAME)
+        logger.info(f"Usuario ingresado: {USERNAME}")
+        time.sleep(1)
+        
+        # Tomar captura después de ingresar el usuario
         try:
-            password_field.clear()
-            password_field.send_keys(PASSWORD)
-            logger.info("✅ Contraseña ingresada")
-            time.sleep(0.5)  # Pausa corta
-        except Exception as e:
-            logger.warning(f"Error ingresando contraseña: {e}")
-            return driver, False
+            driver.save_screenshot("02_fanasa_carrito_usuario_ingresado.png")
+        except:
+            pass
         
-        # Verificar timeout
+        # 3. Buscar campo de contraseña
+        logger.info("Buscando campo de contraseña...")
+        
+        # ✅ VERIFICAR TIMEOUT
         if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado después de ingresar contraseña")
+            logger.warning(f"⏰ Timeout alcanzado antes de buscar contraseña")
             return driver, False
         
-        # 6. Buscar y hacer clic en botón de login
-        logger.info("🔍 Buscando botón 'Iniciar sesión'...")
+        # Basado en la captura, es un campo con etiqueta "Contraseña"
+        password_field = None
+        password_selectors = [
+            "input[placeholder='Contraseña']",
+            "#password",  # Posible ID
+            "input[type='password']",
+            "input.form-control[type='password']"
+        ]
+        
+        for selector in password_selectors:
+            try:
+                fields = driver.find_elements(By.CSS_SELECTOR, selector)
+                for field in fields:
+                    if field.is_displayed():
+                        password_field = field
+                        logger.info(f"Campo de contraseña encontrado con selector: {selector}")
+                        break
+                if password_field:
+                    break
+            except:
+                continue
+        
+        # Si no encontramos con selectores específicos, buscar por tipo password
+        if not password_field:
+            try:
+                password_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+                if password_inputs:
+                    for inp in password_inputs:
+                        if inp.is_displayed():
+                            password_field = inp
+                            logger.info("Campo de contraseña encontrado por tipo 'password'")
+                            break
+            except:
+                pass
+        
+        # Si no se encuentra el campo de contraseña, no podemos continuar
+        if not password_field:
+            logger.error("No se pudo encontrar el campo de contraseña")
+            driver.save_screenshot("error_no_campo_password.png")
+            return driver, False
+        
+        # ✅ VERIFICAR TIMEOUT
+        if time.time() - start_time > LOGIN_TIMEOUT:
+            logger.warning(f"⏰ Timeout alcanzado antes de ingresar contraseña")
+            return driver, False
+        
+        # Limpiar e ingresar la contraseña
+        password_field.clear()
+        password_field.send_keys(PASSWORD)
+        logger.info("Contraseña ingresada")
+        time.sleep(1)
+        
+        # Tomar captura después de ingresar la contraseña
+        try:
+            driver.save_screenshot("03_fanasa_carrito_password_ingresado.png")
+        except:
+            pass
+        
+        # 4. Buscar botón de inicio de sesión (basado en la captura es un botón azul)
+        logger.info("Buscando botón 'Iniciar sesión'...")
+        
+        # ✅ VERIFICAR TIMEOUT
+        if time.time() - start_time > LOGIN_TIMEOUT:
+            logger.warning(f"⏰ Timeout alcanzado antes de buscar botón")
+            return driver, False
         
         login_button = None
-        try:
-            button_selectors = [
-                "button.btn-primary",
-                "button[type='submit']",
-                "button:contains('Iniciar sesión')",
-                ".btn-primary",
-                ".btn-login"
-            ]
-            
-            for selector in button_selectors:
-                try:
-                    buttons = driver.find_elements(By.CSS_SELECTOR, selector)
-                    for button in buttons:
-                        if button.is_displayed() and "iniciar sesión" in button.text.lower():
-                            login_button = button
-                            logger.info(f"✅ Botón 'Iniciar sesión' encontrado con selector: {selector}")
-                            break
-                    if login_button:
-                        break
-                except:
-                    continue
-            
-            # Si no encontramos, intentar con XPath
-            if not login_button:
-                try:
-                    xpath_buttons = driver.find_elements(By.XPATH, 
-                        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ', 'abcdefghijklmnñopqrstuvwxyz'), 'iniciar sesión')]")
-                    if xpath_buttons:
-                        for button in xpath_buttons:
-                            if button.is_displayed():
-                                login_button = button
-                                logger.info("✅ Botón 'Iniciar sesión' encontrado por texto")
-                                break
-                except:
-                    pass
-            
-        except Exception as e:
-            logger.warning(f"Error buscando botón de login: {e}")
+        button_selectors = [
+            "button.btn-primary",  # Clase probable basada en la captura
+            "button[type='submit']",
+            "button:contains('Iniciar sesión')",
+            ".btn-primary",
+            ".btn-login"
+        ]
         
-        # Verificar timeout
-        if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado buscando botón")
-            return driver, False
-        
-        # 7. Hacer clic en el botón o enviar con Enter
-        try:
-            if login_button:
-                try:
-                    # Intentar clic normal
-                    login_button.click()
-                    logger.info("✅ Clic en botón 'Iniciar sesión' realizado")
-                except ElementClickInterceptedException:
-                    # Si hay algo interceptando el clic, intentar con JavaScript
-                    driver.execute_script("arguments[0].click();", login_button)
-                    logger.info("✅ Clic en botón realizado con JavaScript")
-            else:
-                # Si no hay botón, intentar Enter en contraseña
-                logger.warning("❌ No se encontró botón. Intentando enviar formulario con Enter.")
-                password_field.send_keys(Keys.RETURN)
-                logger.info("✅ Formulario enviado con Enter")
-            
-            # Esperar un momento para que se procese
-            time.sleep(2)
-            
-        except Exception as e:
-            logger.warning(f"Error al hacer clic o enviar formulario: {e}")
-            return driver, False
-        
-        # Verificar timeout después del envío
-        if time.time() - start_time > LOGIN_TIMEOUT:
-            logger.warning(f"⏰ Timeout general de {LOGIN_TIMEOUT}s alcanzado después de enviar login")
-            return driver, False
-        
-        # 8. Verificar si el login fue exitoso (con timeout reducido)
-        logger.info("🔍 Verificando resultado del login...")
-        
-        try:
-            # Esperar máximo 5 segundos para verificar el resultado
-            time.sleep(2)
-            
-            current_url = driver.current_url
-            logger.info(f"URL actual después del intento de login: {current_url}")
-            
-            # Verificar si ya no estamos en la página de login
-            login_exitoso = "/login" not in current_url
-            
-            # También verificar si hay indicadores de sesión iniciada
-            if not login_exitoso:
-                try:
-                    page_text = driver.page_source.lower()
-                    success_indicators = [
-                        "cerrar sesión" in page_text,
-                        "logout" in page_text,
-                        "mi cuenta" in page_text,
-                        "carrito" in page_text and not "/login" in current_url
-                    ]
-                    
-                    login_exitoso = any(success_indicators)
-                except:
-                    pass
-            
-            # Verificar si hay mensajes de error visibles
-            has_error = False
+        for selector in button_selectors:
             try:
-                error_messages = driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, .text-danger")
-                for error in error_messages:
-                    if error.is_displayed():
-                        has_error = True
-                        logger.error(f"❌ Mensaje de error detectado: {error.text}")
+                buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                for button in buttons:
+                    if button.is_displayed() and "iniciar sesión" in button.text.lower():
+                        login_button = button
+                        logger.info(f"Botón 'Iniciar sesión' encontrado con selector: {selector}")
+                        break
+                if login_button:
+                    break
+            except:
+                continue
+        
+        # Si no encontramos con CSS, intentar con XPath específico para el texto
+        if not login_button:
+            try:
+                xpath_buttons = driver.find_elements(By.XPATH, "//button[contains(translate(text(), 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ', 'abcdefghijklmnñopqrstuvwxyz'), 'iniciar sesión')]")
+                if xpath_buttons:
+                    for button in xpath_buttons:
+                        if button.is_displayed():
+                            login_button = button
+                            logger.info("Botón 'Iniciar sesión' encontrado por texto")
+                            break
+            except:
+                pass
+        
+        # Si no se encuentra un botón específico, buscar cualquier botón visible
+        if not login_button:
+            try:
+                all_buttons = driver.find_elements(By.TAG_NAME, "button")
+                for button in all_buttons:
+                    if button.is_displayed() and button.is_enabled():
+                        login_button = button
+                        logger.info("Usando primer botón visible como botón de login")
                         break
             except:
                 pass
-            
-            # Resultado final
-            if login_exitoso and not has_error:
-                logger.info("✅ ¡LOGIN EXITOSO EN FANASA CARRITO!")
-                try:
-                    driver.save_screenshot("05_fanasa_carrito_login_exitoso.png")
-                except:
-                    pass
-                return driver, True
-            else:
-                logger.warning("⚠️ Login en FANASA Carrito no confirmado o falló")
-                if has_error:
-                    logger.error("❌ Se detectaron mensajes de error en la página")
-                try:
-                    driver.save_screenshot("error_login_no_confirmado.png")
-                except:
-                    pass
-                return driver, False
-                
-        except Exception as e:
-            logger.warning(f"Error verificando resultado del login: {e}")
+        
+        # ✅ VERIFICAR TIMEOUT ANTES DE HACER CLIC
+        if time.time() - start_time > LOGIN_TIMEOUT:
+            logger.warning(f"⏰ Timeout alcanzado antes de hacer clic")
             return driver, False
         
-    except Exception as e:
-        logger.error(f"❌ Error durante el proceso de login: {e}")
+        # Si no se encuentra el botón, intentar enviar el formulario con Enter
+        if not login_button:
+            logger.warning("No se encontró botón de inicio de sesión. Intentando enviar formulario con Enter.")
+            password_field.send_keys(Keys.RETURN)
+            time.sleep(5)
+            try:
+                driver.save_screenshot("04_fanasa_carrito_enviado_con_enter.png")
+            except:
+                pass
+        else:
+            # Hacer clic en el botón
+            try:
+                # Resaltar el botón para identificarlo en la captura
+                driver.execute_script("arguments[0].style.border='2px solid red'", login_button)
+                try:
+                    driver.save_screenshot("04a_fanasa_carrito_boton_resaltado.png")
+                except:
+                    pass
+                
+                # Asegurar que el botón sea visible
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", login_button)
+                time.sleep(1)
+                
+                # Hacer clic
+                login_button.click()
+                logger.info("Clic en botón 'Iniciar sesión' realizado")
+                
+            except ElementClickInterceptedException:
+                # Si hay algo interceptando el clic, intentar con JavaScript
+                logger.warning("Clic interceptado. Intentando con JavaScript.")
+                driver.execute_script("arguments[0].click();", login_button)
+                logger.info("Clic en botón realizado con JavaScript")
+            
+            time.sleep(5)  # Esperar a que se procese el login
+            try:
+                driver.save_screenshot("04b_fanasa_carrito_despues_clic.png")
+            except:
+                pass
+        
+        # ✅ VERIFICAR TIMEOUT DESPUÉS DEL CLIC
+        if time.time() - start_time > LOGIN_TIMEOUT:
+            logger.warning(f"⏰ Timeout alcanzado después de enviar login")
+            return driver, False
+        
+        # 5. Verificar si el login fue exitoso
+        current_url = driver.current_url
+        logger.info(f"URL actual después del intento de login: {current_url}")
+        
+        # Guardar HTML para análisis
         try:
-            driver.save_screenshot("error_general_login.png")
+            with open("fanasa_carrito_despues_login.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            logger.info("HTML después del login guardado para análisis")
+        except:
+            logger.warning("No se pudo guardar HTML")
+        
+        # Verificar si ya no estamos en la página de login
+        login_exitoso = "/login" not in current_url
+        
+        # También verificar si hay indicadores de sesión iniciada
+        if not login_exitoso:
+            page_text = driver.page_source.lower()
+            success_indicators = [
+                "cerrar sesión" in page_text,
+                "logout" in page_text,
+                "mi cuenta" in page_text,
+                "carrito" in page_text and not "/login" in current_url
+            ]
+            
+            login_exitoso = any(success_indicators)
+        
+        # Verificar si hay mensajes de error visibles
+        has_error = False
+        try:
+            error_messages = driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, .text-danger")
+            for error in error_messages:
+                if error.is_displayed():
+                    has_error = True
+                    logger.error(f"Mensaje de error detectado: {error.text}")
+                    break
         except:
             pass
-        return driver, False
+        
+        # Resultado final
+        if login_exitoso and not has_error:
+            logger.info("┌─────────────────────────────────────┐")
+            logger.info("│ ¡LOGIN EXITOSO EN FANASA CARRITO!   │")
+            logger.info("└─────────────────────────────────────┘")
+            
+            # Tomar una última captura después del login exitoso
+            try:
+                driver.save_screenshot("05_fanasa_carrito_login_exitoso.png")
+            except:
+                pass
+            
+            return driver, True  # ✅ NUEVO: Retornar tupla
+        else:
+            logger.error("┌─────────────────────────────────────┐")
+            logger.error("│ ERROR: Login en FANASA Carrito fallido │")
+            logger.error("└─────────────────────────────────────┘")
+            
+            if has_error:
+                logger.error("Se detectaron mensajes de error en la página")
+            
+            try:
+                driver.save_screenshot("error_login_fallido.png")
+            except:
+                pass
+            
+            return driver, False  # ✅ NUEVO: Retornar tupla con false
+        
+    except Exception as e:
+        logger.error(f"Error durante el proceso de login: {e}")
+        if driver:
+            try:
+                driver.save_screenshot("error_general_login.png")
+            except:
+                pass
+        
+        return driver, False  # ✅ NUEVO: Retornar tupla incluso con error
 
 def buscar_producto(driver, nombre_producto):
     """
     Busca un producto en FANASA.
     
     Args:
-        driver: WebDriver con la página cargada
+        driver: WebDriver con sesión iniciada
         nombre_producto: Nombre del producto a buscar
         
     Returns:
@@ -416,7 +434,7 @@ def buscar_producto(driver, nombre_producto):
     try:
         logger.info(f"🔍 Iniciando búsqueda de producto: {nombre_producto}")
         
-        # Esperar a que la página esté cargada
+        # Esperar a que la página principal esté cargada
         time.sleep(3)
         try:
             driver.save_screenshot("pagina_principal.png")
@@ -433,42 +451,58 @@ def buscar_producto(driver, nombre_producto):
             ".search input"
         ]
         
-        wait_search = WebDriverWait(driver, 10)
-        
         for selector in search_selectors:
             try:
-                search_field = wait_search.until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                logger.info(f"✅ Campo de búsqueda encontrado con selector: {selector}")
-                break
-            except TimeoutException:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                for element in elements:
+                    if element.is_displayed():
+                        search_field = element
+                        logger.info(f"Campo de búsqueda encontrado con selector: {selector}")
+                        break
+                if search_field:
+                    break
+            except:
                 continue
         
-        # Si no se encuentra con CSS, intentar con XPath
         if not search_field:
+            # Si no se encuentra con CSS, intentar con XPath
             try:
-                search_field = wait_search.until(
-                    EC.element_to_be_clickable((By.XPATH, "//input[contains(@placeholder, 'Nombre') or contains(@placeholder, 'nombre')]"))
-                )
-                logger.info("✅ Campo de búsqueda encontrado con XPath")
-            except TimeoutException:
+                search_field = driver.find_element(By.XPATH, "//input[contains(@placeholder, 'Nombre') or contains(@placeholder, 'nombre')]")
+                logger.info("Campo de búsqueda encontrado con XPath")
+            except:
                 pass
         
-        # Como último recurso, buscar cualquier input visible
+        # Si todavía no lo encuentra, buscar en el DOM por atributos
+        if not search_field:
+            try:
+                # Buscar mediante navegación desde el formulario
+                forms = driver.find_elements(By.TAG_NAME, "form")
+                for form in forms:
+                    inputs = form.find_elements(By.TAG_NAME, "input")
+                    for inp in inputs:
+                        if inp.is_displayed() and inp.get_attribute("type") == "text":
+                            search_field = inp
+                            logger.info("Campo de búsqueda encontrado dentro de formulario")
+                            break
+                    if search_field:
+                        break
+            except:
+                pass
+        
+        # Como último recurso, probar con cualquier input visible
         if not search_field:
             try:
                 all_inputs = driver.find_elements(By.TAG_NAME, "input")
                 for inp in all_inputs:
-                    if inp.is_displayed() and inp.get_attribute("type") == "text":
+                    if inp.is_displayed() and inp.get_attribute("type") != "hidden":
                         search_field = inp
-                        logger.info("✅ Campo de búsqueda encontrado como input genérico")
+                        logger.info("Usando primer campo input visible como campo de búsqueda")
                         break
             except:
                 pass
         
         if not search_field:
-            logger.error("❌ No se pudo encontrar el campo de búsqueda")
+            logger.error("No se pudo encontrar el campo de búsqueda")
             try:
                 driver.save_screenshot("error_no_campo_busqueda.png")
             except:
@@ -476,8 +510,8 @@ def buscar_producto(driver, nombre_producto):
             return False
         
         # Resaltar el campo de búsqueda en la captura
+        driver.execute_script("arguments[0].style.border='3px solid red'", search_field)
         try:
-            driver.execute_script("arguments[0].style.border='3px solid red'", search_field)
             driver.save_screenshot("campo_busqueda_encontrado.png")
         except:
             pass
@@ -485,12 +519,14 @@ def buscar_producto(driver, nombre_producto):
         # Limpiar e ingresar el término de búsqueda
         search_field.clear()
         search_field.send_keys(nombre_producto)
-        logger.info(f"✅ Texto '{nombre_producto}' ingresado en campo de búsqueda")
+        logger.info(f"Texto '{nombre_producto}' ingresado en campo de búsqueda")
         
-        # Esperar un momento y enviar búsqueda
+        # Esperar un momento para que se registre el texto
         time.sleep(2)
+        
+        # Método 1: Presionar Enter para enviar la búsqueda
         search_field.send_keys(Keys.RETURN)
-        logger.info("✅ Búsqueda enviada con tecla Enter")
+        logger.info("Búsqueda enviada con tecla Enter")
         
         # Esperar a que se carguen los resultados
         time.sleep(5)
@@ -502,8 +538,9 @@ def buscar_producto(driver, nombre_producto):
             pass
         
         # Verificar la presencia de productos en la página
+        # Buscar elementos que indiquen productos
         product_indicators = [
-            f"//h4[contains(text(), '{nombre_producto.upper()}')]",
+            "//h4[contains(text(), 'ZOLADEX') or contains(text(), 'PARACETAMOL') or contains(text(), '" + nombre_producto.upper() + "')]",
             "//div[contains(@class, 'card')]",
             "//div[contains(@class, 'producto')]",
             "//button[contains(text(), 'Agregar a carrito')]",
@@ -512,15 +549,12 @@ def buscar_producto(driver, nombre_producto):
         ]
         
         for indicator in product_indicators:
-            try:
-                elements = driver.find_elements(By.XPATH, indicator)
-                if elements and any(e.is_displayed() for e in elements):
-                    logger.info(f"✅ Productos encontrados mediante indicador: {indicator}")
-                    return True
-            except:
-                continue
+            elements = driver.find_elements(By.XPATH, indicator)
+            if elements and any(e.is_displayed() for e in elements):
+                logger.info(f"✅ Productos encontrados mediante indicador: {indicator}")
+                return True
         
-        # Verificar si el término aparece en la página
+        # Si no se encuentran indicadores específicos, verificar si hay resultados en general
         if nombre_producto.lower() in driver.page_source.lower():
             logger.info("✅ El término de búsqueda aparece en la página de resultados")
             return True
@@ -529,7 +563,7 @@ def buscar_producto(driver, nombre_producto):
             return False
             
     except Exception as e:
-        logger.error(f"❌ Error durante la búsqueda: {e}")
+        logger.error(f"⚠️ Error durante la búsqueda: {e}")
         try:
             driver.save_screenshot("error_busqueda.png")
         except:
@@ -548,11 +582,11 @@ def extraer_info_productos(driver, numero_producto=0):
         dict: Diccionario con la información del producto o None si hay error
     """
     if not driver:
-        logger.error("❌ No se proporcionó un navegador válido")
+        logger.error("No se proporcionó un navegador válido")
         return None
     
     try:
-        logger.info(f"🔍 Extrayendo información del producto #{numero_producto}")
+        logger.info(f"Extrayendo información del producto #{numero_producto}")
         
         # Guardar página para análisis
         try:
@@ -586,47 +620,59 @@ def extraer_info_productos(driver, numero_producto=0):
         ]
         
         for selector in card_selectors:
-            try:
-                cards = driver.find_elements(By.XPATH, selector)
-                visible_cards = [card for card in cards if card.is_displayed()]
-                if visible_cards:
-                    product_cards = visible_cards
-                    logger.info(f"✅ Encontradas {len(product_cards)} tarjetas de productos con selector: {selector}")
-                    break
-            except:
-                continue
+            cards = driver.find_elements(By.XPATH, selector)
+            visible_cards = [card for card in cards if card.is_displayed()]
+            if visible_cards:
+                product_cards = visible_cards
+                logger.info(f"Encontradas {len(product_cards)} tarjetas de productos con selector: {selector}")
+                break
         
         if not product_cards:
-            logger.warning("⚠️ No se encontraron tarjetas de productos. Intentando extraer de toda la página.")
+            logger.warning("No se encontraron tarjetas de productos. Intentando extraer de toda la página.")
+            # Si no hay tarjetas, intentar extraer de la página completa
             product_card = driver.find_element(By.TAG_NAME, "body")
         else:
             # Seleccionar la tarjeta según el índice proporcionado
             if numero_producto < len(product_cards):
                 product_card = product_cards[numero_producto]
-                logger.info(f"✅ Seleccionando producto #{numero_producto}")
+                logger.info(f"Seleccionando producto #{numero_producto}")
+                # Resaltar el producto seleccionado
                 try:
                     driver.execute_script("arguments[0].style.border='3px solid green'", product_card)
                     driver.save_screenshot(f"tarjeta_producto_{numero_producto}_seleccionada.png")
                 except:
                     pass
             else:
-                logger.warning(f"⚠️ Índice {numero_producto} fuera de rango. Solo hay {len(product_cards)} productos. Usando el primero.")
+                logger.warning(f"Índice {numero_producto} fuera de rango. Solo hay {len(product_cards)} productos. Usando el primero.")
                 product_card = product_cards[0]
         
         # Extraer NOMBRE del producto
         try:
             nombre_elements = product_card.find_elements(By.XPATH, 
-                ".//h4 | .//h2 | .//h3 | .//h5[contains(@class, 'Name-product')] | .//h5[contains(@class, 'name-product')] | .//h5[contains(@class, 'mb-2')] | .//div[contains(@class, 'name-product')] | .//div[contains(@class, 'product-name')] | .//strong")
+                ".//h4 | .//h2 | .//h3 | .//h5[contains(@class, 'Name-product')] | .//h5[contains(@class, 'name-product')] | .//h5[contains(@class, 'mb-2')] | .//div[contains(@class, 'name-product')] | .//div[contains(@class, 'product-name')] | .//strong[contains(text(), 'PARACETAMOL')] | .//strong[contains(text(), 'ZOLADEX')]")
             
             for element in nombre_elements:
                 if element.is_displayed():
                     texto = element.text.strip()
                     if texto and len(texto) > 5 and "regresar" not in texto.lower():
                         info_producto['nombre'] = texto
-                        logger.info(f"✅ Nombre del producto: {info_producto['nombre']}")
+                        logger.info(f"Nombre del producto: {info_producto['nombre']}")
                         break
             
-            # Si no encontramos el nombre, usar texto visible más largo
+            # Si no encontramos el nombre con los selectores anteriores, intentar con clases específicas
+            if not info_producto['nombre']:
+                nombre_class_elements = product_card.find_elements(By.CSS_SELECTOR, 
+                    ".name-product, .product-name, .mb-2, .Name-product, h5.font-weight-bold")
+                
+                for element in nombre_class_elements:
+                    if element.is_displayed():
+                        texto = element.text.strip()
+                        if texto and len(texto) > 5 and "regresar" not in texto.lower():
+                            info_producto['nombre'] = texto
+                            logger.info(f"Nombre del producto (por clase): {info_producto['nombre']}")
+                            break
+                            
+            # Si todavía no tenemos nombre, intentar con el texto visible más largo
             if not info_producto['nombre']:
                 visible_texts = []
                 all_elements = product_card.find_elements(By.XPATH, ".//*")
@@ -637,59 +683,95 @@ def extraer_info_productos(driver, numero_producto=0):
                             visible_texts.append((len(texto), texto))
                 
                 if visible_texts:
+                    # Ordenar por longitud (el texto más largo primero)
                     visible_texts.sort(reverse=True)
                     info_producto['nombre'] = visible_texts[0][1]
-                    logger.info(f"✅ Nombre del producto (texto más largo): {info_producto['nombre']}")
+                    logger.info(f"Nombre del producto (texto más largo): {info_producto['nombre']}")
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo nombre: {e}")
+            logger.warning(f"Error extrayendo nombre: {e}")
         
         # Extraer PRECIOS
         try:
-            # Buscar diferentes tipos de precios
-            precio_patterns = [
-                ("precio_neto", "Precio Neto"),
-                ("pmp", "PMP"),
-                ("precio_publico", "Precio Público"),
-                ("precio_farmacia", "Precio Farmacia")
-            ]
+            # Buscar Precio Neto
+            precio_neto_elements = product_card.find_elements(By.XPATH, 
+                ".//div[contains(text(), 'Precio Neto')]/following-sibling::* | .//h5[contains(text(), 'Precio Neto')]/following-sibling::*")
             
-            for precio_key, precio_label in precio_patterns:
-                try:
-                    precio_elements = product_card.find_elements(By.XPATH, 
-                        f".//div[contains(text(), '{precio_label}')]/following-sibling::* | .//h5[contains(text(), '{precio_label}')]/following-sibling::* | .//h6[contains(text(), '{precio_label}')]")
-                    
-                    for element in precio_elements:
-                        if element.is_displayed():
-                            texto = element.text.strip()
-                            if not texto:
-                                try:
-                                    next_sibling = element.find_element(By.XPATH, "following-sibling::*")
-                                    texto = next_sibling.text.strip()
-                                except:
-                                    continue
-                            
-                            precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
-                            if precio_match:
-                                info_producto[precio_key] = f"${precio_match.group(1)}"
-                                logger.info(f"✅ {precio_label}: {info_producto[precio_key]}")
-                                break
-                except Exception as e:
-                    logger.warning(f"⚠️ Error extrayendo {precio_label}: {e}")
+            for element in precio_neto_elements:
+                if element.is_displayed():
+                    texto = element.text.strip()
+                    precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
+                    if precio_match:
+                        info_producto['precio_neto'] = f"${precio_match.group(1)}"
+                        logger.info(f"Precio Neto: {info_producto['precio_neto']}")
+                        break
             
-            # Si no encontramos precios específicos, buscar cualquier elemento con $
-            if not any([info_producto['precio_neto'], info_producto['pmp'], info_producto['precio_publico'], info_producto['precio_farmacia']]):
+            # Si no encontramos precio neto con el texto explícito, buscar por posición o por clase
+            if not info_producto['precio_neto']:
                 precio_elements = product_card.find_elements(By.XPATH, ".//*[contains(text(), '$')]")
                 for element in precio_elements:
                     if element.is_displayed():
-                        texto = element.text.strip()
-                        precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
-                        if precio_match and float(precio_match.group(1).replace(',', '')) > 0:
-                            info_producto['precio_neto'] = f"${precio_match.group(1)}"
-                            logger.info(f"✅ Precio encontrado (genérico): {info_producto['precio_neto']}")
-                            break
-                            
+                        parent = element.find_element(By.XPATH, "..")
+                        if "neto" in parent.text.lower():
+                            precio_match = re.search(r'\$?([\d,]+\.?\d*)', element.text)
+                            if precio_match:
+                                info_producto['precio_neto'] = f"${precio_match.group(1)}"
+                                logger.info(f"Precio Neto (desde elemento): {info_producto['precio_neto']}")
+                                break
+            
+            # Extraer Precio PMP
+            pmp_elements = product_card.find_elements(By.XPATH, 
+                ".//div[contains(text(), 'PMP')]/following-sibling::* | .//h6[contains(text(), 'PMP')]/following-sibling::*")
+            
+            for element in pmp_elements:
+                if element.is_displayed():
+                    texto = element.text.strip()
+                    precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
+                    if precio_match:
+                        info_producto['pmp'] = f"${precio_match.group(1)}"
+                        logger.info(f"PMP: {info_producto['pmp']}")
+                        break
+            
+            # Extraer Precio Público
+            precio_publico_elements = product_card.find_elements(By.XPATH, 
+                ".//div[contains(text(), 'Precio Público')]/following-sibling::* | .//h5[contains(text(), 'Precio Público')]/following-sibling::* | .//h6[contains(text(), 'Precio Público')]")
+            
+            for element in precio_publico_elements:
+                if element.is_displayed():
+                    texto = element.text.strip()
+                    if not texto:  # Si el elemento no tiene texto, buscar en su siguiente hermano
+                        try:
+                            next_sibling = element.find_element(By.XPATH, "following-sibling::*")
+                            texto = next_sibling.text.strip()
+                        except:
+                            continue
+                    
+                    precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
+                    if precio_match:
+                        info_producto['precio_publico'] = f"${precio_match.group(1)}"
+                        logger.info(f"Precio Público: {info_producto['precio_publico']}")
+                        break
+            
+            # Extraer Precio Farmacia
+            precio_farmacia_elements = product_card.find_elements(By.XPATH, 
+                ".//div[contains(text(), 'Precio Farmacia')]/following-sibling::* | .//h5[contains(text(), 'Precio Farmacia')]/following-sibling::* | .//h6[contains(text(), 'Precio Farmacia')]")
+            
+            for element in precio_farmacia_elements:
+                if element.is_displayed():
+                    texto = element.text.strip()
+                    if not texto:  # Si el elemento no tiene texto, buscar en su siguiente hermano
+                        try:
+                            next_sibling = element.find_element(By.XPATH, "following-sibling::*")
+                            texto = next_sibling.text.strip()
+                        except:
+                            continue
+                    
+                    precio_match = re.search(r'\$?([\d,]+\.?\d*)', texto)
+                    if precio_match:
+                        info_producto['precio_farmacia'] = f"${precio_match.group(1)}"
+                        logger.info(f"Precio Farmacia: {info_producto['precio_farmacia']}")
+                        break
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo precios: {e}")
+            logger.warning(f"Error extrayendo precios: {e}")
         
         # Extraer CÓDIGO / SKU
         try:
@@ -702,11 +784,11 @@ def extraer_info_productos(driver, numero_producto=0):
                     codigo_match = re.search(r'[\d]{7,}', texto)
                     if codigo_match:
                         info_producto['codigo'] = codigo_match.group(0)
-                        info_producto['sku'] = codigo_match.group(0)
-                        logger.info(f"✅ Código/SKU: {info_producto['codigo']}")
+                        info_producto['sku'] = codigo_match.group(0)  # Usar mismo valor para sku
+                        logger.info(f"Código/SKU: {info_producto['codigo']}")
                         break
             
-            # Si no encontramos, buscar números largos en general
+            # Si no encontramos con el método anterior, buscar elementos con números largos
             if not info_producto['codigo']:
                 all_elements = product_card.find_elements(By.XPATH, ".//*")
                 for element in all_elements:
@@ -717,31 +799,33 @@ def extraer_info_productos(driver, numero_producto=0):
                             if codigo_match:
                                 info_producto['codigo'] = codigo_match.group(0)
                                 info_producto['sku'] = codigo_match.group(0)
-                                logger.info(f"✅ Código/SKU (genérico): {info_producto['codigo']}")
+                                logger.info(f"Código/SKU (de elemento genérico): {info_producto['codigo']}")
                                 break
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo código/SKU: {e}")
+            logger.warning(f"Error extrayendo código/SKU: {e}")
         
         # Extraer LABORATORIO
         try:
+            # Buscar explícitamente por texto "Laboratorio:"
             lab_elements = product_card.find_elements(By.XPATH, 
                 ".//div[contains(text(), 'Laboratorio')]/following-sibling::* | .//div[contains(text(), 'LABORATORIO')]")
             
             for element in lab_elements:
                 if element.is_displayed():
                     texto = element.text.strip()
+                    # Si es el elemento que contiene "Laboratorio:", extraer solo la parte del laboratorio
                     if "laboratorio:" in texto.lower():
                         lab_match = re.search(r'laboratorio:?\s*(.+)', texto, re.IGNORECASE)
                         if lab_match:
                             info_producto['laboratorio'] = lab_match.group(1).strip()
-                            logger.info(f"✅ Laboratorio: {info_producto['laboratorio']}")
+                            logger.info(f"Laboratorio: {info_producto['laboratorio']}")
                             break
                     elif len(texto) > 3 and "$" not in texto:
                         info_producto['laboratorio'] = texto
-                        logger.info(f"✅ Laboratorio: {info_producto['laboratorio']}")
+                        logger.info(f"Laboratorio: {info_producto['laboratorio']}")
                         break
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo laboratorio: {e}")
+            logger.warning(f"Error extrayendo laboratorio: {e}")
         
         # Extraer DISPONIBILIDAD / STOCK
         try:
@@ -755,20 +839,32 @@ def extraer_info_productos(driver, numero_producto=0):
                         stock_match = re.search(r'(\d+)\s*disponibles', texto, re.IGNORECASE)
                         if stock_match:
                             info_producto['disponibilidad'] = f"Stock ({stock_match.group(1)})"
-                            logger.info(f"✅ Disponibilidad: {info_producto['disponibilidad']}")
+                            logger.info(f"Disponibilidad: {info_producto['disponibilidad']}")
                             break
                         elif "stock" in texto.lower() or "existencias" in texto.lower():
                             info_producto['disponibilidad'] = texto
-                            logger.info(f"✅ Disponibilidad: {info_producto['disponibilidad']}")
+                            logger.info(f"Disponibilidad (texto completo): {info_producto['disponibilidad']}")
                             break
             
-            # Si no encontramos stock específico, usar valor predeterminado
+            # Si no encontramos stock específico, buscar en toda la tarjeta
             if not info_producto['disponibilidad']:
-                info_producto['disponibilidad'] = "Stock disponible"
-                logger.info("✅ Usando valor predeterminado para disponibilidad")
-                
+                card_text = product_card.text.lower()
+                if "disponibles" in card_text:
+                    stock_match = re.search(r'(\d+)\s*disponibles', card_text)
+                    if stock_match:
+                        info_producto['disponibilidad'] = f"Stock ({stock_match.group(1)})"
+                        logger.info(f"Disponibilidad (de texto de tarjeta): {info_producto['disponibilidad']}")
+                elif "stock" in card_text:
+                    stock_match = re.search(r'stock[:\s]*(\d+)', card_text)
+                    if stock_match:
+                        info_producto['disponibilidad'] = f"Stock ({stock_match.group(1)})"
+                        logger.info(f"Disponibilidad (stock en texto): {info_producto['disponibilidad']}")
+                else:
+                    # Usar valor predeterminado
+                    info_producto['disponibilidad'] = "Stock disponible"
+                    logger.info("Usando valor predeterminado para disponibilidad")
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo disponibilidad: {e}")
+            logger.warning(f"Error extrayendo disponibilidad: {e}")
             info_producto['disponibilidad'] = "Stock disponible"
         
         # Extraer IMAGEN del producto
@@ -779,21 +875,19 @@ def extraer_info_productos(driver, numero_producto=0):
                     src = img.get_attribute("src")
                     if src and ("http" in src) and img.size['width'] > 50 and img.size['height'] > 50:
                         info_producto['imagen'] = src
-                        logger.info(f"✅ URL de imagen: {info_producto['imagen']}")
+                        logger.info(f"URL de imagen: {info_producto['imagen']}")
                         break
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo imagen: {e}")
+            logger.warning(f"Error extrayendo imagen: {e}")
         
         # Verificar información mínima
-        tiene_precio = any([info_producto['precio_neto'], info_producto['precio_publico'], 
-                           info_producto['precio_farmacia'], info_producto['pmp']])
-        tiene_codigo = bool(info_producto['codigo'])
-        
-        if tiene_precio and tiene_codigo:
+        info_minima = (info_producto['precio_neto'] or info_producto['precio_publico'] or info_producto['precio_farmacia'] or info_producto['pmp']) and info_producto['codigo']
+
+        if info_minima:
             # Si tenemos precios y código pero no nombre, usar un nombre genérico
             if not info_producto['nombre'] and info_producto['codigo']:
                 info_producto['nombre'] = f"Producto {info_producto['codigo']}"
-                logger.info(f"✅ Usando código como nombre: {info_producto['nombre']}")
+                logger.info(f"Usando código como nombre: {info_producto['nombre']}")
             
             logger.info("✅ Información mínima del producto extraída con éxito")
             return info_producto
@@ -802,7 +896,7 @@ def extraer_info_productos(driver, numero_producto=0):
             return info_producto
     
     except Exception as e:
-        logger.error(f"❌ Error general extrayendo información: {e}")
+        logger.error(f"Error general extrayendo información: {e}")
         try:
             driver.save_screenshot("error_extraccion_general.png")
         except:
@@ -811,8 +905,7 @@ def extraer_info_productos(driver, numero_producto=0):
 
 def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
-    Función principal que busca información de un medicamento en FANASA.
-    MEJORADA con timeout de 20 segundos para login.
+    ✅ VERSIÓN OPTIMIZADA: Función principal con login original + timeout + continuación en caso de fallo
     
     Args:
         nombre_medicamento (str): Nombre del medicamento a buscar
@@ -825,7 +918,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
     try:
         logger.info(f"🚀 Iniciando proceso para buscar información sobre: '{nombre_medicamento}'")
         
-        # 1. Iniciar sesión en FANASA CON TIMEOUT
+        # ✅ NUEVO: Login con timeout que retorna tupla
         driver, login_exitoso = login_fanasa_carrito()
         
         if not driver:
@@ -837,13 +930,13 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "fuente": "FANASA"
             }
         
-        # 2. Decidir si continuar basado en el resultado del login
+        # ✅ NUEVO: Continuar independientemente del resultado del login
         if login_exitoso:
             logger.info("✅ Sesión iniciada exitosamente en FANASA")
         else:
             logger.warning("⚠️ Login no confirmado, pero continuando con la búsqueda...")
         
-        # 3. Buscar el producto independientemente del resultado del login
+        # 2. Buscar el producto
         logger.info(f"🔍 Buscando producto: '{nombre_medicamento}'")
         
         resultado_busqueda = buscar_producto(driver, nombre_medicamento)
@@ -859,7 +952,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "existencia": "0"
             }
         
-        # 4. Extraer información del producto
+        # 3. Extraer información del producto
         logger.info("📊 Extrayendo información del producto...")
         info_producto = extraer_info_productos(driver)
         
