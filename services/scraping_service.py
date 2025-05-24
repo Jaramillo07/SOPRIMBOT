@@ -8,7 +8,10 @@ import os
 import sys
 import time
 import re
-import concurrent.futures  # ✅ AGREGADO PARA PARALELO
+import concurrent.futures
+import psutil
+import subprocess
+import platform
 from pathlib import Path
 
 # Configurar logging
@@ -223,6 +226,153 @@ class ScrapingService:
         except Exception as e:
             logger.warning(f"Error al verificar disponibilidad de NADRO: {e}")
             return False
+    
+    def _cleanup_chrome_processes(self):
+        """
+        Limpia procesos Chrome y chromedriver que puedan haber quedado colgados.
+        """
+        logger.info("🧹 Iniciando limpieza de procesos Chrome...")
+        
+        cleaned_processes = 0
+        
+        try:
+            # Buscar todos los procesos en ejecución
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    process_name = proc.info['name'].lower()
+                    cmdline = ' '.join(proc.info['cmdline'] or []).lower()
+                    
+                    # Identificar procesos relacionados con Chrome/chromedriver
+                    should_kill = False
+                    
+                    if any(name in process_name for name in ['chrome', 'chromium']):
+                        # Verificar que sea de nuestros scrapers (no matar Chrome del usuario)
+                        if any(keyword in cmdline for keyword in ['headless', 'remote-debugging-port', 'disable-gpu']):
+                            should_kill = True
+                            
+                    elif 'chromedriver' in process_name:
+                        should_kill = True
+                    
+                    if should_kill:
+                        logger.info(f"🔪 Matando proceso: PID {proc.info['pid']} - {process_name}")
+                        proc.kill()
+                        proc.wait(timeout=3)  # Esperar hasta 3 segundos
+                        cleaned_processes += 1
+                        
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                    # Proceso ya no existe o no tenemos permisos - continuar
+                    pass
+                except Exception as e:
+                    logger.warning(f"⚠️ Error al procesar PID {proc.info.get('pid', 'unknown')}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error durante limpieza de procesos: {e}")
+        
+        logger.info(f"✅ Limpieza completada. Procesos eliminados: {cleaned_processes}")
+
+    def _cleanup_network_connections(self):
+        """
+        Intenta liberar conexiones de red que puedan estar ocupadas.
+        """
+        logger.info("🌐 Limpiando conexiones de red...")
+        
+        try:
+            # Puertos comunes usados por chromedriver y navegadores
+            common_ports = [4343, 9222, 9223, 9224, 9225]
+            
+            for port in common_ports:
+                try:
+                    # Buscar procesos usando estos puertos
+                    connections = psutil.net_connections()
+                    for conn in connections:
+                        if conn.laddr.port == port and conn.status == 'LISTEN':
+                            try:
+                                proc = psutil.Process(conn.pid)
+                                if any(name in proc.name().lower() for name in ['chrome', 'chromedriver']):
+                                    logger.info(f"🔌 Liberando puerto {port} usado por PID {conn.pid}")
+                                    proc.kill()
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                except Exception as e:
+                    logger.warning(f"⚠️ Error limpiando puerto {port}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error durante limpieza de red: {e}")
+        
+        logger.info("✅ Limpieza de red completada")
+
+    def _force_cleanup_chrome(self):
+        """
+        Cleanup agresivo usando comandos del sistema como último recurso.
+        """
+        logger.info("💪 Ejecutando limpieza agresiva de Chrome...")
+        
+        try:
+            system = platform.system().lower()
+            
+            if system == "linux":
+                # Comandos para Linux (típico en servidores/containers)
+                commands = [
+                    "pkill -f chrome",
+                    "pkill -f chromedriver", 
+                    "pkill -f 'google-chrome'",
+                    "pkill -f 'chromium'"
+                ]
+            elif system == "windows":
+                # Comandos para Windows
+                commands = [
+                    "taskkill /f /im chrome.exe",
+                    "taskkill /f /im chromedriver.exe",
+                    "taskkill /f /im googlechrome.exe"
+                ]
+            elif system == "darwin":  # macOS
+                commands = [
+                    "pkill -f chrome",
+                    "pkill -f chromedriver"
+                ]
+            else:
+                logger.warning(f"Sistema operativo no reconocido: {system}")
+                return
+            
+            for cmd in commands:
+                try:
+                    subprocess.run(cmd.split(), capture_output=True, timeout=5)
+                    logger.info(f"🔨 Ejecutado: {cmd}")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"⏰ Timeout ejecutando: {cmd}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error ejecutando '{cmd}': {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error en limpieza agresiva: {e}")
+        
+        logger.info("✅ Limpieza agresiva completada")
+
+    def _full_cleanup_after_phase1(self):
+        """
+        Limpieza completa después de FASE 1 para liberar todos los recursos.
+        """
+        logger.info("🧽 ===== INICIANDO LIMPIEZA COMPLETA POST-FASE 1 =====")
+        
+        # Paso 1: Limpieza suave de procesos
+        self._cleanup_chrome_processes()
+        
+        # Paso 2: Pequeña pausa para que los procesos terminen
+        time.sleep(2)
+        
+        # Paso 3: Limpieza de conexiones de red
+        self._cleanup_network_connections()
+        
+        # Paso 4: Otra pausa
+        time.sleep(1)
+        
+        # Paso 5: Limpieza agresiva como último recurso
+        self._force_cleanup_chrome()
+        
+        # Paso 6: Pausa final para estabilizar el sistema
+        time.sleep(3)
+        
+        logger.info("✨ ===== LIMPIEZA COMPLETA FINALIZADA =====")
     
     def _extract_numeric_price(self, price_str):
         """
@@ -612,13 +762,7 @@ class ScrapingService:
         - Opción de entrega inmediata (Sufarmed con stock)
         - Opción de mejor precio (producto más barato con stock)
         
-        ACTUALIZADO: FASE 1 ahora ejecuta Difarmer y Sufarmed EN PARALELO
-        
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
-            
-        Returns:
-            dict: Diccionario con opciones de productos disponibles y un flag de doble opción
+        ACTUALIZADO: FASE 1 en paralelo + CLEANUP completo de recursos
         """
         logger.info(f"Iniciando búsqueda con FASE 1 EN PARALELO para: {nombre_producto}")
         
@@ -666,9 +810,12 @@ class ScrapingService:
                         logger.error(f"❌ Error en búsqueda paralela de {source_name}: {e}")
             
             logger.info(f"🏁 FASE 1 COMPLETADA - Resultados obtenidos: {len(resultados)}")
+            
+            # 🧹 *** NUEVO: LIMPIEZA COMPLETA DESPUÉS DE FASE 1 ***
+            self._full_cleanup_after_phase1()
         
-        # Delay de 5 segundos entre Fase 1 y Fase 2
-        logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 2...")
+        # Delay adicional después del cleanup
+        logger.info("⏱️ Esperando 5 segundos adicionales después del cleanup antes de FASE 2...")
         time.sleep(5)
         
         # FASE 2: NADRO (independiente)
