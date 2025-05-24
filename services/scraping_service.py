@@ -605,194 +605,210 @@ class ScrapingService:
             logger.error(f"Error al buscar producto en NADRO: {e}")
             return None
     
-    def buscar_producto(self, nombre_producto):
-        """
-        Busca un producto en todas las fuentes disponibles,
-        compara resultados y selecciona opciones según la nueva lógica de negocio:
-        - Opción de entrega inmediata (Sufarmed con stock)
-        - Opción de mejor precio (producto más barato con stock)
+   # AGREGAR ESTA IMPORTACIÓN AL INICIO DEL ARCHIVO services/scraping_service.py
+# Después de las otras importaciones:
+
+import concurrent.futures
+
+# REEMPLAZAR SOLO LA FUNCIÓN buscar_producto EN ScrapingService:
+
+def buscar_producto(self, nombre_producto):
+    """
+    Busca un producto en todas las fuentes disponibles,
+    compara resultados y selecciona opciones según la nueva lógica de negocio:
+    - Opción de entrega inmediata (Sufarmed con stock)
+    - Opción de mejor precio (producto más barato con stock)
+    
+    ACTUALIZADO: FASE 1 ahora ejecuta Difarmer y Sufarmed EN PARALELO
+    
+    Args:
+        nombre_producto (str): Nombre del producto a buscar
         
-        ACTUALIZADO: FASE 1 ahora ejecuta scrapers secuencialmente con delay de 5 segundos
+    Returns:
+        dict: Diccionario con opciones de productos disponibles y un flag de doble opción
+    """
+    logger.info(f"Iniciando búsqueda con FASE 1 EN PARALELO para: {nombre_producto}")
+    
+    # Lista para almacenar resultados de todas las fuentes
+    resultados = []
+    
+    # ✅ FASE 1: Difarmer y Sufarmed EN PARALELO 
+    fase1_scrapers = []
+    if self.difarmer_available:
+        fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
+    if self.sufarmed_available:
+        fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
+    
+    if fase1_scrapers:
+        logger.info(f"🚀 FASE 1: Ejecutando scrapers EN PARALELO: {', '.join([x[0] for x in fase1_scrapers])}")
         
-        Args:
-            nombre_producto (str): Nombre del producto a buscar
+        # Ejecutar scrapers en paralelo usando ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(fase1_scrapers)) as executor:
+            # Crear futures para cada scraper
+            future_to_scraper = {}
+            for source_name, search_func in fase1_scrapers:
+                logger.info(f"🔄 Iniciando {source_name} en paralelo...")
+                future = executor.submit(search_func, nombre_producto)
+                future_to_scraper[future] = source_name
             
-        Returns:
-            dict: Diccionario con opciones de productos disponibles y un flag de doble opción
-        """
-        logger.info(f"Iniciando búsqueda secuencial para: {nombre_producto}")
-        
-        # Lista para almacenar resultados de todas las fuentes
-        resultados = []
-        
-        # ✅ FASE 1: Difarmer y Sufarmed secuencial con delay de 5 segundos
-        fase1_scrapers = []
-        if self.difarmer_available:
-            fase1_scrapers.append(('difarmer', self.buscar_producto_difarmer))
-        if self.sufarmed_available:
-            fase1_scrapers.append(('sufarmed', self.buscar_producto_sufarmed))
-        
-        if fase1_scrapers:
-            logger.info(f"FASE 1: Ejecutando scrapers secuencialmente {', '.join([x[0] for x in fase1_scrapers])}")
-            
-            for i, (source_name, search_func) in enumerate(fase1_scrapers):
+            # Esperar y recopilar resultados conforme van completándose
+            for future in concurrent.futures.as_completed(future_to_scraper):
+                source_name = future_to_scraper[future]
                 try:
-                    logger.info(f"🔍 Ejecutando scraper {source_name} ({i+1}/{len(fase1_scrapers)})")
-                    resultado = search_func(nombre_producto)
+                    resultado = future.result(timeout=180)  # Timeout de 3 minutos por scraper
                     
                     if resultado:
                         # Verificar que el precio no sea cero antes de añadirlo
                         if resultado['precio_numerico'] < 9999998.0:  # Un valor normal
-                            logger.info(f"✅ Resultado obtenido de {source_name}")
+                            logger.info(f"✅ Resultado obtenido de {source_name} (PARALELO)")
                             resultados.append(resultado)
                         else:
                             logger.warning(f"⚠️ Resultado de {source_name} descartado por precio cero o inválido")
                     else:
                         logger.info(f"❌ No se encontraron resultados en {source_name}")
                         
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"⏰ TIMEOUT en {source_name} después de 3 minutos")
                 except Exception as e:
-                    logger.error(f"❌ Error en búsqueda de {source_name}: {e}")
-                
-                # ✅ DELAY de 5 segundos entre scrapers de FASE 1
-                if i < len(fase1_scrapers) - 1:  # No hacer delay después del último scraper
-                    logger.info("⏱️ Esperando 5 segundos antes del siguiente scraper de FASE 1...")
-                    time.sleep(5)
+                    logger.error(f"❌ Error en búsqueda paralela de {source_name}: {e}")
         
-        # Delay de 5 segundos entre Fase 1 y Fase 2
-        logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 2...")
-        time.sleep(5)
-        
-        # FASE 2: NADRO (independiente)
-        if self.nadro_available:
-            logger.info("FASE 2: Ejecutando scraper NADRO")
-            try:
-                resultado_nadro = self.buscar_producto_nadro(nombre_producto)
-                if resultado_nadro:
-                    # Verificar que el precio no sea cero antes de añadirlo
-                    if resultado_nadro['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info("✅ Resultado obtenido de NADRO")
-                        resultados.append(resultado_nadro)
-                    else:
-                        logger.warning("⚠️ Resultado de NADRO descartado por precio cero o inválido")
+        logger.info(f"🏁 FASE 1 COMPLETADA - Resultados obtenidos: {len(resultados)}")
+    
+    # Delay de 5 segundos entre Fase 1 y Fase 2
+    logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 2...")
+    time.sleep(5)
+    
+    # FASE 2: NADRO (independiente)
+    if self.nadro_available:
+        logger.info("FASE 2: Ejecutando scraper NADRO")
+        try:
+            resultado_nadro = self.buscar_producto_nadro(nombre_producto)
+            if resultado_nadro:
+                # Verificar que el precio no sea cero antes de añadirlo
+                if resultado_nadro['precio_numerico'] < 9999998.0:  # Un valor normal
+                    logger.info("✅ Resultado obtenido de NADRO")
+                    resultados.append(resultado_nadro)
                 else:
-                    logger.info("❌ No se encontraron resultados en NADRO")
-            except Exception as e:
-                logger.error(f"❌ Error en búsqueda de NADRO: {e}")
-        
-        # Delay de 5 segundos entre Fase 2 y Fase 3
-        logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 3...")
-        time.sleep(5)
-        
-        # FASE 3: FANASA (último recurso)
-        if self.fanasa_available:
-            # Agregar log especial para enfatizar que FANASA siempre se ejecuta al final
-            if resultados:
-                logger.info("FASE 3: Ejecutando scraper FANASA (siempre ejecutado como último recurso, aunque ya existan resultados)")
+                    logger.warning("⚠️ Resultado de NADRO descartado por precio cero o inválido")
             else:
-                logger.info("FASE 3: Ejecutando scraper FANASA como último recurso")
-                
-            try:
-                resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
-                if resultado_fanasa:
-                    # Verificar que el precio no sea cero antes de añadirlo
-                    if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
-                        logger.info("✅ Resultado obtenido de FANASA")
-                        resultados.append(resultado_fanasa)
-                    else:
-                        logger.warning("⚠️ Resultado de FANASA descartado por precio cero o inválido")
-                else:
-                    logger.info("❌ No se encontraron resultados en FANASA")
-            except Exception as e:
-                logger.error(f"❌ Error en búsqueda de FANASA: {e}")
-        
-        # COMIENZA PROCESO DE COMPARACIÓN Y SELECCIÓN
-        logger.info("🔍 COMENZANDO ANÁLISIS Y COMPARACIÓN DE RESULTADOS 🔍")
-        
-        # Si no hay resultados, terminar
-        if not resultados:
-            logger.warning(f"No se encontraron resultados para: {nombre_producto}")
-            return {
-                "opcion_entrega_inmediata": None,
-                "opcion_mejor_precio": None,
-                "tiene_doble_opcion": False
-            }
-        
-        # Imprimir resultados para diagnóstico
-        logger.info(f"Analizando {len(resultados)} resultados encontrados:")
-        for i, resultado in enumerate(resultados):
-            logger.info(f"  • Resultado #{i+1}: {resultado['fuente']} - "
-                       f"Nombre: {resultado['nombre']} - "
-                       f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
-                       f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
-        
-        # Filtrar productos con existencia
-        productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
-        logger.info(f"Productos con existencias disponibles: {len(productos_con_existencia)} de {len(resultados)}")
-        
-        # Si no hay productos con existencia, devolver None para ambas opciones
-        if not productos_con_existencia:
-            logger.warning(f"No se encontraron productos con existencia para: {nombre_producto}")
-            return {
-                "opcion_entrega_inmediata": None,
-                "opcion_mejor_precio": None,
-                "tiene_doble_opcion": False
-            }
-        
-        # Buscar opción de entrega inmediata (Sufarmed con stock)
-        logger.info("Buscando opción de ENTREGA INMEDIATA (producto de Sufarmed con stock)...")
-        opcion_entrega_inmediata = None
-        for producto in productos_con_existencia:
-            if producto['fuente'] == "Sufarmed" and producto['existencia_numerica'] > 0:
-                opcion_entrega_inmediata = producto.copy()
-                # Eliminar campos auxiliares de comparación
-                del opcion_entrega_inmediata['precio_numerico']
-                del opcion_entrega_inmediata['existencia_numerica']
-                logger.info(f"✅ Opción de entrega inmediata seleccionada: {opcion_entrega_inmediata['nombre']} de Sufarmed "
-                           f"- Precio: {opcion_entrega_inmediata['precio']} - Existencia: {opcion_entrega_inmediata['existencia']}")
-                break
-        
-        if not opcion_entrega_inmediata:
-            logger.info("❌ No se encontró opción de entrega inmediata (Sufarmed)")
-        
-        # Ordenar por precio (menor a mayor) para encontrar la opción de mejor precio
-        logger.info("Buscando opción de MEJOR PRECIO (producto más barato con existencias)...")
-        productos_ordenados = sorted(productos_con_existencia, key=lambda x: x['precio_numerico'])
-        
-        # Mostrar todos los productos ordenados por precio
-        logger.info("Productos ordenados por precio (menor a mayor):")
-        for i, p in enumerate(productos_ordenados):
-            logger.info(f"  • #{i+1}: {p['fuente']} - {p['nombre']} - Precio: {p['precio']} ({p['precio_numerico']})")
-        
-        # Elegir el de menor precio
-        opcion_mejor_precio = None
-        if productos_ordenados:
-            opcion_mejor_precio = productos_ordenados[0].copy()
-            # Eliminar campos auxiliares de comparación
-            del opcion_mejor_precio['precio_numerico']
-            del opcion_mejor_precio['existencia_numerica']
-            logger.info(f"✅ Opción de mejor precio seleccionada: {opcion_mejor_precio['nombre']} de {opcion_mejor_precio['fuente']} "
-                       f"- Precio: {opcion_mejor_precio['precio']} - Existencia: {opcion_mejor_precio['existencia']}")
-        
-        # Determinar si hay doble opción
-        tiene_doble_opcion = False
-        
-        if opcion_entrega_inmediata and opcion_mejor_precio:
-            # Si la opción de entrega inmediata es diferente a la opción de mejor precio
-            if opcion_entrega_inmediata['fuente'] != opcion_mejor_precio['fuente']:
-                tiene_doble_opcion = True
-                logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Fuentes diferentes ({opcion_entrega_inmediata['fuente']} vs {opcion_mejor_precio['fuente']})")
-            elif opcion_entrega_inmediata['precio'] != opcion_mejor_precio['precio']:
-                tiene_doble_opcion = True
-                logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Precios diferentes ({opcion_entrega_inmediata['precio']} vs {opcion_mejor_precio['precio']})")
-            else:
-                logger.info("❌ No hay doble opción: Misma fuente y mismo precio")
+                logger.info("❌ No se encontraron resultados en NADRO")
+        except Exception as e:
+            logger.error(f"❌ Error en búsqueda de NADRO: {e}")
+    
+    # Delay de 5 segundos entre Fase 2 y Fase 3
+    logger.info("⏱️ Esperando 5 segundos antes de iniciar FASE 3...")
+    time.sleep(5)
+    
+    # FASE 3: FANASA (último recurso)
+    if self.fanasa_available:
+        # Agregar log especial para enfatizar que FANASA siempre se ejecuta al final
+        if resultados:
+            logger.info("FASE 3: Ejecutando scraper FANASA (siempre ejecutado como último recurso, aunque ya existan resultados)")
         else:
-            logger.info("❌ No hay doble opción: Falta alguna de las opciones")
-        
-        logger.info("🏁 ANÁLISIS COMPLETO - RESULTADOS PREPARADOS 🏁")
-        
+            logger.info("FASE 3: Ejecutando scraper FANASA como último recurso")
+            
+        try:
+            resultado_fanasa = self.buscar_producto_fanasa(nombre_producto)
+            if resultado_fanasa:
+                # Verificar que el precio no sea cero antes de añadirlo
+                if resultado_fanasa['precio_numerico'] < 9999998.0:  # Un valor normal
+                    logger.info("✅ Resultado obtenido de FANASA")
+                    resultados.append(resultado_fanasa)
+                else:
+                    logger.warning("⚠️ Resultado de FANASA descartado por precio cero o inválido")
+            else:
+                logger.info("❌ No se encontraron resultados en FANASA")
+        except Exception as e:
+            logger.error(f"❌ Error en búsqueda de FANASA: {e}")
+    
+    # COMIENZA PROCESO DE COMPARACIÓN Y SELECCIÓN
+    logger.info("🔍 COMENZANDO ANÁLISIS Y COMPARACIÓN DE RESULTADOS 🔍")
+    
+    # Si no hay resultados, terminar
+    if not resultados:
+        logger.warning(f"No se encontraron resultados para: {nombre_producto}")
         return {
-            "opcion_entrega_inmediata": opcion_entrega_inmediata,
-            "opcion_mejor_precio": opcion_mejor_precio,
-            "tiene_doble_opcion": tiene_doble_opcion
+            "opcion_entrega_inmediata": None,
+            "opcion_mejor_precio": None,
+            "tiene_doble_opcion": False
         }
+    
+    # Imprimir resultados para diagnóstico
+    logger.info(f"Analizando {len(resultados)} resultados encontrados:")
+    for i, resultado in enumerate(resultados):
+        logger.info(f"  • Resultado #{i+1}: {resultado['fuente']} - "
+                   f"Nombre: {resultado['nombre']} - "
+                   f"Precio: {resultado['precio']} ({resultado['precio_numerico']}) - "
+                   f"Existencia: {resultado['existencia']} ({resultado['existencia_numerica']})")
+    
+    # Filtrar productos con existencia
+    productos_con_existencia = [p for p in resultados if p['existencia_numerica'] > 0]
+    logger.info(f"Productos con existencias disponibles: {len(productos_con_existencia)} de {len(resultados)}")
+    
+    # Si no hay productos con existencia, devolver None para ambas opciones
+    if not productos_con_existencia:
+        logger.warning(f"No se encontraron productos con existencia para: {nombre_producto}")
+        return {
+            "opcion_entrega_inmediata": None,
+            "opcion_mejor_precio": None,
+            "tiene_doble_opcion": False
+        }
+    
+    # Buscar opción de entrega inmediata (Sufarmed con stock)
+    logger.info("Buscando opción de ENTREGA INMEDIATA (producto de Sufarmed con stock)...")
+    opcion_entrega_inmediata = None
+    for producto in productos_con_existencia:
+        if producto['fuente'] == "Sufarmed" and producto['existencia_numerica'] > 0:
+            opcion_entrega_inmediata = producto.copy()
+            # Eliminar campos auxiliares de comparación
+            del opcion_entrega_inmediata['precio_numerico']
+            del opcion_entrega_inmediata['existencia_numerica']
+            logger.info(f"✅ Opción de entrega inmediata seleccionada: {opcion_entrega_inmediata['nombre']} de Sufarmed "
+                       f"- Precio: {opcion_entrega_inmediata['precio']} - Existencia: {opcion_entrega_inmediata['existencia']}")
+            break
+    
+    if not opcion_entrega_inmediata:
+        logger.info("❌ No se encontró opción de entrega inmediata (Sufarmed)")
+    
+    # Ordenar por precio (menor a mayor) para encontrar la opción de mejor precio
+    logger.info("Buscando opción de MEJOR PRECIO (producto más barato con existencias)...")
+    productos_ordenados = sorted(productos_con_existencia, key=lambda x: x['precio_numerico'])
+    
+    # Mostrar todos los productos ordenados por precio
+    logger.info("Productos ordenados por precio (menor a mayor):")
+    for i, p in enumerate(productos_ordenados):
+        logger.info(f"  • #{i+1}: {p['fuente']} - {p['nombre']} - Precio: {p['precio']} ({p['precio_numerico']})")
+    
+    # Elegir el de menor precio
+    opcion_mejor_precio = None
+    if productos_ordenados:
+        opcion_mejor_precio = productos_ordenados[0].copy()
+        # Eliminar campos auxiliares de comparación
+        del opcion_mejor_precio['precio_numerico']
+        del opcion_mejor_precio['existencia_numerica']
+        logger.info(f"✅ Opción de mejor precio seleccionada: {opcion_mejor_precio['nombre']} de {opcion_mejor_precio['fuente']} "
+                   f"- Precio: {opcion_mejor_precio['precio']} - Existencia: {opcion_mejor_precio['existencia']}")
+    
+    # Determinar si hay doble opción
+    tiene_doble_opcion = False
+    
+    if opcion_entrega_inmediata and opcion_mejor_precio:
+        # Si la opción de entrega inmediata es diferente a la opción de mejor precio
+        if opcion_entrega_inmediata['fuente'] != opcion_mejor_precio['fuente']:
+            tiene_doble_opcion = True
+            logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Fuentes diferentes ({opcion_entrega_inmediata['fuente']} vs {opcion_mejor_precio['fuente']})")
+        elif opcion_entrega_inmediata['precio'] != opcion_mejor_precio['precio']:
+            tiene_doble_opcion = True
+            logger.info(f"✅ DOBLE OPCIÓN HABILITADA: Precios diferentes ({opcion_entrega_inmediata['precio']} vs {opcion_mejor_precio['precio']})")
+        else:
+            logger.info("❌ No hay doble opción: Misma fuente y mismo precio")
+    else:
+        logger.info("❌ No hay doble opción: Falta alguna de las opciones")
+    
+    logger.info("🏁 ANÁLISIS COMPLETO - RESULTADOS PREPARADOS 🏁")
+    
+    return {
+        "opcion_entrega_inmediata": opcion_entrega_inmediata,
+        "opcion_mejor_precio": opcion_mejor_precio,
+        "tiene_doble_opcion": tiene_doble_opcion
+    }
