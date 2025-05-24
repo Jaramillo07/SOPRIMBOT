@@ -27,10 +27,9 @@ LOGIN_URL = "https://carrito.fanasa.com/login"  # URL correcta del portal de car
 TIMEOUT = 20                       # Tiempo de espera para elementos (segundos)
 
 
-
 def inicializar_navegador(headless=True):  # Cambiado a True para producción
     """
-    Inicializa el navegador Chrome con opciones configuradas.
+    Inicializa el navegador Chrome con opciones configuradas para entorno Cloud Run.
     
     Args:
         headless (bool): Si es True, el navegador se ejecuta en modo headless (sin interfaz gráfica)
@@ -39,32 +38,127 @@ def inicializar_navegador(headless=True):  # Cambiado a True para producción
         webdriver.Chrome: Instancia del navegador
     """
     options = Options()
-    if headless:
-        options.add_argument("--headless")
     
-    # Configuración adicional para mejorar la estabilidad
+    # ✅ OPCIONES MEJORADAS PARA CLOUD RUN
+    if headless:
+        options.add_argument("--headless=new")  # Usar versión moderna de headless
+    
+    # Configuración CRÍTICA para entornos containerizados
+    options.add_argument("--no-sandbox")  # OBLIGATORIO en containers
+    options.add_argument("--disable-dev-shm-usage")  # Evita problemas de memoria compartida
+    options.add_argument("--disable-gpu")  # Necesario para algunos sistemas
+    options.add_argument("--remote-debugging-port=9222")  # Puerto específico para debugging
+    
+    # Configuración de ventana y rendimiento
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
-    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-setuid-sandbox")
+    
+    # ✅ NUEVAS OPCIONES PARA SOLUCIONAR DevToolsActivePort
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--disable-ipc-flooding-protection")
+    
+    # Configuración de memoria y recursos
+    options.add_argument("--memory-pressure-off")
+    options.add_argument("--max_old_space_size=4096")
+    
+    # Configuración específica para contenedores Docker/Cloud Run
+    options.add_argument("--single-process")  # Ejecutar en un solo proceso
+    options.add_argument("--disable-logging")
+    options.add_argument("--disable-login-animations")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--no-zygote")  # Importante para contenedores
+    
+    # Configuración de red
+    options.add_argument("--aggressive-cache-discard")
+    options.add_argument("--disable-background-networking")
+    
+    # Configuración experimental para estabilidad
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    options.add_experimental_option('useAutomationExtension', False)
     
     # Ignorar errores de certificado SSL
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--ignore-ssl-errors")
     options.add_argument("--allow-insecure-localhost")
+    options.add_argument("--ignore-certificate-errors-spki-list")
+    options.add_argument("--ignore-certificate-errors")
     
     # Reducir el nivel de logging para evitar mostrar errores SSL
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
     
     try:
+        # ✅ CONFIGURACIÓN MEJORADA PARA CLOUD RUN
+        logger.info("Inicializando Chrome con configuración optimizada para Cloud Run...")
+        
+        # Verificar si existe el binario de Chrome
+        chrome_binary_locations = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable", 
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser"
+        ]
+        
+        chrome_binary = None
+        for location in chrome_binary_locations:
+            if os.path.exists(location):
+                chrome_binary = location
+                logger.info(f"Chrome encontrado en: {location}")
+                break
+        
+        if chrome_binary:
+            options.binary_location = chrome_binary
+        
         # Inicializar el navegador Chrome
         driver = webdriver.Chrome(options=options)
-        logger.info("Navegador Chrome inicializado correctamente")
+        
+        # Configurar timeouts
+        driver.set_page_load_timeout(30)
+        driver.implicitly_wait(10)
+        
+        logger.info("Navegador Chrome inicializado correctamente para FANASA")
         return driver
+        
     except Exception as e:
         logger.error(f"Error al inicializar el navegador: {e}")
-        return None
+        
+        # ✅ INTENTO ALTERNATIVO CON CONFIGURACIÓN MÁS BÁSICA
+        try:
+            logger.info("Intentando configuración alternativa más básica...")
+            
+            # Opciones mínimas pero estables
+            basic_options = Options()
+            basic_options.add_argument("--headless=new")
+            basic_options.add_argument("--no-sandbox")
+            basic_options.add_argument("--disable-dev-shm-usage")
+            basic_options.add_argument("--disable-gpu")
+            basic_options.add_argument("--single-process")
+            basic_options.add_argument("--remote-debugging-port=9223")  # Puerto diferente
+            basic_options.add_argument("--window-size=1280,720")  # Ventana más pequeña
+            
+            if chrome_binary:
+                basic_options.binary_location = chrome_binary
+            
+            driver = webdriver.Chrome(options=basic_options)
+            driver.set_page_load_timeout(30)
+            driver.implicitly_wait(10)
+            
+            logger.info("Navegador inicializado con configuración básica")
+            return driver
+            
+        except Exception as e2:
+            logger.error(f"Error también con configuración básica: {e2}")
+            return None
 
 
 def login_fanasa_carrito():
