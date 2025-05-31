@@ -35,7 +35,7 @@ Tu objetivo principal es ayudar a los usuarios a consultar información comercia
 6.  Enfócate EXCLUSIVAMENTE en información comercial:
     * Disponibilidad del producto.
     * Precio del producto.
-    * Opciones y tiempos de entrega. (Si te preguntan "¿Hacen entregas a domicilio?", esta es una pregunta sobre opciones de entrega, NO un nombre de producto).
+    * Opciones y tiempos de entrega.
     * Cómo confirmar un pedido o solicitar una recolección (proporcionando la dirección y el contacto de Isaac según se requiera).
 7.  Mantén un tono estrictamente comercial y de servicio al cliente, nunca clínico o médico.
 8.  Si el usuario envía una imagen con texto (ej. una foto de un producto o una lista), procesa la información textual de la imagen como si el usuario la hubiera escrito.
@@ -43,7 +43,6 @@ Tu objetivo principal es ayudar a los usuarios a consultar información comercia
 10. Si el usuario consulta por varios productos en un solo mensaje, amablemente indícale: "Para poder ayudarte mejor y evitar errores, por favor consulta los productos de uno en uno. ¿Cuál te gustaría consultar primero?"
 11. Cuando proporciones información de un producto, sé claro sobre el precio y el origen de la información (Ej: "Precio: $XX.XX (Origen: DF)").
 12. Si un producto no se encuentra, informa al usuario y pregúntale si desea buscar alternativas o si puede proporcionar más detalles del producto.
-13. **PREGUNTAS GENERALES SOBRE SERVICIOS:** Si el usuario pregunta sobre servicios generales como "entregas a domicilio", "horarios de atención", "ubicación", "formas de pago", clasifica esto como una pregunta general (ej. "pregunta_general_farmacia") y responde basándote en la información que tienes de INSUMOS JIP. **NO interpretes estas frases como nombres de productos.**
 
 **Tu Rol:** Eres un asistente de ventas y servicio al cliente para INSUMOS JIP, no un profesional de la salud. Tu meta es facilitar las transacciones comerciales.
 """
@@ -102,10 +101,9 @@ MARGENES_GANANCIA = {
 def extraer_precio_numerico(precio_str):
     """
     Extrae el valor numérico de un precio en formato string.
-    CORREGIDO: Siempre elimina comas (separadores de miles).
     
     Args:
-        precio_str (str): Precio en formato string (ej: "$1,234.56", "1,200", "120.50")
+        precio_str (str): Precio en formato string (ej: "$120.50", "120,50")
         
     Returns:
         float: Valor numérico del precio o 0.0 si no se puede extraer
@@ -116,8 +114,12 @@ def extraer_precio_numerico(precio_str):
     # Eliminar símbolos de moneda y espacios
     clean_price = str(precio_str).replace('$', '').replace(' ', '')
     
-    # ✅ CORRECCIÓN: SIEMPRE eliminar comas (separadores de miles)
-    clean_price = clean_price.replace(',', '')
+    # Convertir comas a puntos si es necesario
+    if ',' in clean_price and '.' not in clean_price:
+        clean_price = clean_price.replace(',', '.')
+    elif ',' in clean_price and '.' in clean_price:
+        # Formato como "$1,234.56"
+        clean_price = clean_price.replace(',', '')
     
     # Extraer el número con regex
     match = re.search(r'(\d+(\.\d+)?)', clean_price)
@@ -126,6 +128,7 @@ def extraer_precio_numerico(precio_str):
         return float(match.group(1))
     else:
         return 0.0
+
 def calcular_precio_con_margen(precio_compra, fuente_proveedor):
     """
     Calcula el precio de venta aplicando el margen correspondiente al proveedor.
@@ -146,11 +149,6 @@ def calcular_precio_con_margen(precio_compra, fuente_proveedor):
     
     # FÓRMULA CORRECTA: Precio_final = Costo / (1 - margen/100)
     # Ejemplo: $100 con 45% margen = $100 / (1 - 0.45) = $100 / 0.55 = $181.82
-    if (1 - margen / 100) == 0: # Evitar división por cero si el margen es 100%
-        # En este caso, teóricamente el precio sería infinito.
-        # Se puede manejar como un error o un precio muy alto.
-        # Por ahora, devolvemos un precio muy alto para indicar que no es vendible bajo esa condición.
-        return float('inf') 
     precio_venta = precio_compra / (1 - margen / 100)
     return precio_venta
 
@@ -164,6 +162,4 @@ def formatear_precio_mexicano(precio_float):
     Returns:
         str: Precio formateado (ej: "$1,234.56")
     """
-    if precio_float == float('inf'):
-        return "Precio no calculable (margen 100%)"
     return f"${precio_float:,.2f}"
