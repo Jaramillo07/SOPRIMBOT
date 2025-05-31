@@ -100,15 +100,6 @@ MARGENES_GANANCIA = {
 }
 
 def extraer_precio_numerico(precio_str):
-    """
-    Extrae el valor numérico de un precio en formato string.
-    
-    Args:
-        precio_str (str): Precio en formato string (ej: "$120.50", "120,50")
-        
-    Returns:
-        float: Valor numérico del precio o 0.0 si no se puede extraer
-    """
     if not precio_str:
         return 0.0
     
@@ -116,14 +107,13 @@ def extraer_precio_numerico(precio_str):
     clean_price = str(precio_str).replace('$', '').replace(' ', '')
     
     # Convertir comas a puntos si es necesario
-    if ',' in clean_price and '.' not in clean_price:
-        clean_price = clean_price.replace(',', '.')
-    elif ',' in clean_price and '.' in clean_price:
-        # Formato como "$1,234.56"
+    if ',' in clean_price and '.' in clean_price:
         clean_price = clean_price.replace(',', '')
+    elif ',' in clean_price and '.' not in clean_price:
+        clean_price = clean_price.replace(',', '.')
     
-    # Extraer el número con regex
-    match = re.search(r'(\d+(\.\d+)?)', clean_price)
+    # REGEX CORREGIDO:
+    match = re.search(r'(\d+(?:\.\d+)?)', clean_price)  # ← FIX AQUÍ
     
     if match:
         return float(match.group(1))
