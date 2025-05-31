@@ -220,6 +220,22 @@ NO des información médica.
 
     def generate_product_response(self, user_message, producto_info, additional_context="", conversation_history=None, es_consulta_cantidad=False, cantidad_solicitada=None):
         try:
+            logger.info(f"🛍️ ============= GENERATE PRODUCT RESPONSE - INICIO =============")
+            logger.info(f"🛍️ Producto consulta: '{additional_context}'")
+            logger.info(f"🛍️ Es consulta cantidad: {es_consulta_cantidad}, Cantidad: {cantidad_solicitada}")
+            if producto_info:
+                opcion_ei = producto_info.get("opcion_entrega_inmediata")
+                opcion_mp = producto_info.get("opcion_mejor_precio")
+                logger.info(f"🛍️ Opción entrega inmediata: {'SÍ' if opcion_ei else 'NO'}")
+                logger.info(f"🛍️ Opción mejor precio: {'SÍ' if opcion_mp else 'NO'}")
+                if opcion_ei:
+                    logger.info(f"🛍️   EI - Fuente: {opcion_ei.get('fuente', 'N/A')}, Precio: {opcion_ei.get('precio', 'N/A')}")
+                if opcion_mp:
+                    logger.info(f"🛍️   MP - Fuente: {opcion_mp.get('fuente', 'N/A')}, Precio: {opcion_mp.get('precio', 'N/A')}")
+            else:
+                logger.warning(f"🛍️ ⚠️ producto_info es None o vacío")
+            logger.info(f"🛍️ ===============================================================")
+            
             producto_nombre_original_consulta = additional_context 
             
             mensaje_final_accion = ("Para confirmar tu pedido o si tienes más preguntas, por favor responde a este mensaje, "
@@ -247,22 +263,203 @@ NO des información médica.
             # MODIFICADO: Esta función ahora calcula el precio de venta con margen y formatea.
             def aplicar_margen_y_formatear_precio(precio_compra_str, fuente_proveedor, cantidad_local=1):
                 try:
+                    logger.info(f"🎯 ===============================================")
+                    logger.info(f"🎯 APLICAR MARGEN Y FORMATEAR - INICIO")
+                    logger.info(f"🎯 INPUT: precio_compra_str='{precio_compra_str}', fuente='{fuente_proveedor}', cantidad={cantidad_local}")
+                    logger.info(f"🎯 ===============================================")
+                    
                     # 1. Extraer el precio de compra numérico del string que viene del scraper
-                    precio_compra_float = extraer_precio_numerico(precio_compra_str) 
+                    precio_compra_float = extraer_precio_numerico(precio_compra_str)
+                    logger.info(f"🎯 PASO 1 - Extracción: '{precio_compra_str}' → {precio_compra_float}")
 
-                    if precio_compra_float == 0.0 and str(precio_compra_str).replace('$', '').replace(',', '').strip() not in ["0", "0.0", "0.00"]:
-                        logger.warning(f"No se pudo extraer un precio numérico válido de '{precio_compra_str}' para el proveedor '{fuente_proveedor}'. Se tratará como precio no disponible o cero según el caso.")
+                    if precio_compra_float == 0.0 and str(precio_compra_str).replace('
+
+            fuente_mapping = {
+                "Sufarmed": "SF", "Difarmer": "DF", "Fanasa": "FN",
+                "Nadro": "ND", "FANASA": "FN", "NADRO": "ND", 
+                "Base Interna": "INSUMOS JIP (Nuestra Base)",
+                "Farmacia del Ahorro": "FA", "Farmacias Guadalajara": "FG", 
+            }
+            
+            producto_display_nombre = (
+                (opcion_ei and opcion_ei.get("nombre")) or
+                (opcion_mp and opcion_mp.get("nombre")) or
+                producto_nombre_original_consulta or "el producto consultado"
+            )
+
+            respuesta_partes = []
+            if es_consulta_cantidad and cantidad_solicitada:
+                respuesta_partes.append(f"Para {cantidad_solicitada} unidad(es) de '{producto_display_nombre}':")
+            else:
+                respuesta_partes.append(f"Información sobre '{producto_display_nombre}':")
+
+            opciones_presentadas = 0
+            
+            if opcion_valida_ei:
+                precio_ei_compra = opcion_ei.get('precio') 
+                if precio_ei_compra:
+                    logger.info(f"💰 PROCESANDO OPCIÓN ENTREGA INMEDIATA:")
+                    logger.info(f"💰   Precio de compra: '{precio_ei_compra}' de {opcion_ei.get('fuente', 'Unknown')}")
+                    precio_ei_venta_str = aplicar_margen_y_formatear_precio(precio_ei_compra, opcion_ei.get('fuente', ''), cantidad_calc)
+                    logger.info(f"💰   Precio final calculado: '{precio_ei_venta_str}'")
+                    
+                    fuente_ei_original = opcion_ei.get('fuente', 'Base Interna')
+                    fuente_ei_cod = fuente_mapping.get(fuente_ei_original, fuente_ei_original)
+                    
+                    existencia_ei = opcion_ei.get('existencia_numerica', 0)
+                    if isinstance(existencia_ei, str):
+                        try:
+                            existencia_ei = int(float(existencia_ei))
+                        except:
+                            existencia_ei = 1 if existencia_ei.lower() in ['si', 'disponible'] else 0
+                    
+                    if fuente_ei_original == "Base Interna":
+                        if existencia_ei > 0:
+                            entrega_ei_msg = "disponible directamente con nosotros (INSUMOS JIP) para entrega HOY mismo"
+                        else:
+                            entrega_ei_msg = "disponible en nuestra base (INSUMOS JIP) - ⚠️ CONSULTAR EXISTENCIA"
+                        mensaje_origen_ei = ""
+                    elif fuente_ei_original == "Sufarmed":
+                        if existencia_ei > 0:
+                            entrega_ei_msg = f"para entrega HOY mismo (vía {fuente_ei_cod})"
+                        else:
+                            entrega_ei_msg = f"disponible vía {fuente_ei_cod} - ⚠️ VERIFICAR EXISTENCIA"
+                        mensaje_origen_ei = ""
+                    else:
+                        if existencia_ei > 0:
+                            entrega_ei_msg = f"para entrega MAÑANA (prioritaria, vía {fuente_ei_cod})"
+                        else:
+                            entrega_ei_msg = f"disponible vía {fuente_ei_cod} - ⚠️ VERIFICAR EXISTENCIA Y ENTREGA"
+                        mensaje_origen_ei = ""
+                    
+                    respuesta_partes.append(f"• Opción entrega rápida: Precio total {precio_ei_venta_str}, {entrega_ei_msg} {mensaje_origen_ei}".strip())
+                    opciones_presentadas += 1
+
+            if opcion_valida_mp:
+                precio_mp_compra = opcion_mp.get('precio') 
+                if precio_mp_compra:
+                    mostrar_op_mp = True
+                    if (opcion_valida_ei and opcion_ei.get('precio') == precio_mp_compra and 
+                        opcion_ei.get('fuente') == opcion_mp.get('fuente')):
+                        if opciones_presentadas > 0:
+                            mostrar_op_mp = False
+                    
+                    if mostrar_op_mp:
+                        logger.info(f"💰 PROCESANDO OPCIÓN MEJOR PRECIO:")
+                        logger.info(f"💰   Precio de compra: '{precio_mp_compra}' de {opcion_mp.get('fuente', 'Unknown')}")
+                        precio_mp_venta_str = aplicar_margen_y_formatear_precio(precio_mp_compra, opcion_mp.get('fuente', ''), cantidad_calc)
+                        logger.info(f"💰   Precio final calculado: '{precio_mp_venta_str}'")
+                        
+                        fuente_mp_original = opcion_mp.get('fuente', '')
+                        fuente_mp_cod = fuente_mapping.get(fuente_mp_original, fuente_mp_original)
+                        
+                        existencia_mp = opcion_mp.get('existencia_numerica', 0)
+                        if isinstance(existencia_mp, str):
+                            try:
+                                existencia_mp = int(float(existencia_mp))
+                            except:
+                                existencia_mp = 1 if existencia_mp.lower() in ['si', 'disponible'] else 0
+                        
+                        if fuente_mp_original == "Base Interna":
+                            if existencia_mp > 0:
+                                entrega_mp_msg = "disponible directamente con nosotros (INSUMOS JIP) para entrega HOY mismo"
+                            else:
+                                entrega_mp_msg = "en nuestra base (INSUMOS JIP) - ⚠️ CONSULTAR EXISTENCIA"
+                            mensaje_origen_mp = ""
+                        elif fuente_mp_original == "Sufarmed":
+                            if existencia_mp > 0:
+                                entrega_mp_msg = f"para entrega HOY mismo (vía {fuente_mp_cod})"
+                            else:
+                                entrega_mp_msg = f"disponible vía {fuente_mp_cod} - ⚠️ VERIFICAR EXISTENCIA"
+                            mensaje_origen_mp = ""
+                        else:
+                            if existencia_mp > 0:
+                                entrega_mp_msg = f"con entrega estimada MAÑANA (vía {fuente_mp_cod})"
+                            else:
+                                entrega_mp_msg = f"disponible vía {fuente_mp_cod} - ⚠️ VERIFICAR EXISTENCIA Y ENTREGA"
+                            mensaje_origen_mp = ""
+                        
+                        prefijo_opcion = "• Opción mejor precio" if opciones_presentadas > 0 else "• Precio"
+                        respuesta_partes.append(f"{prefijo_opcion}: {precio_mp_venta_str} {entrega_mp_msg} {mensaje_origen_mp}".strip())
+                        opciones_presentadas += 1
+            
+            if opciones_presentadas == 0: 
+                 logger.warning(f"💰 ❌ RESULTADO: No se encontraron opciones válidas con precio para '{producto_display_nombre}'")
+                 logger.warning(f"💰    opcion_ei válida: {opcion_valida_ei}")
+                 logger.warning(f"💰    opcion_mp válida: {opcion_valida_mp}")
+                 if opcion_ei:
+                     logger.warning(f"💰    opcion_ei precio: '{opcion_ei.get('precio', 'N/A')}'")
+                 if opcion_mp:
+                     logger.warning(f"💰    opcion_mp precio: '{opcion_mp.get('precio', 'N/A')}'")
+                 return (f"Encontré información sobre '{producto_display_nombre}' pero no pude obtener detalles de precio en este momento. "
+                         f"Por favor, contacta a Isaac para más información. {mensaje_final_accion}")
+
+            fuente_principal_opcion = None
+            if opcion_valida_ei and opcion_ei.get("fuente") == "Base Interna":
+                fuente_principal_opcion = opcion_ei
+            elif opcion_valida_mp and opcion_mp.get("fuente") == "Base Interna":
+                fuente_principal_opcion = opcion_mp
+                
+            if fuente_principal_opcion:
+                stock_disp_str = fuente_principal_opcion.get('existencia', '0')
+                try:
+                    stock_num = fuente_principal_opcion.get('existencia_numerica', int(float(stock_disp_str)))
+                    if stock_num > 0:
+                        respuesta_partes.append(f"📦 Disponibles en nuestra base (INSUMOS JIP): {stock_num}")
+                    else:
+                        respuesta_partes.append("⚠️ **PRODUCTO AGOTADO en nuestra base** - Consultar disponibilidad con Isaac")
+                except:
+                    respuesta_partes.append("📦 Disponibilidad en nuestra base (INSUMOS JIP): Por favor, consultar con Isaac.")
+            
+            producto_referencia_receta = opcion_ei if opcion_valida_ei else opcion_mp
+            if producto_referencia_receta and producto_referencia_receta.get('requiere_receta', False): 
+                respuesta_partes.append("⚠️ Este producto requiere presentar receta para su venta.")
+
+            respuesta_partes.append(f"\n{mensaje_final_accion}")
+            
+            # Log del resultado final completo
+            respuesta_final = "\n".join(respuesta_partes)
+            logger.info(f"📋 ================== RESPUESTA FINAL GENERADA ==================")
+            logger.info(f"📋 Producto: '{producto_display_nombre}'")
+            logger.info(f"📋 Opciones presentadas: {opciones_presentadas}")
+            logger.info(f"📋 Es consulta cantidad: {es_consulta_cantidad}, Cantidad: {cantidad_solicitada}")
+            logger.info(f"📋 Longitud respuesta: {len(respuesta_final)} caracteres")
+            logger.info(f"📋 =============================================================")
+            
+            return respuesta_final
+
+        except Exception as e:
+            logger.error(f"Error severo en generate_product_response: {e}\n{traceback.format_exc()}")
+            return ("Lo siento, tuve un problema al generar la información del producto. "
+                    "Por favor, intenta de nuevo o contacta a Isaac para asistencia.")
+, '').replace(',', '').strip() not in ["0", "0.0", "0.00"]:
+                        logger.warning(f"🎯 ⚠️ ADVERTENCIA: No se pudo extraer precio válido de '{precio_compra_str}' para '{fuente_proveedor}'")
 
                     # 2. Calcular el precio de venta unitario aplicando el margen
-                    precio_venta_unitario = calcular_precio_con_margen(precio_compra_float, fuente_proveedor) 
+                    precio_venta_unitario = calcular_precio_con_margen(precio_compra_float, fuente_proveedor)
+                    logger.info(f"🎯 PASO 2 - Cálculo margen: {precio_compra_float} → {precio_venta_unitario} (unitario)")
 
                     # 3. Calcular el precio de venta total basado en la cantidad solicitada
                     precio_venta_total = precio_venta_unitario * cantidad_local
+                    logger.info(f"🎯 PASO 3 - Cantidad: {precio_venta_unitario} × {cantidad_local} = {precio_venta_total}")
 
                     # 4. Formatear el precio de venta total al formato mexicano
-                    return formatear_precio_mexicano(precio_venta_total) 
+                    precio_formateado = formatear_precio_mexicano(precio_venta_total)
+                    logger.info(f"🎯 PASO 4 - Formato final: {precio_venta_total} → '{precio_formateado}'")
+                    
+                    logger.info(f"🎯 ===============================================")
+                    logger.info(f"🎯 RESULTADO FINAL: '{precio_compra_str}' ({fuente_proveedor}) × {cantidad_local} = '{precio_formateado}'")
+                    logger.info(f"🎯 ===============================================")
+                    
+                    return precio_formateado
+                    
                 except Exception as e:
-                    logger.error(f"Error severo en aplicar_margen_y_formatear_precio para precio_compra_str='{precio_compra_str}', fuente='{fuente_proveedor}', cantidad='{cantidad_local}': {e}\n{traceback.format_exc()}")
+                    logger.error(f"🎯 ❌ ERROR SEVERO en aplicar_margen_y_formatear_precio:")
+                    logger.error(f"🎯    precio_compra_str='{precio_compra_str}'")
+                    logger.error(f"🎯    fuente='{fuente_proveedor}'")
+                    logger.error(f"🎯    cantidad='{cantidad_local}'")
+                    logger.error(f"🎯    error: {e}")
+                    logger.error(f"🎯 TRACEBACK: {traceback.format_exc()}")
                     return "Precio no disponible" if not precio_compra_str else str(precio_compra_str)
 
             fuente_mapping = {
