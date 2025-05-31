@@ -100,24 +100,26 @@ MARGENES_GANANCIA = {
 }
 
 def extraer_precio_numerico(precio_str):
+    print(f"🔍 DEBUG: precio_str recibido = '{precio_str}'")
+    
     if not precio_str:
+        print("❌ DEBUG: precio_str está vacío")
         return 0.0
     
-    # Eliminar símbolos de moneda y espacios
     clean_price = str(precio_str).replace('$', '').replace(' ', '')
+    print(f"🔍 DEBUG: clean_price después de limpiar = '{clean_price}'")
     
-    # Convertir comas a puntos si es necesario
-    if ',' in clean_price and '.' in clean_price:
-        clean_price = clean_price.replace(',', '')
-    elif ',' in clean_price and '.' not in clean_price:
-        clean_price = clean_price.replace(',', '.')
+    # ... lógica de comas ...
     
-    # REGEX CORREGIDO:
-    match = re.search(r'(\d+(?:\.\d+)?)', clean_price)  # ← FIX AQUÍ
+    match = re.search(r'(\d+(\.\d+)?)', clean_price)
+    print(f"🔍 DEBUG: match encontrado = {match}")
     
     if match:
-        return float(match.group(1))
+        resultado = float(match.group(1))
+        print(f"✅ DEBUG: precio final = {resultado}")
+        return resultado
     else:
+        print("❌ DEBUG: No se encontró match con regex")
         return 0.0
 
 def calcular_precio_con_margen(precio_compra, fuente_proveedor):
