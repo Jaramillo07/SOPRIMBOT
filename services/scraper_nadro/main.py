@@ -6,7 +6,7 @@ Módulo principal para el scraper de NADRO.
 Proporciona funcionalidad para buscar información de productos en el portal NADRO.
 ACTUALIZADO: Con normalización específica para NADRO (nombre + cantidad separados).
 REGLA NADRO: Nombre del principio activo + cantidad separada.
-MODIFICADO: Con sistema de similitud 90%+ para validación ultra-estricta.
+MODIFICADO: Con sistema de similitud 80%+ para validación más flexible.
 """
 
 import time
@@ -52,7 +52,7 @@ PASSWORD = "Newton35$"
 MAIN_URL = "https://i22.nadro.mx/"  # URL base sin token de estado
 
 # ===============================
-# SISTEMA DE SIMILITUD 90%+ PARA NADRO
+# SISTEMA DE SIMILITUD 80%+ PARA NADRO
 # ===============================
 
 def normalizar_texto_nadro_similitud(texto):
@@ -119,8 +119,8 @@ def extraer_componentes_nadro(texto_normalizado):
         'palabras_clave': set(palabras)
     }
 
-def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
-    """Calcula similitud ultra-estricta para NADRO (objetivo: 90%+)."""
+def calcular_similitud_nadro_80(consulta_original, producto_encontrado):
+    """Calcula similitud con umbral 80% para NADRO (más flexible)."""
     if not consulta_original or not producto_encontrado:
         return 0.0
     
@@ -161,7 +161,7 @@ def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
         else:
             logger.debug(f"📝 NADRO: Palabras comunes: {palabras_comunes} de {palabras_consulta}")
     
-    # CRITERIO 3: Coincidencia de dosis (peso: 30%)
+    # CRITERIO 3: Coincidencia de dosis (peso: 30%) - MÁS FLEXIBLE PARA 80%
     coincidencia_dosis = 0.0
     
     consulta_tiene_dosis = bool(comp_consulta['dosis_valor'] and comp_consulta['dosis_unidad'])
@@ -179,10 +179,11 @@ def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
                 coincidencia_dosis = 1.0
                 logger.debug(f"✅ NADRO: Dosis EXACTA: {dosis_consulta}{unidad_consulta}")
             else:
-                coincidencia_dosis = 0.0  # Penalización severa por dosis diferente
-                logger.debug(f"❌ NADRO: Dosis DIFERENTE: {dosis_consulta}{unidad_consulta} vs {dosis_producto}{unidad_producto}")
+                # ✅ CAMBIO: En lugar de 0.0, usar 0.3 para ser más flexible con 80%
+                coincidencia_dosis = 0.3  # Penalización menos severa 
+                logger.debug(f"⚠️ NADRO: Dosis DIFERENTE: {dosis_consulta}{unidad_consulta} vs {dosis_producto}{unidad_producto}")
         except ValueError:
-            coincidencia_dosis = 0.0
+            coincidencia_dosis = 0.2  # ✅ CAMBIO: Menos penalización por error de conversión
             logger.debug(f"❌ NADRO: Error convirtiendo dosis: '{comp_consulta['dosis_valor']}' vs '{comp_producto['dosis_valor']}'")
     
     elif not consulta_tiene_dosis and not producto_tiene_dosis:
@@ -191,13 +192,13 @@ def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
         logger.debug(f"✅ NADRO: Ninguno tiene dosis - OK")
     
     elif not consulta_tiene_dosis and producto_tiene_dosis:
-        # Consulta sin dosis, producto con dosis: neutral
-        coincidencia_dosis = 0.7
+        # Consulta sin dosis, producto con dosis: más neutral para 80%
+        coincidencia_dosis = 0.8  # ✅ CAMBIO: Aumentado de 0.7 a 0.8
         logger.debug(f"⚠️ NADRO: Consulta sin dosis, producto con dosis: {comp_producto['dosis_valor']}{comp_producto['dosis_unidad']}")
     
     else:
-        # Consulta con dosis, producto sin dosis: penalización
-        coincidencia_dosis = 0.3
+        # Consulta con dosis, producto sin dosis: menos penalización para 80%
+        coincidencia_dosis = 0.5  # ✅ CAMBIO: Aumentado de 0.3 a 0.5
         logger.debug(f"⚠️ NADRO: Consulta con dosis {comp_consulta['dosis_valor']}{comp_consulta['dosis_unidad']}, producto sin dosis")
     
     # CÁLCULO FINAL (pesos: 40% texto + 30% palabras + 30% dosis)
@@ -212,6 +213,11 @@ def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
         similitud_final += 0.05
         logger.debug(f"🎯 NADRO: Bonus por inicio coincidente")
     
+    # ✅ NUEVO BONUS: Si la consulta está contenida en el producto (para 80%)
+    if len(consulta_norm) > 3 and consulta_norm in producto_norm:
+        similitud_final += 0.03
+        logger.debug(f"🎯 NADRO: Bonus por consulta contenida en producto")
+    
     # Asegurar que esté entre 0 y 1
     similitud_final = max(0.0, min(1.0, similitud_final))
     
@@ -219,8 +225,8 @@ def calcular_similitud_nadro_90(consulta_original, producto_encontrado):
     
     return similitud_final
 
-def filtrar_productos_nadro_90_porciento(consulta_original, lista_productos, umbral=0.90):
-    """Filtra productos de NADRO que superen 90% de similitud."""
+def filtrar_productos_nadro_similitud(consulta_original, lista_productos, umbral=0.80):
+    """Filtra productos de NADRO que superen 80% de similitud."""
     if not lista_productos:
         logger.warning(f"🔍 NADRO: Lista de productos vacía para '{consulta_original}'")
         return []
@@ -236,7 +242,7 @@ def filtrar_productos_nadro_90_porciento(consulta_original, lista_productos, umb
             logger.warning(f"⚠️ NADRO: Producto #{i+1} sin nombre")
             continue
         
-        similitud = calcular_similitud_nadro_90(consulta_original, nombre_producto)
+        similitud = calcular_similitud_nadro_80(consulta_original, nombre_producto)
         
         if similitud >= umbral:
             producto_con_similitud = producto.copy()
@@ -802,25 +808,25 @@ def buscar_producto(driver, nombre_producto):
                 logger.error(traceback.format_exc())
 
         if resultados:
-            # ✅ APLICAR FILTRO DE SIMILITUD 90%+
-            productos_filtrados = filtrar_productos_nadro_90_porciento(
+            # ✅ APLICAR FILTRO DE SIMILITUD 80%+
+            productos_filtrados = filtrar_productos_nadro_similitud(
                 nombre_producto,  # nombre normalizado que ya se pasa a la función
                 resultados,
-                umbral=0.90
+                umbral=0.80
             )
             
             if productos_filtrados:
                 logger.info(f"✅ NADRO FILTRADO: {len(productos_filtrados)} productos válidos de {len(resultados)} originales")
                 return {"success": True, "productos": productos_filtrados}
             else:
-                logger.warning(f"❌ NADRO: Ningún producto superó el umbral de 90% de similitud")
-                # Opcional: Mostrar el mejor resultado aunque no supere el 90%
+                logger.warning(f"❌ NADRO: Ningún producto superó el umbral de 80% de similitud")
+                # Opcional: Mostrar el mejor resultado aunque no supere el 80%
                 if resultados:
-                    mejor_resultado = max(resultados, key=lambda x: calcular_similitud_nadro_90(nombre_producto, x.get('nombre', '')))
-                    similitud_mejor = calcular_similitud_nadro_90(nombre_producto, mejor_resultado.get('nombre', ''))
+                    mejor_resultado = max(resultados, key=lambda x: calcular_similitud_nadro_80(nombre_producto, x.get('nombre', '')))
+                    similitud_mejor = calcular_similitud_nadro_80(nombre_producto, mejor_resultado.get('nombre', ''))
                     logger.info(f"💡 Mejor resultado disponible: {similitud_mejor:.3f} - '{mejor_resultado.get('nombre', '')[:50]}...'")
                 
-                return {"warning": f"No se encontraron productos con similitud >= 90% para '{nombre_producto}'", "productos": []}
+                return {"warning": f"No se encontraron productos con similitud >= 80% para '{nombre_producto}'", "productos": []}
         else:
             logger.warning(f"⚠️ No se pudieron procesar productos de la lista")
             return {"warning": "No se pudo extraer información de productos", "productos": []}
@@ -1065,7 +1071,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
     Función principal que busca información de un medicamento en NADRO.
     ACTUALIZADO: Con normalización específica para NADRO.
-    MODIFICADO: Con sistema de similitud 90%+ integrado.
+    MODIFICADO: Con sistema de similitud 80%+ integrado.
     
     Args:
         nombre_medicamento (str): Nombre del medicamento a buscar
@@ -1190,7 +1196,7 @@ if __name__ == "__main__":
     import json
     
     print("=== Sistema de Búsqueda de Medicamentos en NADRO ===")
-    print("=== CON FILTRO DE SIMILITUD 90%+ ===")
+    print("=== CON FILTRO DE SIMILITUD 80%+ ===")
     
     # Si se proporciona un argumento por línea de comandos, usarlo como nombre del medicamento
     if len(sys.argv) > 1:
@@ -1222,7 +1228,7 @@ if __name__ == "__main__":
         print(f"Laboratorio: {info.get('laboratorio', 'No disponible')}")
         print(f"Existencia: {info.get('existencia', 'No disponible')}")
         print(f"URL: {info.get('url', 'No disponible')}")
-        print("\nResultado: Producto encontrado con similitud 90%+")
+        print("\nResultado: Producto encontrado con similitud 80%+")
     else:
         print(f"\n{info.get('mensaje', info.get('error', 'No se pudo obtener información del producto'))}")
         print(f"\nEstado: {estado}")
@@ -1237,7 +1243,7 @@ if __name__ == "__main__":
         print(f"\nError al guardar resultado: {e}")
     
     # Pruebas de similitud si se ejecuta directamente
-    print("\n🧪 PRUEBAS SIMILITUD 90%+:")
+    print("\n🧪 PRUEBAS SIMILITUD 80%+:")
     casos_prueba = [
         ("paracetamol 500mg", "PARACETAMOL 500MG TABLETAS"),
         ("losartan 50mg", "LOSARTAN POTASICO 50MG"),
@@ -1245,6 +1251,6 @@ if __name__ == "__main__":
     ]
     
     for consulta, producto in casos_prueba:
-        similitud = calcular_similitud_nadro_90(consulta, producto)
-        valido = similitud >= 0.90
+        similitud = calcular_similitud_nadro_80(consulta, producto)
+        valido = similitud >= 0.80
         print(f"'{consulta}' vs '{producto}': {similitud:.3f} {'✅' if valido else '❌'}")
