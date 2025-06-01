@@ -124,7 +124,7 @@ class SheetsService:
                 normalized = normalized[len(word):]
         
         replacements = {
-            "acido": "ácido", # Aunque normalize_text quita acentos, aquí es por si se escribe sin acento intencionalmente
+            "acido": "ácido", 
             "acetato": "ac",
             "capsulas": "cap",
             "tabletas": "tab",
@@ -133,22 +133,13 @@ class SheetsService:
             "miligramos": "mg",
             "mililitros": "ml",
             "microgramos": "mcg"
-            # Podríamos añadir más normalizaciones de unidades si es necesario, ej. "gramos" -> "g"
         }
         
-        # Aplicar reemplazos de unidades/formas de manera segura palabra por palabra
-        # para evitar reemplazar subcadenas incorrectamente (ej. "sol" en "girasol")
         words = normalized.split()
         processed_words = []
         for word in words:
-            # Normalizar palabra si es una forma farmacéutica o unidad completa
-            # Esto es más seguro que un replace directo en toda la cadena
             if word in replacements:
                  processed_words.append(replacements[word])
-            # Específicamente para unidades que pueden estar pegadas a números como "100mg"
-            # o separadas "100 mg", y queremos que el _extract_dosage las encuentre.
-            # La normalización de "miligramos" a "mg" ya ayuda.
-            # No es necesario más manipulación aquí si _extract_dosage es robusto.
             else:
                  processed_words.append(word)
         
@@ -166,116 +157,157 @@ class SheetsService:
         Returns:
             tuple: (valor_str, unidad_str) o (None, None) si no se encuentra dosis.
         """
-        # Unidades comunes abreviadas que ya deberían estar normalizadas por normalize_product_name
-        # y normalize_text (ej. miligramos -> mg)
-        # La regex busca: número (posiblemente decimal), espacio opcional, unidad seguida de un límite de palabra.
-        # Se añaden más unidades para ser más robusto, asumiendo que normalize_product_name
-        # o normalize_text las han llevado a estas formas abreviadas y en minúsculas.
         match = re.search(r"(\d+[\.,]?\d*)\s*(mg|ml|mcg|g|ui|l|kg|unidades|unidad|unid)\b", text_norm)
         if match:
-            value_str = match.group(1).replace(',', '.')  # Normalizar coma a punto para float
-            unit_str = match.group(2).lower() # Unidad ya debería estar en minúscula por normalize_text
+            value_str = match.group(1).replace(',', '.')
+            unit_str = match.group(2).lower() 
             return value_str, unit_str
         return None, None
 
     def calculate_similarity(self, query: str, target: str) -> float:
         """
-        MEJORADO: Calcula la similitud entre dos cadenas de texto.
-        Ahora con mejor normalización, lógica de puntuación más inteligente y
-        COMPARACIÓN DE DOSIS ESPECÍFICA.
+        CORREGIDO: Calcula la similitud priorizando el nombre del producto y usando la dosis como factor.
         
         Args:
-            query (str): Consulta (se normalizará internamente si no lo está)
-            target (str): Texto objetivo (se normalizará internamente si no lo está)
+            query (str): Consulta (ya normalizada por normalize_product_name)
+            target (str): Texto objetivo (ya normalizado por normalize_product_name)
             
         Returns:
             float: Puntuación de similitud entre 0 y 1
         """
-        if not query or not target:
-            return 0.0
-        
-        # query_norm y target_norm deben ser el resultado de self.normalize_product_name()
-        # o al menos self.normalize_text() para que la extracción de dosis y comparación de palabras funcione.
-        # Si 'query' y 'target' ya son nombres de producto normalizados, podemos omitir
-        # la normalización aquí, pero es más seguro hacerlo.
-        query_norm = self.normalize_text(query) 
-        target_norm = self.normalize_text(target)
-        
-        query_words = set(query_norm.split())
-        target_words = set(target_norm.split())
-        
-        if not query_words or not target_words:
-            return 0.0
-        
-        common_words = query_words.intersection(target_words)
-        
-        # Puntuación base: porcentaje de palabras de la consulta que están en el objetivo.
-        base_score = len(common_words) / len(query_words) if query_words else 0.0
-        
-        # BONIFICACIONES
-        query_start = query_norm[:min(10, len(query_norm))]
-        if target_norm.startswith(query_start) and len(query_start) > 3:
-            base_score += 0.25
-            logger.debug(f"🎯 Bonus inicio: '{query_start}' encontrado al inicio de '{target_norm[:20]}...'")
-        
-        if len(common_words) >= 2:
-            density_bonus = min(0.15, len(common_words) * 0.05)
-            base_score += density_bonus
-            logger.debug(f"📊 Bonus densidad: {len(common_words)} palabras comunes = +{density_bonus:.2f}")
-        
-        main_query_words = [w for w in query_words if len(w) > 3]
-        if main_query_words:
-            main_word = max(main_query_words, key=len, default=None) # default=None para evitar error si está vacío
-            if main_word and main_word in target_words:
-                base_score += 0.1
-                logger.debug(f"🔑 Bonus palabra principal: '{main_word}' encontrada")
-        
-        # PENALIZACIÓN por longitud
-        length_ratio = len(query_words) / len(target_words) if target_words else 0.0
-        if length_ratio < 0.3:  # Target es más de 3 veces más largo
-            base_score *= 0.95
-            logger.debug(f"📏 Penalización longitud: ratio {length_ratio:.2f}")
+        query_norm_for_text_processing = self.normalize_text(query)
+        target_norm_for_text_processing = self.normalize_text(target)
 
-        # --- INICIO: LÓGICA DE COMPARACIÓN DE DOSIS ---
-        query_dosage_val_str, query_dosage_unit = self._extract_dosage(query_norm)
-        target_dosage_val_str, target_dosage_unit = self._extract_dosage(target_norm)
+        if not query_norm_for_text_processing or not target_norm_for_text_processing:
+            return 0.0
 
+        # 1. Extraer dosis de la consulta y del objetivo
+        query_dosage_val_str, query_dosage_unit = self._extract_dosage(query_norm_for_text_processing)
+        target_dosage_val_str, target_dosage_unit = self._extract_dosage(target_norm_for_text_processing)
+
+        # 2. Calcular factor de dosis
         dosage_factor = 1.0
         log_msg_dosage_details = ""
+        query_has_dose = bool(query_dosage_val_str and query_dosage_unit)
+        target_has_dose = bool(target_dosage_val_str and target_dosage_unit)
 
-        if query_dosage_val_str and query_dosage_unit:
-            log_msg_dosage_details = f"QueryDose='{query_dosage_val_str}{query_dosage_unit}' "
-            if target_dosage_val_str and target_dosage_unit:
-                log_msg_dosage_details += f"TargetDose='{target_dosage_val_str}{target_dosage_unit}'. "
-                try:
-                    q_val = float(query_dosage_val_str)
-                    t_val = float(target_dosage_val_str)
-                    
-                    if q_val == t_val and query_dosage_unit == target_dosage_unit:
-                        dosage_factor = 1.35  # Bonificación significativa
-                        log_msg_dosage_details += "EXACT_MATCH"
-                    else:
-                        dosage_factor = 0.5  # Penalización fuerte
-                        log_msg_dosage_details += "MISMATCH"
-                except ValueError:
-                    logger.warning(f"Error al convertir dosis a float: q='{query_dosage_val_str}', t='{target_dosage_val_str}'")
-                    if query_dosage_unit == target_dosage_unit: # Mismas unidades pero valor no numérico claro
-                        dosage_factor = 0.7 
-                        log_msg_dosage_details += "CONV_ERR_SAME_UNIT"
-                    else: # Unidades diferentes y valor no numérico
-                        log_msg_dosage_details += "CONV_ERR_DIFF_UNIT"
-            else: # Query tiene dosis, target no
-                dosage_factor = 0.75
-                log_msg_dosage_details += "TARGET_NO_DOSE"
-            logger.debug(f"💊 {log_msg_dosage_details} FactorDosis={dosage_factor:.2f}")
-        
-        base_score *= dosage_factor
-        # --- FIN: LÓGICA DE COMPARACIÓN DE DOSIS ---
+        if query_has_dose and target_has_dose:
+            log_msg_dosage_details = f"QueryDose='{query_dosage_val_str}{query_dosage_unit}' TargetDose='{target_dosage_val_str}{target_dosage_unit}'. "
+            try:
+                q_val = float(query_dosage_val_str)
+                t_val = float(target_dosage_val_str)
+                if q_val == t_val and query_dosage_unit == target_dosage_unit:
+                    dosage_factor = 1.1  # Bonificación leve por coincidencia exacta de dosis
+                    log_msg_dosage_details += "EXACT_DOSE_MATCH"
+                elif query_dosage_unit == target_dosage_unit: # Misma unidad, diferente valor
+                    dosage_factor = 0.4  # Penalización por valor diferente
+                    log_msg_dosage_details += "VALUE_MISMATCH"
+                else: # Unidades diferentes
+                    dosage_factor = 0.2  # Penalización fuerte por unidades diferentes
+                    log_msg_dosage_details += "UNIT_MISMATCH"
+            except ValueError:
+                logger.warning(f"Error al convertir dosis a float: q='{query_dosage_val_str}', t='{target_dosage_val_str}'")
+                dosage_factor = 0.1  # Penalización fuerte por error de conversión
+                log_msg_dosage_details += "CONV_ERROR"
+        elif query_has_dose and not target_has_dose: # Consulta con dosis, objetivo sin dosis
+            dosage_factor = 0.1  # Penalización muy fuerte
+            log_msg_dosage_details = f"QueryDose='{query_dosage_val_str}{query_dosage_unit}' TargetHasNoDose. STRONG_PENALTY"
+        elif not query_has_dose and target_has_dose: # Consulta sin dosis, objetivo con dosis
+            dosage_factor = 0.7  # Penalización moderada (el objetivo es más específico)
+            log_msg_dosage_details = f"QueryHasNoDose TargetDose='{target_dosage_val_str}{target_dosage_unit}'. MODERATE_PENALTY"
+        else: # Ni consulta ni objetivo tienen dosis
+            log_msg_dosage_details = "NoDoseInQueryOrTarget. NEUTRAL"
+            dosage_factor = 1.0 
 
-        final_score = min(max(base_score, 0.0), 1.0) # Clampear entre 0 y 1
+        # 3. Obtener palabras del nombre (excluyendo la dosis)
+        query_words_list_full = query_norm_for_text_processing.split()
+        target_words_list_full = target_norm_for_text_processing.split()
+
+        # Reconstruir la parte del nombre eliminando el patrón de dosis encontrado
+        query_name_str = query_norm_for_text_processing
+        if query_has_dose:
+            # Crear un patrón para la dosis de la consulta (ej. "200 mg" o "200mg")
+            q_dose_pattern = rf"\b{re.escape(query_dosage_val_str)}\s*{re.escape(query_dosage_unit)}\b|\b{re.escape(query_dosage_val_str)}{re.escape(query_dosage_unit)}\b"
+            query_name_str = re.sub(q_dose_pattern, "", query_name_str, count=1).strip()
+        query_name_words = set(w for w in query_name_str.split() if w)
+
+        target_name_str = target_norm_for_text_processing
+        if target_has_dose:
+            # Crear un patrón para la dosis del objetivo
+            t_dose_pattern = rf"\b{re.escape(target_dosage_val_str)}\s*{re.escape(target_dosage_unit)}\b|\b{re.escape(target_dosage_val_str)}{re.escape(target_dosage_unit)}\b"
+            target_name_str = re.sub(t_dose_pattern, "", target_name_str, count=1).strip()
+        target_name_words = set(w for w in target_name_str.split() if w)
         
-        if final_score > 0.3:
-            logger.debug(f"💯 Similitud FINAL: {final_score:.3f} | Query: '{query_norm}' | Target: '{target_norm[:50]}...' | {log_msg_dosage_details if (query_dosage_val_str and query_dosage_unit) else 'Sin dosis en query'}")
+        # Caso especial: si la consulta era solo una dosis
+        if not query_name_words:
+            if query_has_dose and target_has_dose and dosage_factor > 0.5: # Si la dosis coincidió bien
+                 # Asignar una puntuación base si solo la dosis coincidió (y era lo único en la consulta)
+                 # Ejemplo: búsqueda "100 mg", producto "Algo 100 mg". FactorDosis será 1.1. Score ~0.5.
+                 base_score_for_dose_only_match = 0.4 
+                 final_score = min(base_score_for_dose_only_match * dosage_factor, 1.0)
+                 logger.debug(f"💯 Similitud (solo dosis en query): {final_score:.3f} | Query: '{query_norm_for_text_processing}' | Target: '{target_norm_for_text_processing[:50]}...'")
+                 return final_score
+            return 0.0 # Si no hay palabras de nombre en la consulta y la dosis no coincidió bien.
+
+        # 4. Calcular similitud basada en las palabras del nombre
+        common_name_words = query_name_words.intersection(target_name_words)
+        
+        # Usar Jaccard Index para la similitud base del nombre para evitar division by zero si query_name_words es vacío (aunque ya se manejó)
+        # y para una mejor medida de similitud entre conjuntos de palabras de nombre.
+        union_name_words = query_name_words.union(target_name_words)
+        if not union_name_words: # Ambos conjuntos de palabras de nombre están vacíos (después de quitar dosis)
+            if query_has_dose and target_has_dose and dosage_factor > 0.5: # Si las dosis coinciden
+                return min(0.3 * dosage_factor, 1.0) # Puntuación baja si solo las dosis coinciden y no hay nombres
+            return 0.0
+            
+        name_score = len(common_name_words) / len(union_name_words) if union_name_words else 0.0
+        
+        current_score_for_name_logic = name_score
+
+        # 5. Aplicar bonificaciones y penalizaciones al `current_score_for_name_logic`
+        
+        # BONIFICACIONES sobre el nombre
+        query_start_name = query_name_str[:min(10, len(query_name_str))] # Usar la cadena de nombre reconstruida
+        if target_name_str.startswith(query_start_name) and len(query_start_name) > 2:
+            current_score_for_name_logic += 0.20 # Bonificación por inicio coincidente del nombre
+            logger.debug(f"🎯 Bonus inicio (nombre): '{query_start_name}' encontrado al inicio de '{target_name_str[:20]}...'")
+        
+        # Bonificación por densidad de palabras de nombre comunes (si más de la mitad de las palabras de nombre de la consulta están)
+        if query_name_words and (len(common_name_words) / len(query_name_words)) > 0.49 :
+            if len(common_name_words) >=1 : # Asegurar al menos una palabra común
+                 current_score_for_name_logic += 0.15 
+                 logger.debug(f"📊 Bonus palabras nombre comunes: {len(common_name_words)} de {len(query_name_words)} coinciden")
+        
+        # Bonificación por palabra principal del nombre
+        main_query_name_word_list = [w for w in query_name_words if len(w) > 3]
+        if main_query_name_word_list:
+            main_name_word = max(main_query_name_word_list, key=len, default=None)
+            if main_name_word and main_name_word in target_name_words:
+                current_score_for_name_logic += 0.10
+                logger.debug(f"🔑 Bonus palabra principal (nombre): '{main_name_word}' encontrada")
+        
+        # PENALIZACIÓN por longitud de las partes del nombre
+        if target_name_words and query_name_words:
+            length_ratio_name = len(query_name_words) / len(target_name_words)
+            if length_ratio_name < 0.4:  # Nombre del objetivo es >2.5 veces más largo
+                current_score_for_name_logic *= 0.90
+                logger.debug(f"📏 Penalización longitud (nombre): ratio {length_ratio_name:.2f}")
+            elif length_ratio_name > 2.5: # Nombre de la consulta es >2.5 veces más largo
+                current_score_for_name_logic *= 0.90
+                logger.debug(f"📏 Penalización longitud (nombre inverso): ratio {length_ratio_name:.2f}")
+        
+        # 6. Combinar la puntuación del nombre con el factor de dosis
+        # current_score_for_name_logic puede haber superado 1.0 con las bonificaciones, lo cual está bien en esta etapa.
+        final_score = current_score_for_name_logic * dosage_factor
+        
+        # 7. Asegurar que la puntuación final esté entre 0 y 1
+        final_score = min(max(final_score, 0.0), 1.0)
+        
+        if final_score > 0.2: # Loguear detalles para puntuaciones potencialmente significativas
+            logger.debug(f"💯 Similitud CORREGIDA: {final_score:.3f} | Q: '{query_norm_for_text_processing}' | T: '{target_norm_for_text_processing[:50]}...'")
+            logger.debug(f"  ScoreNombreBase(Jaccard)={name_score:.3f} -> ScoreNombreAjustado={current_score_for_name_logic:.3f}")
+            logger.debug(f"  {log_msg_dosage_details} FactorDosis={dosage_factor:.2f}")
+            logger.debug(f"  Q_NameWords='{query_name_words}', T_NameWords='{target_name_words}'")
         
         return final_score
 
@@ -294,61 +326,55 @@ class SheetsService:
         logger.info(f"[DEBUG] Búsqueda MEJORADA (con dosis): '{normalized_query}' (original: '{product_name}') | Threshold: {threshold}")
         
         best_match = None
-        best_score = 0.0 # Asegurar que es float
+        best_score = 0.0 
         candidates = []
         
-        for product_row in self.data: # Renombrar 'product' a 'product_row' para evitar confusión
+        for product_row in self.data: 
             desc = product_row.get('DESCRIPCION', '')
             if not desc:
                 continue
                 
-            normalized_desc = self.normalize_product_name(desc) # Normalizar descripción del producto de la hoja
+            normalized_desc = self.normalize_product_name(desc) 
             
-            # No llamar a self.calculate_similarity(normalized_query, desc)
-            # sino self.calculate_similarity(normalized_query, normalized_desc)
-            # O mejor, pasar los nombres ya normalizados completamente si calculate_similarity lo espera
-            # Aquí, pasaremos los nombres que ya han pasado por normalize_product_name
-            # y calculate_similarity internamente usará normalize_text para la forma más básica.
-            # Para que _extract_dosage funcione bien, necesita el texto después de normalize_product_name.
-            score = self.calculate_similarity(normalized_query, normalized_desc) # Usar descripciones normalizadas
+            # Llamar a calculate_similarity con las cadenas ya procesadas por normalize_product_name
+            score = self.calculate_similarity(normalized_query, normalized_desc)
             
             product_code = str(product_row.get('CLAVE', '')).lower()
-            # query_just_text_normalized es normalized_query pero sin la dosis, si queremos comparar código
-            # Esto es complicado. Por ahora, si el código coincide con la query normalizada completa, damos bonus.
-            if product_code and normalized_query == product_code: # Comparar con la query normalizada
-                score = min(score + 0.5, 1.0) # Aumentar puntuación, pero no pasar de 1.0
+            if product_code and normalized_query == product_code: 
+                score = min(score + 0.5, 1.0) 
                 logger.info(f"[DEBUG] 🔑 Bonus por código coincidente: {product_code}, score ahora {score:.3f}")
                 
-            if score > 0.3:
+            if score > 0.3: # Umbral más bajo para ser candidato y aparecer en logs
                 candidates.append({
                     'score': score,
-                    'name': desc, # Guardar nombre original para mostrar
-                    'normalized': normalized_desc # Guardar nombre normalizado para debug
+                    'name': desc, 
+                    'normalized': normalized_desc 
                 })
                 
-            if score > threshold:
-                logger.info(f"[DEBUG] ✅ Candidato VÁLIDO ({score:.3f}): '{desc}'")
-                
-            if score > best_score and score >= threshold:
-                best_score = score
-                best_match = product_row
-        
+            if score >= threshold : # Solo considerar como válido si supera el threshold real
+                logger.info(f"[DEBUG] ✅ Candidato VÁLIDO ({score:.3f}) para '{normalized_query}': '{desc}' (Norm: '{normalized_desc}')")
+                if score > best_score: # Actualizar el mejor si este es mejor Y válido
+                    best_score = score
+                    best_match = product_row
+            elif score > 0.3 : # Log para candidatos cercanos pero no válidos
+                 logger.info(f"[DEBUG] 🟡 Candidato CERCANO pero NO VÁLIDO ({score:.3f}) para '{normalized_query}': '{desc}' (Norm: '{normalized_desc}')")
+
         if candidates:
-            logger.info(f"[DEBUG] 📊 Top candidatos encontrados (ordenados por score):")
+            logger.info(f"[DEBUG] 📊 Top candidatos encontrados (ordenados por score) para '{normalized_query}':")
             sorted_candidates = sorted(candidates, key=lambda x: x['score'], reverse=True)
             for i, candidate in enumerate(sorted_candidates[:5]):
                 status = "✅ ACEPTADO" if candidate['score'] >= threshold else "❌ RECHAZADO"
                 logger.info(f"   #{i+1}: {candidate['score']:.3f} - {candidate['name'][:50]}... (Norm: '{candidate['normalized'][:50]}...') [{status}]")
         
         if best_match:
-            logger.info(f"[DEBUG] 🏆 MEJOR COINCIDENCIA ({best_score:.3f}): '{best_match.get('DESCRIPCION', '')}'")
+            logger.info(f"[DEBUG] 🏆 MEJOR COINCIDENCIA para '{normalized_query}' ({best_score:.3f}): '{best_match.get('DESCRIPCION', '')}'")
         else:
             logger.info(f"[DEBUG] ❌ Sin coincidencias que superen threshold ({threshold}) para '{normalized_query}'")
-            if candidates: # Mostrar el mejor aunque no haya superado el threshold
+            if candidates: 
                 best_rejected_candidate = max(candidates, key=lambda x: x['score'])
                 if best_rejected_candidate['score'] < threshold :
                     logger.info(f"[DEBUG] 💡 Mejor candidato RECHAZADO ({best_rejected_candidate['score']:.3f}): '{best_rejected_candidate['name'][:50]}...'")
-                    if best_rejected_candidate['score'] > 0.0: # Solo sugerir si hay alguna similitud
+                    if best_rejected_candidate['score'] > 0.0: 
                          sugg_threshold = float(f"{best_rejected_candidate['score'] - 0.05:.2f}")
                          logger.info(f"[DEBUG] 💡 Sugerencia: Considera reducir threshold a ~{max(0.1, sugg_threshold)}")
 
@@ -367,24 +393,20 @@ class SheetsService:
         price_str = ""
         price_value = 0.0
 
-        if price: #Solo procesar si price no es None o 0
+        if price: 
             try:
-                # Intenta convertir directamente a float primero
                 price_value = float(price)
                 price_str = f"${price_value:.2f}"
-            except ValueError: # Si falla, es probable que sea un string con formato
+            except ValueError: 
                 if isinstance(price, str):
                     clean_price_for_float = price.replace('$', '').replace(',', '').strip()
                     try:
                         price_value = float(clean_price_for_float)
-                        price_str = f"${price_value:.2f}" # Re-formatear estandarizado
+                        price_str = f"${price_value:.2f}" 
                     except ValueError:
-                        price_str = str(price) # Usar el string original si no se puede convertir
-                        price_value = 0.0 # O intentar extraer de nuevo con regex más permisivo
-                        # match_pv = re.search(r'(\d+(\.\d+)?)', clean_price_for_float)
-                        # if match_pv: price_value = float(match_pv.group(1))
-
-        else: # Si el precio es 0, None, o string vacío
+                        price_str = str(price) 
+                        price_value = 0.0 
+        else: 
             price_str = "$0.00"
             price_value = 0.0
 
@@ -393,13 +415,13 @@ class SheetsService:
             "codigo_barras": str(product_data.get('CLAVE', '')),
             "laboratorio": product_data.get('LABORATORIO', 'No especificado'),
             "registro_sanitario": product_data.get('REGISTRO', ''),
-            "precio": price_str, # Precio formateado como string
-            "existencia": str(stock_value), # Existencia como string
-            "existencia_numerica": stock_value, # Existencia como número
-            "precio_numerico": price_value, # Precio como float para cálculos
+            "precio": price_str, 
+            "existencia": str(stock_value), 
+            "existencia_numerica": stock_value, 
+            "precio_numerico": price_value, 
             "fuente": "Base Interna",
-            "nombre_farmacia": "SOPRIM", # O el nombre que corresponda
-            "estado": "encontrado" # Asumimos que si se formatea, se encontró
+            "nombre_farmacia": "SOPRIM", 
+            "estado": "encontrado" 
         }
     
     def buscar_producto(self, nombre_producto: str, threshold: float = 0.5) -> Optional[Dict[str, Any]]:
@@ -410,10 +432,10 @@ class SheetsService:
             
             logger.info(f"[DEBUG] 🚀 Iniciando búsqueda MEJORADA (con dosis) para: '{nombre_producto}' con threshold {threshold}")
             
-            producto_encontrado_row = self.search_product(nombre_producto, threshold) # search_product devuelve la fila
+            producto_encontrado_row = self.search_product(nombre_producto, threshold) 
             
             if producto_encontrado_row:
-                resultado = self.format_product(producto_encontrado_row) # Formatear la fila
+                resultado = self.format_product(producto_encontrado_row) 
                 logger.info(f"[DEBUG] ✅ Producto encontrado en base interna: {resultado['nombre']} (similitud >= {threshold})")
                 return resultado
             
@@ -456,7 +478,6 @@ class SheetsService:
             self.refresh_cache_if_needed()
             productos_con_stock = []
             for p_row in self.data:
-                # Usar format_product para obtener existencia_numerica estandarizada
                 producto_formateado = self.format_product(p_row)
                 if producto_formateado['existencia_numerica'] > 0:
                     productos_con_stock.append(producto_formateado)
