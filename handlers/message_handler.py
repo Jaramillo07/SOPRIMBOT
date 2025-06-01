@@ -127,7 +127,7 @@ class MessageHandler:
         producto_nombre: str, 
         raw_phone_number_with_prefix: str,
         historial_chat: list, 
-        mensaje_usuario_original_completo: str, 
+        mensaje_usuario_original_completo: str, # Mensaje que disparó esta búsqueda específica
         cantidad_solicitada_info: int = None
     ):
         phone_number_key_clean = raw_phone_number_with_prefix.replace("whatsapp:", "")
@@ -135,6 +135,7 @@ class MessageHandler:
         
         if not producto_nombre or not producto_nombre.strip():
             logger.warning("Intento de procesar un nombre de producto vacío o nulo. Abortando búsqueda individual.")
+            # No enviar mensaje al usuario aquí, la lógica principal debería manejarlo si no hay producto.
             return {"success": False, "respuesta": "No se especificó un producto válido para buscar.", "producto_procesado": None}
 
         current_scraper = self.scraping_service 
@@ -169,7 +170,7 @@ class MessageHandler:
             if info_producto_final_para_gemini:
                 es_consulta_de_cantidad = isinstance(cantidad_solicitada_info, int) and cantidad_solicitada_info > 0
                 respuesta_producto_gemini = self.gemini_service.generate_product_response(
-                    user_message=mensaje_usuario_original_completo, 
+                    user_message=mensaje_usuario_original_completo, # El mensaje que inició esta búsqueda específica
                     producto_info=info_producto_final_para_gemini,
                     additional_context=producto_nombre, 
                     conversation_history=historial_chat,
@@ -183,6 +184,7 @@ class MessageHandler:
                                       "¿Podrías verificar el nombre o darme más detalles? También puedes preguntar por alternativas.")
                 self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, final_user_response)
             
+            # Guardar la interacción usando el mensaje original que llevó a esta búsqueda de producto
             guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, final_user_response)
             self._update_circuit_breaker(success=True)
             return {"success": True, "respuesta": final_user_response, "producto_procesado": producto_nombre}
@@ -192,13 +194,14 @@ class MessageHandler:
             self._update_circuit_breaker(success=False)
             error_msg_usuario = f"Lo siento, hubo un problema técnico al obtener información para '{producto_nombre}'. Por favor, intenta de nuevo más tarde."
             self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, error_msg_usuario)
+            # Guardar la interacción de error
             guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, error_msg_usuario)
             return {"success": False, "error": str(e), "producto_procesado": producto_nombre, "respuesta": error_msg_usuario}
 
     async def _procesar_producto_con_timeout(self, producto_nombre: str, raw_phone_number_with_prefix: str, historial: list, mensaje_original: str, cantidad_info_para_procesar: int = None):
         try:
             logger.info(f"⏳ Iniciando _procesar_producto_con_timeout para: '{producto_nombre}', Cantidad: {cantidad_info_para_procesar}")
-            if not producto_nombre or not producto_nombre.strip(): 
+            if not producto_nombre or not producto_nombre.strip(): # Chequeo adicional
                 logger.error("Timeout: Nombre de producto vacío o nulo recibido.")
                 return {"success": False, "error": "producto_vacio", "producto_procesado": None, "respuesta": "No se especificó un producto para buscar."}
 
@@ -241,7 +244,7 @@ class MessageHandler:
 
         clean_phone_for_db = phone_number.replace("whatsapp:", "")
         mensaje_original_usuario_texto = mensaje 
-        mensaje_para_analisis_gemini = mensaje_original_usuario_texto
+        mensaje_para_analisis_gemini = mensaje_original_usuario_texto # Mensaje que se usará para el análisis de Gemini
         
         fue_ocr = False 
 
@@ -261,6 +264,8 @@ class MessageHandler:
                         "Para los demás productos de la lista, por favor, envíamelos uno por uno después para que pueda ayudarte mejor. 😊"
                     )
                     self.whatsapp_service.send_text_message(phone_number, mensaje_guia_ocr)
+                    # Guardar el mensaje original del usuario (que pudo ser solo la imagen o texto + imagen)
+                    # y la respuesta guía del bot.
                     guardar_interaccion(clean_phone_for_db, 
                                        mensaje_original_usuario_texto if mensaje_original_usuario_texto else "(Imagen enviada)", 
                                        mensaje_guia_ocr)
@@ -281,13 +286,14 @@ class MessageHandler:
 
         if not mensaje_para_analisis_gemini or not mensaje_para_analisis_gemini.strip(): 
             logger.info("📝 Mensaje para Gemini vacío después de OCR. Enviando saludo.")
-            respuesta_vacia = self.gemini_service.generate_response("Hola", []) 
+            respuesta_vacia = self.gemini_service.generate_response("Hola", []) #
             self.whatsapp_service.send_text_message(phone_number, respuesta_vacia)
             guardar_interaccion(clean_phone_for_db, mensaje_original_usuario_texto if mensaje_original_usuario_texto else "(Mensaje vacío)", respuesta_vacia)
             return {"success": True, "message_type": "mensaje_vacio_saludo", "respuesta": respuesta_vacia, "processing_time": processing_time_taken()}
 
         historial = obtener_historial(clean_phone_for_db)
-        contexto_gemini = self.gemini_service.analizar_contexto_con_gemini(mensaje_para_analisis_gemini, historial, is_ocr_text=fue_ocr) 
+        # El mensaje_para_analisis_gemini ya incluye el [Texto de imagen]: ... si hubo OCR
+        contexto_gemini = self.gemini_service.analizar_contexto_con_gemini(mensaje_para_analisis_gemini, historial, is_ocr_text=fue_ocr) # Pasar flag
         
         tipo_consulta = contexto_gemini.get("tipo_consulta", "no_entiendo_o_irrelevante")
         productos_mencionados_directo_usuario = contexto_gemini.get("productos_mencionados_ahora", [])
@@ -297,36 +303,7 @@ class MessageHandler:
         
         logger.info(f"🧠 Análisis Gemini: Tipo='{tipo_consulta}', ProdUsuario='{productos_mencionados_directo_usuario}', ProdOCR='{producto_principal_identificado_ocr}', ProdAntes='{producto_contexto_anterior}', Cant='{cantidad_solicitada_gemini}'")
 
-        # --- INICIO DE HEURÍSTICA OPCIONAL ---
-        service_keywords = ["entrega", "domicilio", "horario", "ubicacion", "pago", "contacto", "dirección", "teléfono"] 
-        if productos_mencionados_directo_usuario:
-            productos_a_mantener = []
-            posible_pregunta_servicio_detectada = False
-            for prod_mencionado_str in productos_mencionados_directo_usuario:
-                es_frase_servicio = False
-                if isinstance(prod_mencionado_str, str):
-                    prod_lower = prod_mencionado_str.lower()
-                    if any(keyword in prod_lower for keyword in service_keywords) and len(prod_lower.split()) > 1:
-                        if not re.search(r'\b(mg|ml|g|tabs|cap|tab|comprimido|pastilla)\b', prod_lower, re.IGNORECASE):
-                            es_frase_servicio = True
-                            posible_pregunta_servicio_detectada = True
-                            logger.warning(f"Heurística: '{prod_mencionado_str}' parece una pregunta de servicio, no un nombre de producto.")
-                
-                if not es_frase_servicio:
-                    productos_a_mantener.append(prod_mencionado_str)
-            
-            if posible_pregunta_servicio_detectada:
-                if not productos_a_mantener:
-                    if tipo_consulta == "consulta_producto_nuevo": 
-                        logger.info(f"Heurística: Reclasificando tipo_consulta de '{tipo_consulta}' a 'pregunta_general_farmacia' debido a heurística y limpiando 'productos_mencionados_directo_usuario'.")
-                        tipo_consulta = "pregunta_general_farmacia" 
-                    productos_mencionados_directo_usuario = [] 
-                else:
-                    logger.info(f"Heurística: Se eliminó una frase de servicio de 'productos_mencionados_directo_usuario'. Quedan: {productos_a_mantener}")
-                    productos_mencionados_directo_usuario = productos_a_mantener
-        # --- FIN DE HEURÍSTICA OPCIONAL ---
-
-        if tipo_consulta in ["solicitud_direccion_contacto", "confirmacion_pedido", "pregunta_general_farmacia"]:
+        if tipo_consulta in ["solicitud_direccion_contacto", "confirmacion_pedido"]:
             respuesta_info = self.gemini_service.generate_response(mensaje_para_analisis_gemini, historial)
             self.whatsapp_service.send_text_message(phone_number, respuesta_info)
             guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, respuesta_info)
@@ -346,11 +323,12 @@ class MessageHandler:
             else:
                 logger.warning("Consulta de cantidad detectada por Gemini pero sin producto claro asociado.")
         
+        # Determinar el producto principal a procesar
         producto_identificado_final = None
         if fue_ocr and producto_principal_identificado_ocr:
             producto_identificado_final = producto_principal_identificado_ocr
             logger.info(f"OCR: Se procesará el producto principal del OCR: '{producto_identificado_final}'")
-        elif productos_mencionados_directo_usuario: 
+        elif productos_mencionados_directo_usuario: # Si no hubo OCR o Gemini no sacó nada del OCR, pero sí del texto del usuario
             if len(productos_mencionados_directo_usuario) > 1:
                  logger.info(f"🎯 Múltiples productos en TEXTO ({len(productos_mencionados_directo_usuario)}): {productos_mencionados_directo_usuario}. Solicitando uno por uno.")
                  mensaje_instr = self._generar_mensaje_instrucciones_multiples(productos_mencionados_directo_usuario, mensaje_original_usuario_texto)
@@ -358,11 +336,12 @@ class MessageHandler:
                  guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, mensaje_instr)
                  self._update_circuit_breaker(success=True)
                  return {"success": True, "message_type": "instrucciones_multiples_productos_texto", "respuesta": mensaje_instr, "processing_time": processing_time_taken()}
-            else: 
+            else: # Un solo producto del texto del usuario
                 producto_identificado_final = productos_mencionados_directo_usuario[0]
-        elif tipo_consulta == "pregunta_sobre_producto_en_contexto" and producto_contexto_anterior: 
+        elif tipo_consulta == "pregunta_sobre_producto_en_contexto" and producto_contexto_anterior: # No hubo OCR ni productos en mensaje actual, pero sí en contexto
             producto_identificado_final = producto_contexto_anterior
         
+        # Fallback a detección local si Gemini no identificó nada concluyente y no es OCR que ya se manejó
         if not producto_identificado_final and not fue_ocr and tipo_consulta in ["otro", "no_entiendo_o_irrelevante", "respuesta_a_pregunta_bot", "pregunta_general_farmacia"]:
             productos_locales = self._detectar_productos_locales_simples(mensaje_para_analisis_gemini)
             if productos_locales:
@@ -377,8 +356,13 @@ class MessageHandler:
             )
             return {**resultado_unico, "message_type": f"producto_unico_{'ok' if resultado_unico.get('success') else 'error'}", "processing_time": processing_time_taken()}
         
+        # Si después de todo no hay producto a procesar (ni de OCR, ni de texto, ni de contexto, ni de fallback)
+        # O si fue OCR pero Gemini no pudo extraer un "producto_principal_ocr"
         if fue_ocr and not producto_principal_identificado_ocr:
             logger.info("💬 OCR procesado, pero Gemini no identificó un producto principal claro de la imagen. Usuario ya fue guiado.")
+            # El mensaje guía ya se envió. No necesitamos enviar otro de "no entendí" a menos que queramos.
+            # Podríamos simplemente esperar la siguiente interacción del usuario.
+            # Por consistencia, guardaremos una interacción indicando que no se procesó un producto.
             guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, "(Imagen procesada, no se identificó producto para búsqueda automática)")
             return {"success": True, "message_type": "ocr_sin_producto_principal_identificado", "respuesta": "(Imagen procesada, no se identificó producto para búsqueda automática)", "processing_time": processing_time_taken()}
 
