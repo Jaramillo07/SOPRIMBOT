@@ -2,10 +2,19 @@
 Archivo de configuración para SOPRIM BOT.
 Centraliza todas las claves API y parámetros de configuración.
 Ahora adaptado para incluir Google Cloud Vision para OCR.
+CORREGIDO: Agregado logger para funciones de margen.
 """
 import os
 import re
+import logging  # ← AGREGADO
 from dotenv import load_dotenv
+
+# ✅ CONFIGURAR LOGGING
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)  # ← AGREGADO
 
 # Cargar variables de entorno desde archivo .env si existe
 load_dotenv()
@@ -108,34 +117,31 @@ def extraer_precio_numerico(precio_str):
     Returns:
         float: Valor numérico del precio o 0.0 si no se puede extraer
     """
-    logger.info(f"💰 [PRECIO] Extrayendo precio numérico de: '{precio_str}'")
-    
     if not precio_str:
-        logger.warning(f"💰 [PRECIO] Precio vacío o None recibido")
+        logger.debug(f"💰 [PRECIO] Precio vacío recibido")
         return 0.0
+    
+    logger.debug(f"💰 [PRECIO] Extrayendo precio numérico de: '{precio_str}'")
     
     # Eliminar símbolos de moneda y espacios
     clean_price = str(precio_str).replace('$', '').replace(' ', '')
-    logger.debug(f"💰 [PRECIO] Después de limpiar $ y espacios: '{clean_price}'")
     
     # Convertir comas a puntos si es necesario
     if ',' in clean_price and '.' not in clean_price:
         clean_price = clean_price.replace(',', '.')
-        logger.debug(f"💰 [PRECIO] Convertido coma a punto: '{clean_price}'")
     elif ',' in clean_price and '.' in clean_price:
         # Formato como "$1,234.56"
         clean_price = clean_price.replace(',', '')
-        logger.debug(f"💰 [PRECIO] Removidas comas de formato miles: '{clean_price}'")
     
     # Extraer el número con regex
     match = re.search(r'(\d+(\.\d+)?)', clean_price)
     
     if match:
         precio_extraido = float(match.group(1))
-        logger.info(f"💰 [PRECIO] ✅ Precio extraído exitosamente: {precio_extraido}")
+        logger.debug(f"💰 [PRECIO] Precio extraído: {precio_extraido}")
         return precio_extraido
     else:
-        logger.error(f"💰 [PRECIO] ❌ No se pudo extraer número de: '{precio_str}' -> '{clean_price}'")
+        logger.warning(f"💰 [PRECIO] No se pudo extraer precio de: '{precio_str}'")
         return 0.0
 
 def calcular_precio_con_margen(precio_compra, fuente_proveedor):
@@ -150,51 +156,21 @@ def calcular_precio_con_margen(precio_compra, fuente_proveedor):
     Returns:
         float: Precio de venta con margen aplicado
     """
-    logger.info(f"🧮 [CÁLCULO MARGEN] ===== INICIANDO CÁLCULO =====")
-    logger.info(f"🧮 [CÁLCULO MARGEN] Precio compra recibido: {precio_compra} (tipo: {type(precio_compra)})")
-    logger.info(f"🧮 [CÁLCULO MARGEN] Fuente proveedor: '{fuente_proveedor}'")
-    
-    # Obtener el margen para este proveedor
     margen = MARGENES_GANANCIA.get(fuente_proveedor, 0)
-    logger.info(f"🧮 [CÁLCULO MARGEN] Margen encontrado para '{fuente_proveedor}': {margen}%")
+    
+    logger.debug(f"💰 [MARGEN] Calculando margen para {fuente_proveedor}: {margen}%")
     
     # Si no hay margen (Base Interna), devolver precio original
     if margen == 0:
-        logger.info(f"🧮 [CÁLCULO MARGEN] ✅ Margen = 0%, devolviendo precio original: {precio_compra}")
-        logger.info(f"🧮 [CÁLCULO MARGEN] ===== FIN CÁLCULO (SIN MARGEN) =====")
+        logger.debug(f"💰 [MARGEN] Sin margen para {fuente_proveedor}, precio final: ${precio_compra:.2f}")
         return precio_compra
     
     # FÓRMULA CORRECTA: Precio_final = Costo / (1 - margen/100)
     # Ejemplo: $100 con 45% margen = $100 / (1 - 0.45) = $100 / 0.55 = $181.82
+    precio_venta = precio_compra / (1 - margen / 100)
     
-    logger.info(f"🧮 [CÁLCULO MARGEN] Aplicando fórmula: Precio_venta = Costo / (1 - margen/100)")
+    logger.info(f"💰 [MARGEN] {fuente_proveedor} ({margen}%): ${precio_compra:.2f} → ${precio_venta:.2f}")
     
-    # Calcular el divisor
-    margen_decimal = margen / 100
-    divisor = 1 - margen_decimal
-    
-    logger.info(f"🧮 [CÁLCULO MARGEN] Margen decimal: {margen}% / 100 = {margen_decimal}")
-    logger.info(f"🧮 [CÁLCULO MARGEN] Divisor: 1 - {margen_decimal} = {divisor}")
-    
-    if divisor <= 0:
-        logger.error(f"🧮 [CÁLCULO MARGEN] ❌ ERROR: Divisor inválido ({divisor}). Margen demasiado alto (≥100%)")
-        logger.error(f"🧮 [CÁLCULO MARGEN] ===== FIN CÁLCULO (ERROR) =====")
-        return precio_compra  # Devolver precio original como fallback
-    
-    # Realizar el cálculo
-    precio_venta = precio_compra / divisor
-    
-    logger.info(f"🧮 [CÁLCULO MARGEN] Cálculo final: {precio_compra} / {divisor} = {precio_venta}")
-    logger.info(f"🧮 [CÁLCULO MARGEN] ✅ Precio de venta calculado: {precio_venta}")
-    
-    # Mostrar el margen real obtenido para verificación
-    if precio_venta > 0:
-        margen_real = ((precio_venta - precio_compra) / precio_venta) * 100
-        logger.info(f"🧮 [CÁLCULO MARGEN] 📊 Verificación - Margen real obtenido: {margen_real:.2f}%")
-        if abs(margen_real - margen) > 0.01:  # Tolerancia de 0.01%
-            logger.warning(f"🧮 [CÁLCULO MARGEN] ⚠️ Discrepancia detectada: esperado {margen}%, obtenido {margen_real:.2f}%")
-    
-    logger.info(f"🧮 [CÁLCULO MARGEN] ===== FIN CÁLCULO EXITOSO =====")
     return precio_venta
 
 def formatear_precio_mexicano(precio_float):
@@ -207,7 +183,6 @@ def formatear_precio_mexicano(precio_float):
     Returns:
         str: Precio formateado (ej: "$1,234.56")
     """
-    logger.debug(f"💲 [FORMATO] Formateando precio: {precio_float} -> ${precio_float:,.2f}")
-    resultado = f"${precio_float:,.2f}"
-    logger.debug(f"💲 [FORMATO] Resultado formateado: '{resultado}'")
-    return resultado
+    precio_formateado = f"${precio_float:,.2f}"
+    logger.debug(f"💰 [FORMATO] Precio formateado: {precio_formateado}")
+    return precio_formateado
