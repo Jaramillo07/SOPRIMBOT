@@ -3,13 +3,17 @@ Servicio para interactuar con la API de Gemini.
 VERSIÓN CORREGIDA: Mejor manejo de contexto, cantidad, e identificación de intención.
 Incluye lógica para identificar producto principal de OCR.
 MODIFICADO: Ahora muestra precios aunque no haya existencias disponibles.
+CORREGIDO: Ahora SÍ aplica márgenes de ganancia según configuración.
 """
 import logging
 import re
 import json
 import traceback 
 import google.generativeai as genai
-from config.settings import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_SYSTEM_INSTRUCTIONS
+from config.settings import (
+    GEMINI_API_KEY, GEMINI_MODEL, GEMINI_SYSTEM_INSTRUCTIONS,
+    extraer_precio_numerico, calcular_precio_con_margen, formatear_precio_mexicano  # ← NUEVO
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -242,14 +246,34 @@ NO des información médica.
             cantidad_calc = cantidad_solicitada if es_consulta_cantidad and isinstance(cantidad_solicitada, int) and cantidad_solicitada > 0 else 1
             
             def aplicar_margen_y_formatear_precio(precio_str, fuente, cantidad_local=1):
+                """
+                Aplica margen de ganancia y formatea el precio para mostrar al usuario.
+                CORREGIDO: Ahora SÍ aplica los márgenes configurados.
+                """
                 try:
-                    precio_limpio = str(precio_str).replace('$', '').replace(',', '').strip()
-                    precio_float = float(precio_limpio)
-                    precio_calculado = precio_float
-                    precio_total = precio_calculado * cantidad_local
-                    return f"${precio_total:,.2f}" 
+                    # Extraer precio numérico
+                    precio_compra = extraer_precio_numerico(precio_str)
+                    
+                    if precio_compra <= 0:
+                        logger.warning(f"Precio inválido para aplicar margen: '{precio_str}'")
+                        return "Precio no disponible"
+                    
+                    # ✅ APLICAR MARGEN según la fuente
+                    precio_con_margen = calcular_precio_con_margen(precio_compra, fuente)
+                    
+                    # Multiplicar por cantidad
+                    precio_total = precio_con_margen * cantidad_local
+                    
+                    # Formatear al estilo mexicano
+                    precio_formateado = formatear_precio_mexicano(precio_total)
+                    
+                    # Log para debugging
+                    logger.info(f"💰 Margen aplicado: {fuente} | Compra: ${precio_compra:.2f} | Con margen: ${precio_con_margen:.2f} | Final: {precio_formateado}")
+                    
+                    return precio_formateado
+                    
                 except (ValueError, AttributeError, TypeError) as e:
-                    logger.warning(f"No se pudo convertir/calcular el precio: '{precio_str}' para fuente '{fuente}', cantidad '{cantidad_local}'. Error: {e}")
+                    logger.warning(f"Error aplicando margen: '{precio_str}' para '{fuente}', cantidad '{cantidad_local}'. Error: {e}")
                     return "Precio no disponible" if not precio_str else str(precio_str)
 
             fuente_mapping = {
