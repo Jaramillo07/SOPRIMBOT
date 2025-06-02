@@ -4,6 +4,7 @@ Este servicio orquesta los scrapers de Difarmer, Sufarmed, FANASA y NADRO de for
 comparando resultados y seleccionando opciones según disponibilidad y precio.
 
 MODIFICADO: Ahora incluye productos SIN existencia para mostrar precios aunque estén agotados.
+CORREGIDO: Filtros en formateadores para evitar procesar "no encontrado" como productos válidos.
 """
 import logging
 import os
@@ -452,16 +453,28 @@ class ScrapingService:
     def _format_producto_difarmer(self, producto):
         """
         Formatea los datos del producto de Difarmer al formato estandarizado.
+        CORREGIDO: Añadida verificación de estado para consistencia.
         
         Args:
             producto (dict): Información del producto en formato Difarmer
             
         Returns:
-            dict: Producto formateado al estándar común
+            dict: Producto formateado al estándar común o None si no es válido
         """
         if not producto:
             return None
         
+        # ✅ VERIFICACIÓN DE CONSISTENCIA: Verificar si es un error de Difarmer
+        estado = producto.get('estado')
+        if estado in ['no_encontrado', 'error']:
+            logger.info(f"🚫 DIFARMER: Producto con estado '{estado}' - no se formateará como producto válido")
+            return None
+        
+        # ✅ VERIFICACIÓN ADICIONAL: Si tiene mensaje de error, no formatear
+        if producto.get('error') or (producto.get('nombre', '').startswith('Error:') if producto.get('nombre') else False):
+            logger.info(f"🚫 DIFARMER: Producto con error - no se formateará como producto válido")
+            return None
+
         # Obtener el precio (puede estar en mi_precio o precio_publico)
         precio = producto.get('mi_precio') or producto.get('precio_publico') or "0"
         
@@ -483,16 +496,23 @@ class ScrapingService:
     def _format_producto_sufarmed(self, producto):
         """
         Formatea los datos del producto de Sufarmed al formato estandarizado.
+        CORREGIDO: Añadida verificación de estado para consistencia.
         
         Args:
             producto (dict): Información del producto en formato Sufarmed
             
         Returns:
-            dict: Producto formateado al estándar común
+            dict: Producto formateado al estándar común o None si no es válido
         """
         if not producto:
             return None
         
+        # ✅ VERIFICACIÓN DE CONSISTENCIA: Verificar si es un error de Sufarmed
+        estado = producto.get('estado')
+        if estado in ['no_encontrado', 'error']:
+            logger.info(f"🚫 SUFARMED: Producto con estado '{estado}' - no se formateará como producto válido")
+            return None
+
         # El precio en Sufarmed generalmente está en 'precio'
         precio = producto.get('precio', "0")
         existencia = producto.get('existencia', '0')
@@ -524,14 +544,31 @@ class ScrapingService:
     def _format_producto_fanasa(self, producto):
         """
         Formatea los datos del producto de FANASA al formato estandarizado.
+        CORREGIDO: Verifica el estado antes de formatear para evitar procesar "no encontrado" como producto válido.
         
         Args:
             producto (dict): Información del producto en formato FANASA
             
         Returns:
-            dict: Producto formateado al estándar común
+            dict: Producto formateado al estándar común o None si no es válido
         """
         if not producto:
+            return None
+        
+        # ✅ CORRECCIÓN CRÍTICA: Verificar estado antes de formatear
+        estado = producto.get('estado')
+        if estado in ['no_encontrado', 'error', 'error_extraccion', 'error_navegador']:
+            logger.info(f"🚫 FANASA: Producto con estado '{estado}' - no se formateará como producto válido")
+            return None
+        
+        # ✅ VERIFICACIÓN ADICIONAL: Si tiene mensaje de error, no formatear
+        if producto.get('mensaje') and 'no se encontró' in producto.get('mensaje', '').lower():
+            logger.info(f"🚫 FANASA: Producto con mensaje 'no encontrado' - no se formateará como producto válido")
+            return None
+        
+        # ✅ VERIFICACIÓN ADICIONAL: Si no tiene datos básicos de producto, no formatear
+        if not producto.get('nombre') and not producto.get('codigo') and not producto.get('sku'):
+            logger.info(f"🚫 FANASA: Producto sin datos básicos - no se formateará como producto válido")
             return None
         
         # Obtener el precio (puede estar en precio_neto, precio_publico, precio_farmacia o pmp)
@@ -564,14 +601,33 @@ class ScrapingService:
     def _format_producto_nadro(self, producto):
         """
         Formatea los datos del producto de NADRO al formato estandarizado.
+        CORREGIDO: Verifica el estado antes de formatear para evitar procesar "no encontrado" como producto válido.
 
         Args:
             producto (dict): Información del producto en formato NADRO
 
         Returns:
-            dict: Producto formateado al estándar común
+            dict: Producto formateado al estándar común o None si no es válido
         """
         if not producto:
+            return None
+
+        # ✅ CORRECCIÓN CRÍTICA: Verificar estado antes de formatear
+        estado = producto.get('estado')
+        if estado in ['no_encontrado', 'error', 'error_extraccion']:
+            logger.info(f"🚫 NADRO: Producto con estado '{estado}' - no se formateará como producto válido")
+            return None
+        
+        # ✅ VERIFICACIÓN ADICIONAL: Si tiene mensaje de error, no formatear
+        if producto.get('error') or producto.get('mensaje'):
+            mensaje = producto.get('mensaje', '')
+            if 'no se encontró' in mensaje.lower() or 'no encontrado' in mensaje.lower():
+                logger.info(f"🚫 NADRO: Producto con mensaje 'no encontrado' - no se formateará como producto válido")
+                return None
+        
+        # ✅ VERIFICACIÓN ADICIONAL: Si no tiene datos básicos de producto, no formatear
+        if not producto.get('nombre') and not producto.get('codigo_barras'):
+            logger.info(f"🚫 NADRO: Producto sin datos básicos - no se formateará como producto válido")
             return None
 
         # Obtener el precio (puede estar en diferentes campos según el scraper NADRO)
@@ -636,8 +692,12 @@ class ScrapingService:
             # Formatear el producto al estándar común
             if info_producto:
                 resultado = self._format_producto_difarmer(info_producto)
-                logger.info(f"Producto encontrado en Difarmer: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
-                return resultado
+                if resultado:
+                    logger.info(f"Producto encontrado en Difarmer: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
+                    return resultado
+                else:
+                    logger.info(f"Producto de Difarmer descartado por el formateador (estado no válido)")
+                    return None
             else:
                 logger.warning(f"No se encontró información en Difarmer para: {nombre_producto}")
                 return None
@@ -668,8 +728,12 @@ class ScrapingService:
             # Formatear el producto al estándar común
             if info_producto:
                 resultado = self._format_producto_sufarmed(info_producto)
-                logger.info(f"Producto encontrado en Sufarmed: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']} (Valor numérico: {resultado['existencia_numerica']})")
-                return resultado
+                if resultado:
+                    logger.info(f"Producto encontrado en Sufarmed: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']} (Valor numérico: {resultado['existencia_numerica']})")
+                    return resultado
+                else:
+                    logger.info(f"Producto de Sufarmed descartado por el formateador (estado no válido)")
+                    return None
             else:
                 logger.warning(f"No se encontró información en Sufarmed para: {nombre_producto}")
                 return None
@@ -680,6 +744,7 @@ class ScrapingService:
     def buscar_producto_fanasa(self, nombre_producto):
         """
         Busca un producto en FANASA y formatea el resultado.
+        CORREGIDO: Maneja correctamente cuando el formateador devuelve None.
         
         Args:
             nombre_producto (str): Nombre del producto a buscar
@@ -708,8 +773,13 @@ class ScrapingService:
             # Formatear el producto al estándar común
             if info_producto:
                 resultado = self._format_producto_fanasa(info_producto)
-                logger.info(f"Producto encontrado en FANASA: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
-                return resultado
+                # ✅ CORRECCIÓN: Verificar que el formateador no devolvió None
+                if resultado:
+                    logger.info(f"Producto encontrado en FANASA: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
+                    return resultado
+                else:
+                    logger.info(f"Producto de FANASA descartado por el formateador (estado no válido)")
+                    return None
             else:
                 logger.warning(f"No se encontró información en FANASA para: {nombre_producto}")
                 return None
@@ -720,6 +790,7 @@ class ScrapingService:
     def buscar_producto_nadro(self, nombre_producto):
         """
         Busca un producto en NADRO y formatea el resultado.
+        CORREGIDO: Maneja correctamente cuando el formateador devuelve None.
         
         Args:
             nombre_producto (str): Nombre del producto a buscar
@@ -748,8 +819,13 @@ class ScrapingService:
             # Formatear el producto al estándar común
             if info_producto:
                 resultado = self._format_producto_nadro(info_producto)
-                logger.info(f"Producto encontrado en NADRO: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
-                return resultado
+                # ✅ CORRECCIÓN: Verificar que el formateador no devolvió None
+                if resultado:
+                    logger.info(f"Producto encontrado en NADRO: {resultado['nombre']} - Precio: {resultado['precio']} - Existencia: {resultado['existencia']}")
+                    return resultado
+                else:
+                    logger.info(f"Producto de NADRO descartado por el formateador (estado no válido)")
+                    return None
             else:
                 logger.warning(f"No se encontró información en NADRO para: {nombre_producto}")
                 return None
