@@ -213,9 +213,7 @@ class SheetsService:
             dosage_factor = 0.1  # Penalización muy fuerte
             log_msg_dosage_details = f"QueryDose='{query_dosage_val_str}{query_dosage_unit}' TargetHasNoDose. STRONG_PENALTY"
         elif not query_has_dose and target_has_dose: # Consulta sin dosis, objetivo con dosis
-            # Penalización leve o neutral si el nombre base coincide bien.
-            # Si el nombre es una buena coincidencia, no queremos penalizar demasiado solo porque el producto en BD es más específico.
-            dosage_factor = 1.0 # MODIFICADO: Antes 0.7, ahora 1.0 para no penalizar o penalizar menos. Podría ser 0.95 para una penalización mínima.
+            dosage_factor = 1.0 
             log_msg_dosage_details = f"QueryHasNoDose TargetDose='{target_dosage_val_str}{target_dosage_unit}'. MINIMAL_OR_NO_PENALTY_FOR_TARGET_SPECIFICITY"
         else: # Ni consulta ni objetivo tienen dosis
             log_msg_dosage_details = "NoDoseInQueryOrTarget. NEUTRAL"
@@ -244,9 +242,14 @@ class SheetsService:
 
         # 4. Calcular similitud basada en las palabras del nombre
         common_name_words = query_name_words.intersection(target_name_words)
-        union_name_words = query_name_words.union(target_name_words)
+        
+        # --- MODIFICACIÓN AQUÍ: Cambiar de Jaccard a len(common)/len(query) para name_score ---
+        if not query_name_words: 
+            name_score = 0.0
+        else:
+            name_score = len(common_name_words) / len(query_name_words)
+        # --- FIN DE LA MODIFICACIÓN ---
             
-        name_score = len(common_name_words) / len(union_name_words) if union_name_words else 0.0
         current_score_for_name_logic = name_score
 
         # 5. Aplicar bonificaciones y penalizaciones al `current_score_for_name_logic`
@@ -256,9 +259,9 @@ class SheetsService:
             logger.debug(f"🎯 Bonus inicio (nombre): '{query_start_name}' encontrado al inicio de '{target_name_str[:20]}...'")
         
         if query_name_words and (len(common_name_words) / len(query_name_words)) > 0.49 :
-            if len(common_name_words) >=1 :
+            if len(common_name_words) >=1 : # Asegurar al menos una palabra común del nombre
                  current_score_for_name_logic += 0.15 
-                 logger.debug(f"📊 Bonus palabras nombre comunes: {len(common_name_words)} de {len(query_name_words)} coinciden")
+                 logger.debug(f"📊 Bonus palabras nombre comunes: {len(common_name_words)} de {len(query_name_words)} coinciden ({len(common_name_words) / len(query_name_words):.2f})")
         
         main_query_name_word_list = [w for w in query_name_words if len(w) > 3]
         if main_query_name_word_list:
@@ -267,8 +270,8 @@ class SheetsService:
                 current_score_for_name_logic += 0.10
                 logger.debug(f"🔑 Bonus palabra principal (nombre): '{main_name_word}' encontrada")
         
-        if target_name_words and query_name_words:
-            length_ratio_name = len(query_name_words) / len(target_name_words)
+        if target_name_words and query_name_words: # Evitar división por cero si alguno está vacío (aunque query_name_words ya se verificó)
+            length_ratio_name = len(query_name_words) / len(target_name_words) if len(target_name_words) > 0 else 100 # Evitar div por cero
             if length_ratio_name < 0.4: 
                 current_score_for_name_logic *= 0.90
                 logger.debug(f"📏 Penalización longitud (nombre): ratio {length_ratio_name:.2f}")
@@ -284,7 +287,7 @@ class SheetsService:
         
         if final_score > 0.2: 
             logger.debug(f"💯 Similitud CORREGIDA: {final_score:.3f} | Q: '{query_norm_for_text_processing}' | T: '{target_norm_for_text_processing[:50]}...'")
-            logger.debug(f"  ScoreNombreBase(Jaccard)={name_score:.3f} -> ScoreNombreAjustado={current_score_for_name_logic:.3f}")
+            logger.debug(f"  ScoreNombreBase(len(common)/len(query))={name_score:.3f} -> ScoreNombreAjustado={current_score_for_name_logic:.3f}")
             logger.debug(f"  {log_msg_dosage_details} FactorDosis={dosage_factor:.2f}")
             logger.debug(f"  Q_NameWords='{query_name_words}', T_NameWords='{target_name_words}'")
         
