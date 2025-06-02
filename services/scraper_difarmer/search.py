@@ -8,59 +8,399 @@ from selenium.webdriver.common.keys import Keys
 
 from .settings import TIMEOUT, logger
 
-def calcular_similitud_producto(busqueda, producto_encontrado):
+def extraer_concentracion(texto):
     """
-    Calcula la similitud entre el término de búsqueda y el producto encontrado.
+    Extrae concentración del texto (200mg/5ml, 500mg, etc.)
     
     Args:
-        busqueda (str): Término buscado por el usuario
-        producto_encontrado (str): Nombre del producto encontrado
+        texto (str): Texto del cual extraer concentración
+        
+    Returns:
+        str: Concentración normalizada o None
+    """
+    if not texto:
+        return None
+    
+    texto_lower = texto.lower()
+    
+    # Patrones para detectar concentraciones
+    patrones = [
+        r'(\d+(?:\.\d+)?)\s*mg\s*/\s*(\d+(?:\.\d+)?)\s*ml',  # 200mg/5ml
+        r'(\d+(?:\.\d+)?)\s*mg\s*/\s*(\d+(?:\.\d+)?)\s*ml',  # 200 MG/5 ML
+        r'(\d+(?:\.\d+)?)\s*mg',  # 500mg
+        r'(\d+(?:\.\d+)?)\s*g',   # 1g
+        r'(\d+(?:\.\d+)?)\s*mcg', # 100mcg
+    ]
+    
+    for patron in patrones:
+        match = re.search(patron, texto_lower)
+        if match:
+            if '/ml' in patron:
+                # Formato mg/ml
+                mg = match.group(1)
+                ml = match.group(2)
+                return f"{mg}mg/{ml}ml"
+            else:
+                # Formato simple
+                valor = match.group(1)
+                if 'mg' in patron:
+                    return f"{valor}mg"
+                elif 'g' in patron:
+                    return f"{valor}g"
+                elif 'mcg' in patron:
+                    return f"{valor}mcg"
+    
+    return None
+
+def extraer_forma_farmaceutica(texto):
+    """
+    Extrae la forma farmacéutica del texto.
+    
+    Args:
+        texto (str): Texto del cual extraer forma
+        
+    Returns:
+        set: Conjunto de formas farmacéuticas detectadas
+    """
+    if not texto:
+        return set()
+    
+    texto_lower = texto.lower()
+    formas_detectadas = set()
+    
+    # Mapeo de formas farmacéuticas y sus variantes
+    formas_map = {
+        'inyectable': ['inyectable', 'iny', 'inj', 'sol. iny', 'solucion inyectable'],
+        'tableta': ['tableta', 'tabletas', 'tab', 'tabs', 'comprimidos'],
+        'capsula': ['capsula', 'capsulas', 'cap', 'caps', 'cápsula', 'cápsulas'],
+        'solucion': ['solucion', 'solución', 'sol'],
+        'jarabe': ['jarabe', 'suspension', 'suspensión'],
+        'crema': ['crema', 'gel', 'ungüento', 'pomada'],
+        'ampolla': ['ampolla', 'ampollas', 'ampolleta', 'ampolletas', 'amptas'],
+        'gotas': ['gotas', 'drops'],
+    }
+    
+    for forma_base, variantes in formas_map.items():
+        for variante in variantes:
+            if variante in texto_lower:
+                formas_detectadas.add(forma_base)
+                break
+    
+    return formas_detectadas
+
+def normalizar_texto_simple(texto):
+    """
+    Normalización simple para comparación de palabras.
+    """
+    if not texto:
+        return ""
+    
+    texto_norm = texto.lower().strip()
+    # Eliminar caracteres especiales pero mantener espacios
+    texto_norm = re.sub(r'[^\w\s]', ' ', texto_norm)
+    texto_norm = re.sub(r'\s+', ' ', texto_norm).strip()
+    
+    return texto_norm
+
+def extraer_info_completa_tarjeta(tarjeta_elemento):
+    """
+    Extrae información completa de la tarjeta de Difarmer incluyendo principio activo.
+    Basado en la estructura HTML real: nombre principal + principio activo separados.
+    
+    Args:
+        tarjeta_elemento: Elemento de la tarjeta del producto
+        
+    Returns:
+        dict: Información completa extraída
+    """
+    info_completa = {
+        'nombre_principal': '',
+        'principio_activo': '',
+        'texto_completo': '',
+        'nombres_para_comparar': []  # Lista de todos los nombres/textos a comparar
+    }
+    
+    try:
+        # Obtener todo el texto de la tarjeta
+        texto_completo = tarjeta_elemento.text if tarjeta_elemento else ""
+        info_completa['texto_completo'] = texto_completo
+        
+        logger.info(f"📋 Extrayendo info completa de tarjeta:")
+        logger.info(f"   Texto completo: {texto_completo}")
+        
+        # ✅ MÉTODO 1: Buscar elementos específicos por clase CSS (como en la imagen)
+        try:
+            # Nombre principal: font-weight-bold font-poppins
+            elementos_nombre = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                ".font-weight-bold.font-poppins, .font-weight-bold")
+            for elem in elementos_nombre:
+                if elem.is_displayed() and elem.text.strip():
+                    texto_limpio = elem.text.strip()
+                    if len(texto_limpio) > 10:  # Filtrar textos muy cortos
+                        info_completa['nombre_principal'] = texto_limpio
+                        info_completa['nombres_para_comparar'].append(texto_limpio)
+                        logger.info(f"✅ Nombre principal extraído: '{texto_limpio}'")
+                        break
+            
+            # Principio activo: font-weight-bolder ml-2 (como se ve en el HTML)
+            elementos_principio = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                ".font-weight-bolder.ml-2, .font-weight-bolder")
+            for elem in elementos_principio:
+                if elem.is_displayed() and elem.text.strip():
+                    texto_limpio = elem.text.strip()
+                    # Filtrar textos que parezcan principios activos (no precios, códigos, etc.)
+                    if (len(texto_limpio) > 2 and 
+                        not '$' in texto_limpio and 
+                        not re.match(r'^\d+$', texto_limpio) and
+                        not ':' in texto_limpio):
+                        info_completa['principio_activo'] = texto_limpio
+                        info_completa['nombres_para_comparar'].append(texto_limpio)
+                        logger.info(f"✅ Principio activo extraído: '{texto_limpio}'")
+                        break
+                        
+        except Exception as e:
+            logger.warning(f"⚠️ Error en extracción por CSS: {e}")
+        
+        # ✅ MÉTODO 2: Si no encontramos con CSS, usar análisis de líneas de texto
+        if not info_completa['nombre_principal'] or not info_completa['principio_activo']:
+            lineas = texto_completo.split('\n')
+            logger.info(f"📝 Analizando {len(lineas)} líneas de texto:")
+            
+            for i, linea in enumerate(lineas):
+                linea_limpia = linea.strip()
+                if not linea_limpia:
+                    continue
+                    
+                logger.info(f"   Línea {i}: '{linea_limpia}'")
+                
+                # Detectar nombre principal (líneas largas con características de medicamento)
+                if (not info_completa['nombre_principal'] and 
+                    len(linea_limpia) > 15 and
+                    re.search(r'[A-Z]{3,}.*(?:MG|ML|TABS|TAB|CAP|SOL|INY)', linea_limpia.upper())):
+                    info_completa['nombre_principal'] = linea_limpia
+                    info_completa['nombres_para_comparar'].append(linea_limpia)
+                    logger.info(f"✅ Nombre principal (línea): '{linea_limpia}'")
+                
+                # Detectar principio activo (líneas cortas, solo palabras, sin números/símbolos)
+                elif (not info_completa['principio_activo'] and
+                      3 <= len(linea_limpia) <= 20 and
+                      not '$' in linea_limpia and
+                      not ':' in linea_limpia and
+                      not re.search(r'\d+\s*(mg|ml|tab)', linea_limpia.lower()) and
+                      re.match(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$', linea_limpia)):
+                    info_completa['principio_activo'] = linea_limpia
+                    info_completa['nombres_para_comparar'].append(linea_limpia)
+                    logger.info(f"✅ Principio activo (línea): '{linea_limpia}'")
+        
+        # ✅ MÉTODO 3: Fallback - usar líneas significativas como candidatos
+        if not info_completa['nombres_para_comparar']:
+            lineas_significativas = []
+            for linea in texto_completo.split('\n'):
+                linea_limpia = linea.strip()
+                if (linea_limpia and 
+                    len(linea_limpia) > 3 and
+                    not '$' in linea_limpia and
+                    not linea_limpia.isdigit()):
+                    lineas_significativas.append(linea_limpia)
+            
+            info_completa['nombres_para_comparar'] = lineas_significativas[:3]  # Max 3 líneas
+            logger.info(f"🔄 Fallback - usando líneas significativas: {info_completa['nombres_para_comparar']}")
+        
+        logger.info(f"📊 EXTRACCIÓN COMPLETA:")
+        logger.info(f"   Nombre principal: '{info_completa['nombre_principal']}'")
+        logger.info(f"   Principio activo: '{info_completa['principio_activo']}'")
+        logger.info(f"   Nombres para comparar: {info_completa['nombres_para_comparar']}")
+        
+        return info_completa
+        
+    except Exception as e:
+        logger.error(f"❌ Error extrayendo info completa: {e}")
+        return info_completa
+
+def calcular_similitud_individual(busqueda, texto_comparar):
+    """
+    Calcula similitud entre búsqueda y un texto específico.
+    
+    Args:
+        busqueda (str): Término buscado por el usuario  
+        texto_comparar (str): Texto individual a comparar
         
     Returns:
         float: Puntuación de similitud (0.0 a 1.0)
     """
+    if not busqueda or not texto_comparar:
+        return 0.0
+    
+    logger.info(f"🔬 Calculando similitud individual:")
+    logger.info(f"   Búsqueda: '{busqueda}'")
+    logger.info(f"   Comparar: '{texto_comparar}'")
+    
+    puntuacion_total = 0.0
+    
+    # ✅ 1. COMPARAR CONCENTRACIONES (peso: 40%)
+    conc_busqueda = extraer_concentracion(busqueda)
+    conc_texto = extraer_concentracion(texto_comparar)
+    
+    puntuacion_concentracion = 0.0
+    if conc_busqueda and conc_texto:
+        if conc_busqueda == conc_texto:
+            puntuacion_concentracion = 1.0
+            logger.info(f"✅ CONCENTRACIONES IDÉNTICAS: {conc_busqueda}")
+        else:
+            # Comparar solo la parte numérica si las unidades son diferentes
+            nums_busq = re.findall(r'\d+(?:\.\d+)?', conc_busqueda)
+            nums_texto = re.findall(r'\d+(?:\.\d+)?', conc_texto)
+            if nums_busq and nums_texto and nums_busq[0] == nums_texto[0]:
+                puntuacion_concentracion = 0.7
+                logger.info(f"✅ VALORES NUMÉRICOS COINCIDEN: {nums_busq[0]}")
+    elif conc_busqueda or conc_texto:
+        puntuacion_concentracion = 0.0
+    else:
+        puntuacion_concentracion = 0.5  # Neutral
+    
+    puntuacion_total += puntuacion_concentracion * 0.40
+    
+    # ✅ 2. COMPARAR FORMAS FARMACÉUTICAS (peso: 30%)
+    formas_busqueda = extraer_forma_farmaceutica(busqueda)
+    formas_texto = extraer_forma_farmaceutica(texto_comparar)
+    
+    puntuacion_forma = 0.0
+    if formas_busqueda and formas_texto:
+        coincidencias_forma = formas_busqueda.intersection(formas_texto)
+        if coincidencias_forma:
+            puntuacion_forma = len(coincidencias_forma) / max(len(formas_busqueda), len(formas_texto))
+            logger.info(f"✅ FORMAS COINCIDENTES: {coincidencias_forma}")
+    elif not formas_busqueda and not formas_texto:
+        puntuacion_forma = 0.5  # Neutral
+    else:
+        puntuacion_forma = 0.3  # Penalización leve
+    
+    puntuacion_total += puntuacion_forma * 0.30
+    
+    # ✅ 3. COMPARAR PALABRAS DEL NOMBRE (peso: 30%)
+    busq_norm = normalizar_texto_simple(busqueda)
+    texto_norm = normalizar_texto_simple(texto_comparar)
+    
+    # Eliminar palabras de concentración y forma para obtener nombre "limpio"
+    if conc_busqueda:
+        busq_norm = busq_norm.replace(conc_busqueda.lower(), "")
+    if conc_texto:
+        texto_norm = texto_norm.replace(conc_texto.lower(), "")
+    
+    # Eliminar palabras comunes de formas farmacéuticas
+    palabras_ignorar = ['sol', 'iny', 'tabletas', 'tab', 'caps', 'mg', 'ml', 'amptas', 'con', 'c']
+    
+    palabras_busq = [p for p in busq_norm.split() if p and p not in palabras_ignorar and len(p) > 2]
+    palabras_texto = [p for p in texto_norm.split() if p and p not in palabras_ignorar and len(p) > 2]
+    
+    puntuacion_nombre = 0.0
+    if palabras_busq and palabras_texto:
+        palabras_busq_set = set(palabras_busq)
+        palabras_texto_set = set(palabras_texto)
+        
+        coincidencias_nombre = palabras_busq_set.intersection(palabras_texto_set)
+        if coincidencias_nombre:
+            puntuacion_nombre = len(coincidencias_nombre) / len(palabras_busq_set)
+            logger.info(f"✅ PALABRAS COINCIDENTES: {coincidencias_nombre}")
+        else:
+            # Verificar coincidencias parciales (subcadenas)
+            for p_busq in palabras_busq:
+                for p_texto in palabras_texto:
+                    if len(p_busq) > 3 and (p_busq in p_texto or p_texto in p_busq):
+                        puntuacion_nombre += 0.3
+                        logger.info(f"✅ COINCIDENCIA PARCIAL: '{p_busq}' ~ '{p_texto}'")
+                        break
+            puntuacion_nombre = min(puntuacion_nombre, 1.0)
+    else:
+        puntuacion_nombre = 0.2  # Penalización si no hay palabras claras
+    
+    puntuacion_total += puntuacion_nombre * 0.30
+    
+    # ✅ BONIFICACIONES ESPECIALES
+    
+    # Bonificación si concentración + forma coinciden
+    if puntuacion_concentracion >= 0.7 and puntuacion_forma >= 0.7:
+        bonificacion = 0.2
+        puntuacion_total += bonificacion
+        logger.info(f"🎯 BONIFICACIÓN concentración + forma: +{bonificacion}")
+    
+    # Bonificación por coincidencia al inicio
+    if texto_norm.startswith(busq_norm[:min(5, len(busq_norm))]) and len(busq_norm) > 3:
+        bonificacion = 0.1
+        puntuacion_total += bonificacion
+        logger.info(f"🎯 BONIFICACIÓN inicio: +{bonificacion}")
+    
+    # Asegurar que esté entre 0 y 1
+    puntuacion_final = max(0.0, min(puntuacion_total, 1.0))
+    
+    logger.info(f"📊 Similitud individual: {puntuacion_final:.3f}")
+    
+    return puntuacion_final
+
+def calcular_similitud_producto_mejorada(busqueda, info_completa_tarjeta):
+    """
+    Calcula similitud comparando búsqueda contra TODOS los datos de la tarjeta:
+    - Nombre principal 
+    - Principio activo
+    - Cualquier otro texto relevante
+    
+    Toma la MEJOR similitud encontrada.
+    
+    Args:
+        busqueda (str): Término buscado por el usuario  
+        info_completa_tarjeta (dict): Info completa extraída de la tarjeta
+        
+    Returns:
+        float: Puntuación de similitud (0.0 a 1.0)
+    """
+    if not busqueda or not info_completa_tarjeta.get('nombres_para_comparar'):
+        return 0.0
+    
+    logger.info(f"🔬 SIMILITUD MEJORADA (comparación múltiple):")
+    logger.info(f"   Búsqueda: '{busqueda}'")
+    
+    mejor_similitud = 0.0
+    mejor_coincidencia = ""
+    
+    # Comparar contra todos los textos extraídos de la tarjeta
+    for texto_comparar in info_completa_tarjeta['nombres_para_comparar']:
+        if not texto_comparar:
+            continue
+            
+        similitud = calcular_similitud_individual(busqueda, texto_comparar)
+        
+        logger.info(f"   vs '{texto_comparar}': {similitud:.3f}")
+        
+        if similitud > mejor_similitud:
+            mejor_similitud = similitud
+            mejor_coincidencia = texto_comparar
+    
+    logger.info(f"🏆 MEJOR SIMILITUD: {mejor_similitud:.3f}")
+    logger.info(f"🏆 MEJOR COINCIDENCIA: '{mejor_coincidencia}'")
+    
+    return mejor_similitud
+
+# ✅ FUNCIÓN ORIGINAL MANTENIDA PARA COMPATIBILIDAD
+def calcular_similitud_producto(busqueda, producto_encontrado):
+    """
+    Función original mantenida para compatibilidad.
+    Ahora solo compara texto simple (fallback).
+    """
     if not busqueda or not producto_encontrado:
         return 0.0
     
-    # Normalizar ambos textos
-    busqueda_norm = busqueda.lower().strip()
-    producto_norm = producto_encontrado.lower().strip()
+    # Crear info_completa simple para compatibilidad
+    info_simple = {
+        'nombres_para_comparar': [producto_encontrado]
+    }
     
-    # Eliminat artículos y palabras comunes
-    palabras_ignorar = ['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'con', 'c/', 'mg', 'ml', 'tabs', 'tab', 'cap']
-    
-    # Dividir en palabras
-    palabras_busqueda = [p for p in busqueda_norm.split() if p not in palabras_ignorar and len(p) > 2]
-    palabras_producto = [p for p in producto_norm.split() if p not in palabras_ignorar and len(p) > 2]
-    
-    if not palabras_busqueda:
-        return 0.0
-    
-    # Contar coincidencias exactas
-    coincidencias_exactas = 0
-    for palabra_busq in palabras_busqueda:
-        if any(palabra_busq in palabra_prod for palabra_prod in palabras_producto):
-            coincidencias_exactas += 1
-    
-    # Calcular puntuación base
-    puntuacion_base = coincidencias_exactas / len(palabras_busqueda)
-    
-    # Bonus por coincidencia al inicio del nombre
-    if producto_norm.startswith(busqueda_norm[:min(5, len(busqueda_norm))]):
-        puntuacion_base += 0.3
-    
-    # Bonus por contener la palabra completa más larga
-    palabra_mas_larga = max(palabras_busqueda, key=len, default="")
-    if palabra_mas_larga and palabra_mas_larga in producto_norm:
-        puntuacion_base += 0.2
-    
-    # Limitar a 1.0 máximo
-    return min(puntuacion_base, 1.0)
+    return calcular_similitud_producto_mejorada(busqueda, info_simple)
 
 def buscar_producto(driver, nombre_producto):
     """
     Busca un producto en el sitio de Difarmer y navega a los detalles del producto.
-    MEJORADO: Siempre toma el primer resultado y verifica similitud.
+    MEJORADO: Extrae información completa de la tarjeta (nombre + principio activo) 
+    y usa algoritmo de similitud mejorado.
    
     Args:
         driver (webdriver.Chrome): Instancia del navegador con sesión iniciada
@@ -117,8 +457,8 @@ def buscar_producto(driver, nombre_producto):
             f.write(driver.page_source)
         logger.info("📄 HTML de resultados guardado para análisis")
        
-        # ✅ NUEVA LÓGICA: Buscar CUALQUIER tarjeta de producto y tomar la primera
-        logger.info("🎯 NUEVA ESTRATEGIA: Buscar y evaluar el primer producto disponible")
+        # ✅ NUEVA LÓGICA: Buscar tarjetas de productos y extraer info completa
+        logger.info("🎯 ESTRATEGIA MEJORADA: Buscar tarjetas y extraer información completa")
         
         # Buscar tarjetas de productos o elementos que contengan información de productos
         selectores_tarjetas = [
@@ -132,7 +472,7 @@ def buscar_producto(driver, nombre_producto):
         ]
         
         primera_tarjeta = None
-        nombre_primer_producto = ""
+        info_completa_primer_producto = None
         
         for selector in selectores_tarjetas:
             try:
@@ -143,33 +483,20 @@ def buscar_producto(driver, nombre_producto):
                     logger.info(f"✅ Encontradas {len(elementos_visibles)} tarjetas con selector: {selector}")
                     primera_tarjeta = elementos_visibles[0]
                     
-                    # Intentar extraer el nombre del producto de esta tarjeta
-                    texto_tarjeta = primera_tarjeta.text
+                    # ✅ NUEVA FUNCIONALIDAD: Extraer información completa de la tarjeta
+                    info_completa_primer_producto = extraer_info_completa_tarjeta(primera_tarjeta)
                     
-                    # Buscar líneas que parezcan nombres de productos (con mayúsculas, MG, TABS, etc.)
-                    lineas = texto_tarjeta.split('\n')
-                    for linea in lineas:
-                        if re.search(r'[A-Z]{3,}.*(?:MG|TABS|TAB|CAP|ML|G\b)', linea):
-                            nombre_primer_producto = linea.strip()
-                            logger.info(f"📝 Nombre extraído de tarjeta: '{nombre_primer_producto}'")
-                            break
+                    if info_completa_primer_producto.get('nombres_para_comparar'):
+                        logger.info(f"✅ Información completa extraída de la primera tarjeta")
+                        break
                     
-                    # Si no encontramos con regex, usar la primera línea que tenga más de 10 caracteres
-                    if not nombre_primer_producto:
-                        for linea in lineas:
-                            if len(linea.strip()) > 10 and not '$' in linea and not ':' in linea:
-                                nombre_primer_producto = linea.strip()
-                                logger.info(f"📝 Nombre extraído (línea larga): '{nombre_primer_producto}'")
-                                break
-                    
-                    break
             except Exception as e:
                 logger.warning(f"⚠️ Error con selector {selector}: {e}")
                 continue
         
         # Si no encontramos tarjetas específicas, buscar cualquier texto que parezca nombre de producto
-        if not primera_tarjeta:
-            logger.info("🔍 No se encontraron tarjetas específicas, buscando nombres de productos en el texto general")
+        if not primera_tarjeta or not info_completa_primer_producto:
+            logger.info("🔍 No se encontraron tarjetas específicas, buscando en texto general")
             
             # Buscar elementos que contengan nombres que parezcan medicamentos
             elementos_texto = driver.find_elements(By.XPATH, "//*[text()]")
@@ -178,14 +505,19 @@ def buscar_producto(driver, nombre_producto):
                     texto = elemento.text.strip()
                     # Buscar texto que parezca nombre de medicamento
                     if re.search(r'[A-Z]{3,}.*(?:MG|TABS|TAB|CAP|ML|G\b)', texto) and len(texto) > 5:
-                        nombre_primer_producto = texto
                         primera_tarjeta = elemento
-                        logger.info(f"📝 Nombre encontrado en texto general: '{nombre_primer_producto}'")
+                        info_completa_primer_producto = {
+                            'nombres_para_comparar': [texto],
+                            'nombre_principal': texto,
+                            'principio_activo': '',
+                            'texto_completo': texto
+                        }
+                        logger.info(f"📝 Texto encontrado en elemento general: '{texto}'")
                         break
         
-        # Verificar si tenemos un producto para evaluar
-        if not nombre_primer_producto:
-            logger.warning("❌ No se pudo extraer el nombre de ningún producto de los resultados")
+        # Verificar si tenemos información para evaluar
+        if not info_completa_primer_producto or not info_completa_primer_producto.get('nombres_para_comparar'):
+            logger.warning("❌ No se pudo extraer información de ningún producto de los resultados")
             
             # Como último recurso, verificar si hay mensaje de "No se encontraron resultados"
             no_results_messages = driver.find_elements(By.XPATH, 
@@ -201,23 +533,23 @@ def buscar_producto(driver, nombre_producto):
             logger.warning(f"❌ No se encontraron productos válidos para: '{nombre_producto}'")
             return False
         
-        # ✅ CALCULAR SIMILITUD entre búsqueda y primer producto encontrado
-        similitud = calcular_similitud_producto(nombre_producto, nombre_primer_producto)
-        umbral_similitud = 0.4  # Umbral mínimo de similitud (40%)
+        # ✅ CALCULAR SIMILITUD con algoritmo MEJORADO (comparación múltiple)
+        similitud = calcular_similitud_producto_mejorada(nombre_producto, info_completa_primer_producto)
+        umbral_similitud = 0.4  # Mantener umbral actual
         
-        logger.info(f"🧮 EVALUACIÓN DE SIMILITUD:")
+        logger.info(f"🧮 EVALUACIÓN DE SIMILITUD MEJORADA:")
         logger.info(f"   Búsqueda: '{nombre_producto}'")
-        logger.info(f"   Encontrado: '{nombre_primer_producto}'")
-        logger.info(f"   Similitud: {similitud:.2f} (umbral: {umbral_similitud})")
+        logger.info(f"   Datos encontrados: {info_completa_primer_producto.get('nombres_para_comparar', [])}")
+        logger.info(f"   Similitud: {similitud:.3f} (umbral: {umbral_similitud})")
         
         if similitud < umbral_similitud:
-            logger.warning(f"❌ SIMILITUD INSUFICIENTE ({similitud:.2f} < {umbral_similitud})")
-            logger.warning(f"   El producto encontrado '{nombre_primer_producto}' no es suficientemente similar a '{nombre_producto}'")
+            logger.warning(f"❌ SIMILITUD INSUFICIENTE ({similitud:.3f} < {umbral_similitud})")
+            logger.warning(f"   Los datos encontrados no son suficientemente similares a '{nombre_producto}'")
             driver.save_screenshot("similitud_insuficiente.png")
             return False
         
-        logger.info(f"✅ SIMILITUD ACEPTABLE ({similitud:.2f} >= {umbral_similitud})")
-        logger.info(f"   Procediendo a hacer clic en el producto: '{nombre_primer_producto}'")
+        logger.info(f"✅ SIMILITUD ACEPTABLE ({similitud:.3f} >= {umbral_similitud})")
+        logger.info(f"   Procediendo a hacer clic en el producto encontrado")
         
         # ✅ HACER CLIC EN EL PRIMER PRODUCTO (que ya validamos que es similar)
         if primera_tarjeta:
