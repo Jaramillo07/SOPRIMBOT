@@ -213,72 +213,53 @@ class SheetsService:
             dosage_factor = 0.1  # Penalización muy fuerte
             log_msg_dosage_details = f"QueryDose='{query_dosage_val_str}{query_dosage_unit}' TargetHasNoDose. STRONG_PENALTY"
         elif not query_has_dose and target_has_dose: # Consulta sin dosis, objetivo con dosis
-            dosage_factor = 0.7  # Penalización moderada (el objetivo es más específico)
-            log_msg_dosage_details = f"QueryHasNoDose TargetDose='{target_dosage_val_str}{target_dosage_unit}'. MODERATE_PENALTY"
+            # Penalización leve o neutral si el nombre base coincide bien.
+            # Si el nombre es una buena coincidencia, no queremos penalizar demasiado solo porque el producto en BD es más específico.
+            dosage_factor = 1.0 # MODIFICADO: Antes 0.7, ahora 1.0 para no penalizar o penalizar menos. Podría ser 0.95 para una penalización mínima.
+            log_msg_dosage_details = f"QueryHasNoDose TargetDose='{target_dosage_val_str}{target_dosage_unit}'. MINIMAL_OR_NO_PENALTY_FOR_TARGET_SPECIFICITY"
         else: # Ni consulta ni objetivo tienen dosis
             log_msg_dosage_details = "NoDoseInQueryOrTarget. NEUTRAL"
             dosage_factor = 1.0 
 
         # 3. Obtener palabras del nombre (excluyendo la dosis)
-        query_words_list_full = query_norm_for_text_processing.split()
-        target_words_list_full = target_norm_for_text_processing.split()
-
-        # Reconstruir la parte del nombre eliminando el patrón de dosis encontrado
         query_name_str = query_norm_for_text_processing
         if query_has_dose:
-            # Crear un patrón para la dosis de la consulta (ej. "200 mg" o "200mg")
             q_dose_pattern = rf"\b{re.escape(query_dosage_val_str)}\s*{re.escape(query_dosage_unit)}\b|\b{re.escape(query_dosage_val_str)}{re.escape(query_dosage_unit)}\b"
-            query_name_str = re.sub(q_dose_pattern, "", query_name_str, count=1).strip()
+            query_name_str = re.sub(q_dose_pattern, "", query_name_str, count=1, flags=re.IGNORECASE).strip()
         query_name_words = set(w for w in query_name_str.split() if w)
 
         target_name_str = target_norm_for_text_processing
         if target_has_dose:
-            # Crear un patrón para la dosis del objetivo
             t_dose_pattern = rf"\b{re.escape(target_dosage_val_str)}\s*{re.escape(target_dosage_unit)}\b|\b{re.escape(target_dosage_val_str)}{re.escape(target_dosage_unit)}\b"
-            target_name_str = re.sub(t_dose_pattern, "", target_name_str, count=1).strip()
+            target_name_str = re.sub(t_dose_pattern, "", target_name_str, count=1, flags=re.IGNORECASE).strip()
         target_name_words = set(w for w in target_name_str.split() if w)
         
-        # Caso especial: si la consulta era solo una dosis
         if not query_name_words:
-            if query_has_dose and target_has_dose and dosage_factor > 0.5: # Si la dosis coincidió bien
-                 # Asignar una puntuación base si solo la dosis coincidió (y era lo único en la consulta)
-                 # Ejemplo: búsqueda "100 mg", producto "Algo 100 mg". FactorDosis será 1.1. Score ~0.5.
+            if query_has_dose and target_has_dose and dosage_factor > 0.5: 
                  base_score_for_dose_only_match = 0.4 
                  final_score = min(base_score_for_dose_only_match * dosage_factor, 1.0)
                  logger.debug(f"💯 Similitud (solo dosis en query): {final_score:.3f} | Query: '{query_norm_for_text_processing}' | Target: '{target_norm_for_text_processing[:50]}...'")
                  return final_score
-            return 0.0 # Si no hay palabras de nombre en la consulta y la dosis no coincidió bien.
+            return 0.0 
 
         # 4. Calcular similitud basada en las palabras del nombre
         common_name_words = query_name_words.intersection(target_name_words)
-        
-        # Usar Jaccard Index para la similitud base del nombre para evitar division by zero si query_name_words es vacío (aunque ya se manejó)
-        # y para una mejor medida de similitud entre conjuntos de palabras de nombre.
         union_name_words = query_name_words.union(target_name_words)
-        if not union_name_words: # Ambos conjuntos de palabras de nombre están vacíos (después de quitar dosis)
-            if query_has_dose and target_has_dose and dosage_factor > 0.5: # Si las dosis coinciden
-                return min(0.3 * dosage_factor, 1.0) # Puntuación baja si solo las dosis coinciden y no hay nombres
-            return 0.0
             
         name_score = len(common_name_words) / len(union_name_words) if union_name_words else 0.0
-        
         current_score_for_name_logic = name_score
 
         # 5. Aplicar bonificaciones y penalizaciones al `current_score_for_name_logic`
-        
-        # BONIFICACIONES sobre el nombre
-        query_start_name = query_name_str[:min(10, len(query_name_str))] # Usar la cadena de nombre reconstruida
+        query_start_name = query_name_str[:min(10, len(query_name_str))]
         if target_name_str.startswith(query_start_name) and len(query_start_name) > 2:
-            current_score_for_name_logic += 0.20 # Bonificación por inicio coincidente del nombre
+            current_score_for_name_logic += 0.20 
             logger.debug(f"🎯 Bonus inicio (nombre): '{query_start_name}' encontrado al inicio de '{target_name_str[:20]}...'")
         
-        # Bonificación por densidad de palabras de nombre comunes (si más de la mitad de las palabras de nombre de la consulta están)
         if query_name_words and (len(common_name_words) / len(query_name_words)) > 0.49 :
-            if len(common_name_words) >=1 : # Asegurar al menos una palabra común
+            if len(common_name_words) >=1 :
                  current_score_for_name_logic += 0.15 
                  logger.debug(f"📊 Bonus palabras nombre comunes: {len(common_name_words)} de {len(query_name_words)} coinciden")
         
-        # Bonificación por palabra principal del nombre
         main_query_name_word_list = [w for w in query_name_words if len(w) > 3]
         if main_query_name_word_list:
             main_name_word = max(main_query_name_word_list, key=len, default=None)
@@ -286,24 +267,22 @@ class SheetsService:
                 current_score_for_name_logic += 0.10
                 logger.debug(f"🔑 Bonus palabra principal (nombre): '{main_name_word}' encontrada")
         
-        # PENALIZACIÓN por longitud de las partes del nombre
         if target_name_words and query_name_words:
             length_ratio_name = len(query_name_words) / len(target_name_words)
-            if length_ratio_name < 0.4:  # Nombre del objetivo es >2.5 veces más largo
+            if length_ratio_name < 0.4: 
                 current_score_for_name_logic *= 0.90
                 logger.debug(f"📏 Penalización longitud (nombre): ratio {length_ratio_name:.2f}")
-            elif length_ratio_name > 2.5: # Nombre de la consulta es >2.5 veces más largo
+            elif length_ratio_name > 2.5: 
                 current_score_for_name_logic *= 0.90
                 logger.debug(f"📏 Penalización longitud (nombre inverso): ratio {length_ratio_name:.2f}")
         
         # 6. Combinar la puntuación del nombre con el factor de dosis
-        # current_score_for_name_logic puede haber superado 1.0 con las bonificaciones, lo cual está bien en esta etapa.
         final_score = current_score_for_name_logic * dosage_factor
         
         # 7. Asegurar que la puntuación final esté entre 0 y 1
         final_score = min(max(final_score, 0.0), 1.0)
         
-        if final_score > 0.2: # Loguear detalles para puntuaciones potencialmente significativas
+        if final_score > 0.2: 
             logger.debug(f"💯 Similitud CORREGIDA: {final_score:.3f} | Q: '{query_norm_for_text_processing}' | T: '{target_norm_for_text_processing[:50]}...'")
             logger.debug(f"  ScoreNombreBase(Jaccard)={name_score:.3f} -> ScoreNombreAjustado={current_score_for_name_logic:.3f}")
             logger.debug(f"  {log_msg_dosage_details} FactorDosis={dosage_factor:.2f}")
@@ -336,7 +315,6 @@ class SheetsService:
                 
             normalized_desc = self.normalize_product_name(desc) 
             
-            # Llamar a calculate_similarity con las cadenas ya procesadas por normalize_product_name
             score = self.calculate_similarity(normalized_query, normalized_desc)
             
             product_code = str(product_row.get('CLAVE', '')).lower()
@@ -344,19 +322,19 @@ class SheetsService:
                 score = min(score + 0.5, 1.0) 
                 logger.info(f"[DEBUG] 🔑 Bonus por código coincidente: {product_code}, score ahora {score:.3f}")
                 
-            if score > 0.3: # Umbral más bajo para ser candidato y aparecer en logs
+            if score > 0.3: 
                 candidates.append({
                     'score': score,
                     'name': desc, 
                     'normalized': normalized_desc 
                 })
                 
-            if score >= threshold : # Solo considerar como válido si supera el threshold real
+            if score >= threshold : 
                 logger.info(f"[DEBUG] ✅ Candidato VÁLIDO ({score:.3f}) para '{normalized_query}': '{desc}' (Norm: '{normalized_desc}')")
-                if score > best_score: # Actualizar el mejor si este es mejor Y válido
+                if score > best_score: 
                     best_score = score
                     best_match = product_row
-            elif score > 0.3 : # Log para candidatos cercanos pero no válidos
+            elif score > 0.3 : 
                  logger.info(f"[DEBUG] 🟡 Candidato CERCANO pero NO VÁLIDO ({score:.3f}) para '{normalized_query}': '{desc}' (Norm: '{normalized_desc}')")
 
         if candidates:
