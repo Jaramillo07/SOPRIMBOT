@@ -2,6 +2,7 @@
 Manejador de mensajes para SOPRIM BOT.
 Enfoque simplificado para OCR: Envía mensaje guía, procesa el primer ítem detectado
 de forma más inteligente por Gemini, y solicita al usuario que envíe los demás ítems de una lista uno por uno.
+CORREGIDO: Manejo mejorado de preguntas generales para evitar reprocesamiento incorrecto de productos.
 """
 import logging
 import re
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     
     def __init__(self):
-        logger.info("🚀 Inicializando MessageHandler v3.7 (OCR con Extracción Dirigida por Gemini)")
+        logger.info("🚀 Inicializando MessageHandler v3.9 (Manejo Prioritario de Preguntas Generales)") # Versión actualizada
         self.gemini_service = GeminiService()
         self.whatsapp_service = WhatsAppService()
         self.scraping_service = ScrapingService() 
@@ -48,7 +49,7 @@ class MessageHandler:
             "max_fails": 3
         }
         self.mensaje_espera_enviado = {}
-        logger.info("✅ MessageHandler v3.7 (OCR con Extracción Dirigida por Gemini) inicializado.")
+        logger.info("✅ MessageHandler v3.9 (Manejo Prioritario de Preguntas Generales) inicializado.")
 
     def _check_circuit_breaker(self):
         cb = self.circuit_breaker_config
@@ -91,14 +92,14 @@ class MessageHandler:
 
     def _generar_mensaje_instrucciones_multiples(self, productos_detectados_lista: list, mensaje_original_usuario: str) -> str:
         num_productos = len(productos_detectados_lista)
-        mensaje = f"Detecté que mencionaste varios productos en tu mensaje de texto: '{mensaje_original_usuario}'.\n"
-        mensaje += "\nPara darte la información más precisa, ¿podrías decirme cuál de estos te gustaría que consulte primero?\n"
+        mensaje_txt = f"Detecté que mencionaste varios productos en tu mensaje de texto: '{mensaje_original_usuario}'.\n" # Renombrada la variable mensaje
+        mensaje_txt += "\nPara darte la información más precisa, ¿podrías decirme cuál de estos te gustaría que consulte primero?\n"
         for i, prod in enumerate(productos_detectados_lista[:3]): 
-            mensaje += f" - {prod.strip().capitalize()}\n"
+            mensaje_txt += f" - {prod.strip().capitalize()}\n"
         if num_productos > 3:
-            mensaje += f"... y otros más.\n"
-        mensaje += "\nEscribe solo el nombre del que quieres ahora, por favor."
-        return mensaje
+            mensaje_txt += f"... y otros más.\n"
+        mensaje_txt += "\nEscribe solo el nombre del que quieres ahora, por favor."
+        return mensaje_txt
 
     def _detectar_productos_locales_simples(self, mensaje_texto: str) -> list:
         if not mensaje_texto or len(mensaje_texto) < 3: return []
@@ -116,11 +117,15 @@ class MessageHandler:
 
     async def _enviar_mensaje_espera_si_necesario(self, phone_number: str, phone_number_key_clean: str):
         ahora = datetime.now()
+        # Solo enviar si no se ha enviado en el último minuto, o si es la primera vez.
+        # Y crucialmente, solo si NO estamos a punto de dar una respuesta general directa.
         if self.mensaje_espera_enviado.get(phone_number_key_clean) is None or \
-           (ahora - self.mensaje_espera_enviado[phone_number_key_clean]).total_seconds() > 60:
+           (ahora - self.mensaje_espera_enviado[phone_number_key_clean]).total_seconds() > 60: # 60 segundos de cooldown
             mensaje_espera = "Estoy buscando la información de tu producto, esto puede tomar un momento... ⏳ Gracias por tu paciencia."
             self.whatsapp_service.send_text_message(phone_number, mensaje_espera)
             self.mensaje_espera_enviado[phone_number_key_clean] = ahora
+            logger.info(f"Enviado mensaje de espera a {phone_number_key_clean}")
+
 
     async def _procesar_producto_individual_con_logica_interna(
         self, 
@@ -135,13 +140,13 @@ class MessageHandler:
         
         if not producto_nombre or not producto_nombre.strip():
             logger.warning("Intento de procesar un nombre de producto vacío o nulo. Abortando búsqueda individual.")
-            # No enviar mensaje al usuario aquí, la lógica principal debería manejarlo si no hay producto.
             return {"success": False, "respuesta": "No se especificó un producto válido para buscar.", "producto_procesado": None}
 
         current_scraper = self.scraping_service 
         info_producto_final_para_gemini = None
         
-        await self._enviar_mensaje_espera_si_necesario(raw_phone_number_with_prefix, phone_number_key_clean)
+        # El mensaje de espera se envía ANTES de la búsqueda de producto si es necesario.
+        # No lo enviaremos aquí directamente, sino en el flujo principal antes de llamar a esta función.
 
         try:
             info_producto_sheets = self.sheets_service.buscar_producto(producto_nombre, threshold=0.70)
@@ -150,7 +155,7 @@ class MessageHandler:
                 info_producto_final_para_gemini = {
                     "opcion_mejor_precio": info_producto_sheets,
                     "opcion_entrega_inmediata": info_producto_sheets if info_producto_sheets.get("fuente") == "Base Interna" else None,
-                    "tiene_doble_opcion": False
+                    "tiene_doble_opcion": False # Asumimos que si está en sheets, es una sola opción principal
                 }
             else:
                 logger.info(f"Producto '{producto_nombre}' NO en Base Interna. Intentando scraping...")
@@ -165,26 +170,29 @@ class MessageHandler:
                     else:
                         logger.info(f"Producto '{producto_nombre}' NO encontrado vía scraping.")
                 else:
-                    logger.info(f"Scraping throttled para '{producto_nombre}'.")
+                    # Si está throttled, no hay info_producto_final_para_gemini
+                    logger.info(f"Scraping throttled para '{producto_nombre}'. No se puede buscar en este momento.")
+                    # Considerar enviar un mensaje al usuario informando del throttling
+                    # o simplemente caer en la respuesta de "no encontrado" que se manejará abajo.
             
             if info_producto_final_para_gemini:
                 es_consulta_de_cantidad = isinstance(cantidad_solicitada_info, int) and cantidad_solicitada_info > 0
                 respuesta_producto_gemini = self.gemini_service.generate_product_response(
-                    user_message=mensaje_usuario_original_completo, # El mensaje que inició esta búsqueda específica
+                    user_message=mensaje_usuario_original_completo, 
                     producto_info=info_producto_final_para_gemini,
                     additional_context=producto_nombre, 
                     conversation_history=historial_chat,
                     es_consulta_cantidad=es_consulta_de_cantidad,
                     cantidad_solicitada=cantidad_solicitada_info if es_consulta_de_cantidad else None
                 )
-                self.whatsapp_service.send_product_response(raw_phone_number_with_prefix, respuesta_producto_gemini, info_producto_final_para_gemini)
+                # El send_product_response maneja el envío de texto y posible imagen
+                self.whatsapp_service.send_product_response(raw_phone_number_with_prefix, respuesta_producto_gemini, info_producto_final_para_gemini.get("opcion_mejor_precio") or info_producto_final_para_gemini.get("opcion_entrega_inmediata"))
                 final_user_response = respuesta_producto_gemini
             else:
                 final_user_response = (f"Lo siento, no pude encontrar información para el producto '{producto_nombre}'. "
                                       "¿Podrías verificar el nombre o darme más detalles? También puedes preguntar por alternativas.")
                 self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, final_user_response)
             
-            # Guardar la interacción usando el mensaje original que llevó a esta búsqueda de producto
             guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, final_user_response)
             self._update_circuit_breaker(success=True)
             return {"success": True, "respuesta": final_user_response, "producto_procesado": producto_nombre}
@@ -194,16 +202,22 @@ class MessageHandler:
             self._update_circuit_breaker(success=False)
             error_msg_usuario = f"Lo siento, hubo un problema técnico al obtener información para '{producto_nombre}'. Por favor, intenta de nuevo más tarde."
             self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, error_msg_usuario)
-            # Guardar la interacción de error
             guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, error_msg_usuario)
             return {"success": False, "error": str(e), "producto_procesado": producto_nombre, "respuesta": error_msg_usuario}
 
     async def _procesar_producto_con_timeout(self, producto_nombre: str, raw_phone_number_with_prefix: str, historial: list, mensaje_original: str, cantidad_info_para_procesar: int = None):
         try:
             logger.info(f"⏳ Iniciando _procesar_producto_con_timeout para: '{producto_nombre}', Cantidad: {cantidad_info_para_procesar}")
-            if not producto_nombre or not producto_nombre.strip(): # Chequeo adicional
+            if not producto_nombre or not producto_nombre.strip(): 
                 logger.error("Timeout: Nombre de producto vacío o nulo recibido.")
                 return {"success": False, "error": "producto_vacio", "producto_procesado": None, "respuesta": "No se especificó un producto para buscar."}
+
+            # >>> MODIFICACIÓN: Enviar mensaje de espera ANTES de iniciar la tarea larga <<<
+            # Solo si no es una consulta de cantidad (ya que la primera búsqueda ya habría enviado el mensaje de espera)
+            # y si la cantidad no está ya definida (lo que implica que es una nueva búsqueda)
+            if not cantidad_info_para_procesar: 
+                await self._enviar_mensaje_espera_si_necesario(raw_phone_number_with_prefix, raw_phone_number_with_prefix.replace("whatsapp:", ""))
+
 
             resultado = await asyncio.wait_for(
                 self._procesar_producto_individual_con_logica_interna(
@@ -235,7 +249,7 @@ class MessageHandler:
     async def procesar_mensaje(self, mensaje: str, phone_number: str, media_urls: list = None):
         start_time = time.time()
         processing_time_taken = lambda: f"{time.time() - start_time:.2f}s"
-        logger.info(f"📱 [MH v3.7 OCR Dirigido] Procesando de {phone_number}: '{mensaje[:100]}{'...' if len(mensaje)>100 else ''}' | Media: {'Sí' if media_urls else 'No'}")
+        logger.info(f"📱 [MH v3.9] Procesando de {phone_number}: '{mensaje[:100]}{'...' if len(mensaje)>100 else ''}' | Media: {'Sí' if media_urls else 'No'}")
 
         if self._check_circuit_breaker():
             respuesta_cb = "🔧 Nuestro sistema está experimentando una alta carga. Por favor, inténtalo de nuevo en unos minutos."
@@ -244,7 +258,7 @@ class MessageHandler:
 
         clean_phone_for_db = phone_number.replace("whatsapp:", "")
         mensaje_original_usuario_texto = mensaje 
-        mensaje_para_analisis_gemini = mensaje_original_usuario_texto # Mensaje que se usará para el análisis de Gemini
+        mensaje_para_analisis_gemini = mensaje_original_usuario_texto 
         
         fue_ocr = False 
 
@@ -264,8 +278,6 @@ class MessageHandler:
                         "Para los demás productos de la lista, por favor, envíamelos uno por uno después para que pueda ayudarte mejor. 😊"
                     )
                     self.whatsapp_service.send_text_message(phone_number, mensaje_guia_ocr)
-                    # Guardar el mensaje original del usuario (que pudo ser solo la imagen o texto + imagen)
-                    # y la respuesta guía del bot.
                     guardar_interaccion(clean_phone_for_db, 
                                        mensaje_original_usuario_texto if mensaje_original_usuario_texto else "(Imagen enviada)", 
                                        mensaje_guia_ocr)
@@ -285,50 +297,81 @@ class MessageHandler:
                     return {"success": False, "message_type": "error_ocr", "error": str(e), "respuesta": respuesta_ocr_error, "processing_time": processing_time_taken()}
 
         if not mensaje_para_analisis_gemini or not mensaje_para_analisis_gemini.strip(): 
-            logger.info("📝 Mensaje para Gemini vacío después de OCR. Enviando saludo.")
-            respuesta_vacia = self.gemini_service.generate_response("Hola", []) #
+            logger.info("📝 Mensaje para Gemini vacío después de OCR/sin texto. Enviando saludo de fallback.")
+            respuesta_vacia = self.gemini_service.generate_response("Hola", []) 
             self.whatsapp_service.send_text_message(phone_number, respuesta_vacia)
-            guardar_interaccion(clean_phone_for_db, mensaje_original_usuario_texto if mensaje_original_usuario_texto else "(Mensaje vacío)", respuesta_vacia)
+            guardar_interaccion(clean_phone_for_db, mensaje_original_usuario_texto if mensaje_original_usuario_texto else "(Mensaje vacío o solo imagen no legible)", respuesta_vacia)
             return {"success": True, "message_type": "mensaje_vacio_saludo", "respuesta": respuesta_vacia, "processing_time": processing_time_taken()}
 
         historial = obtener_historial(clean_phone_for_db)
-        # El mensaje_para_analisis_gemini ya incluye el [Texto de imagen]: ... si hubo OCR
-        contexto_gemini = self.gemini_service.analizar_contexto_con_gemini(mensaje_para_analisis_gemini, historial, is_ocr_text=fue_ocr) # Pasar flag
+        contexto_gemini = self.gemini_service.analizar_contexto_con_gemini(mensaje_para_analisis_gemini, historial, is_ocr_text=fue_ocr) 
         
         tipo_consulta = contexto_gemini.get("tipo_consulta", "no_entiendo_o_irrelevante")
         productos_mencionados_directo_usuario = contexto_gemini.get("productos_mencionados_ahora", [])
         producto_principal_identificado_ocr = contexto_gemini.get("producto_principal_ocr")
         producto_contexto_anterior = contexto_gemini.get("producto_contexto_anterior")
         cantidad_solicitada_gemini = contexto_gemini.get("cantidad_solicitada")
+        es_pregunta_sobre_producto_gemini = contexto_gemini.get("es_pregunta_sobre_producto", False) # Nuevo campo de Gemini
         
-        logger.info(f"🧠 Análisis Gemini: Tipo='{tipo_consulta}', ProdUsuario='{productos_mencionados_directo_usuario}', ProdOCR='{producto_principal_identificado_ocr}', ProdAntes='{producto_contexto_anterior}', Cant='{cantidad_solicitada_gemini}'")
+        logger.info(f"🧠 Análisis Gemini: Tipo='{tipo_consulta}', ProdUsuario='{productos_mencionados_directo_usuario}', ProdOCR='{producto_principal_identificado_ocr}', ProdAntes='{producto_contexto_anterior}', Cant='{cantidad_solicitada_gemini}', EsPregProd='{es_pregunta_sobre_producto_gemini}'")
 
-        if tipo_consulta in ["solicitud_direccion_contacto", "confirmacion_pedido"]:
-            respuesta_info = self.gemini_service.generate_response(mensaje_para_analisis_gemini, historial)
-            self.whatsapp_service.send_text_message(phone_number, respuesta_info)
-            guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, respuesta_info)
+        # >>> INICIO: MANEJO PRIORITARIO DE PREGUNTAS GENERALES <<<
+        preguntas_generales_o_directas = [
+            "pregunta_general_farmacia",  # Para "¿cuáles son los métodos de pago?", "horarios", etc.
+            "solicitud_direccion_contacto",
+            "saludo",
+            "despedida",
+            "agradecimiento",
+            "confirmacion_pedido", # Puede ser general o específica de producto, Gemini debe dar contexto.
+                                  # Si es general, el flujo de generate_response la manejará.
+            "queja_problema",
+            "respuesta_a_pregunta_bot" # Si el bot preguntó algo y el usuario responde.
+        ]
+        
+        # Si Gemini indica que NO es una pregunta sobre un producto, O
+        # si el tipo de consulta está en nuestra lista de generales/directas Y NO es una consulta de cantidad (que necesita contexto de producto)
+        if not es_pregunta_sobre_producto_gemini or \
+           (tipo_consulta in preguntas_generales_o_directas and tipo_consulta != "consulta_cantidad"):
+            
+            logger.info(f"👉 Flujo: Pregunta general o directa identificada por Gemini: Tipo='{tipo_consulta}', EsPregProd='{es_pregunta_sobre_producto_gemini}'.")
+            
+            respuesta_gemini_directa = self.gemini_service.generate_response(
+                mensaje_para_analisis_gemini, 
+                historial
+            )
+            self.whatsapp_service.send_text_message(phone_number, respuesta_gemini_directa)
+            guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, respuesta_gemini_directa)
             self._update_circuit_breaker(success=True)
-            return {"success": True, "message_type": f"info_directa_{tipo_consulta}", "respuesta": respuesta_info, "processing_time": processing_time_taken()}
+            return {
+                "success": True,
+                "message_type": f"respuesta_directa_gemini_{tipo_consulta}",
+                "respuesta": respuesta_gemini_directa,
+                "processing_time": processing_time_taken()
+            }
+        # >>> FIN: MANEJO PRIORITARIO DE PREGUNTAS GENERALES <<<
 
+        # Si llegamos aquí, es probable que sea una consulta de producto o relacionada.
+        
         if tipo_consulta == "consulta_cantidad" and isinstance(cantidad_solicitada_gemini, int) and cantidad_solicitada_gemini > 0:
             producto_objetivo_cantidad = producto_principal_identificado_ocr or \
                                          (productos_mencionados_directo_usuario[0] if productos_mencionados_directo_usuario else None) or \
                                          producto_contexto_anterior
             if producto_objetivo_cantidad:
                 logger.info(f"✨ Intención: Consulta de cantidad ({cantidad_solicitada_gemini}) para '{producto_objetivo_cantidad}'.")
+                # No enviar mensaje de espera aquí si es consulta de cantidad, ya que la búsqueda inicial ya lo habría hecho.
                 resultado_cantidad = await self._procesar_producto_con_timeout(
                     producto_objetivo_cantidad, phone_number, historial, mensaje_para_analisis_gemini, cantidad_info_para_procesar=cantidad_solicitada_gemini
                 )
                 return {**resultado_cantidad, "message_type": f"cantidad_procesada_{'ok' if resultado_cantidad.get('success') else 'error'}", "processing_time": processing_time_taken()}
             else:
-                logger.warning("Consulta de cantidad detectada por Gemini pero sin producto claro asociado.")
+                logger.warning("Consulta de cantidad detectada por Gemini pero sin producto claro asociado. Se tratará como pregunta general.")
+                # Caerá en la lógica de respuesta general al final si no hay otro producto identificado.
         
-        # Determinar el producto principal a procesar
         producto_identificado_final = None
         if fue_ocr and producto_principal_identificado_ocr:
             producto_identificado_final = producto_principal_identificado_ocr
             logger.info(f"OCR: Se procesará el producto principal del OCR: '{producto_identificado_final}'")
-        elif productos_mencionados_directo_usuario: # Si no hubo OCR o Gemini no sacó nada del OCR, pero sí del texto del usuario
+        elif productos_mencionados_directo_usuario:
             if len(productos_mencionados_directo_usuario) > 1:
                  logger.info(f"🎯 Múltiples productos en TEXTO ({len(productos_mencionados_directo_usuario)}): {productos_mencionados_directo_usuario}. Solicitando uno por uno.")
                  mensaje_instr = self._generar_mensaje_instrucciones_multiples(productos_mencionados_directo_usuario, mensaje_original_usuario_texto)
@@ -336,39 +379,35 @@ class MessageHandler:
                  guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, mensaje_instr)
                  self._update_circuit_breaker(success=True)
                  return {"success": True, "message_type": "instrucciones_multiples_productos_texto", "respuesta": mensaje_instr, "processing_time": processing_time_taken()}
-            else: # Un solo producto del texto del usuario
+            else: 
                 producto_identificado_final = productos_mencionados_directo_usuario[0]
-        elif tipo_consulta == "pregunta_sobre_producto_en_contexto" and producto_contexto_anterior: # No hubo OCR ni productos en mensaje actual, pero sí en contexto
+        elif tipo_consulta == "pregunta_sobre_producto_en_contexto" and producto_contexto_anterior:
             producto_identificado_final = producto_contexto_anterior
         
-        # Fallback a detección local si Gemini no identificó nada concluyente y no es OCR que ya se manejó
         if not producto_identificado_final and not fue_ocr and tipo_consulta in ["otro", "no_entiendo_o_irrelevante", "respuesta_a_pregunta_bot", "pregunta_general_farmacia"]:
+            # Nota: "pregunta_general_farmacia" aquí sería si la lógica de arriba no la capturó (ej. si es_pregunta_sobre_producto_gemini fue true)
             productos_locales = self._detectar_productos_locales_simples(mensaje_para_analisis_gemini)
             if productos_locales:
                 producto_identificado_final = productos_locales[0] 
                 logger.info(f"Fallback local: Se procesará '{producto_identificado_final}'")
 
-
         if producto_identificado_final:
             logger.info(f"🔍 Procesando producto único validado: '{producto_identificado_final}'")
+            # El mensaje de espera se maneja dentro de _procesar_producto_con_timeout si es una nueva búsqueda
             resultado_unico = await self._procesar_producto_con_timeout(
-                producto_identificado_final, phone_number, historial, mensaje_para_analisis_gemini, cantidad_info_para_procesar=None
+                producto_identificado_final, phone_number, historial, mensaje_para_analisis_gemini, cantidad_info_para_procesar=None # cantidad_solicitada_gemini ya se usó arriba
             )
             return {**resultado_unico, "message_type": f"producto_unico_{'ok' if resultado_unico.get('success') else 'error'}", "processing_time": processing_time_taken()}
         
-        # Si después de todo no hay producto a procesar (ni de OCR, ni de texto, ni de contexto, ni de fallback)
-        # O si fue OCR pero Gemini no pudo extraer un "producto_principal_ocr"
         if fue_ocr and not producto_principal_identificado_ocr:
             logger.info("💬 OCR procesado, pero Gemini no identificó un producto principal claro de la imagen. Usuario ya fue guiado.")
-            # El mensaje guía ya se envió. No necesitamos enviar otro de "no entendí" a menos que queramos.
-            # Podríamos simplemente esperar la siguiente interacción del usuario.
-            # Por consistencia, guardaremos una interacción indicando que no se procesó un producto.
             guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, "(Imagen procesada, no se identificó producto para búsqueda automática)")
             return {"success": True, "message_type": "ocr_sin_producto_principal_identificado", "respuesta": "(Imagen procesada, no se identificó producto para búsqueda automática)", "processing_time": processing_time_taken()}
 
-        logger.info(f"💬 No se identificó un producto específico para buscar. Tipo consulta: '{tipo_consulta}'. Generando respuesta general.")
+        # Fallback final: si después de toda la lógica no se procesó un producto ni una pregunta general directa.
+        logger.info(f"💬 Fallback: No se identificó producto/acción específica. Tipo consulta: '{tipo_consulta}'. Generando respuesta general.")
         respuesta_final_gemini = self.gemini_service.generate_response(mensaje_para_analisis_gemini, historial)
         self.whatsapp_service.send_text_message(phone_number, respuesta_final_gemini)
         guardar_interaccion(clean_phone_for_db, mensaje_para_analisis_gemini, respuesta_final_gemini)
         self._update_circuit_breaker(success=True)
-        return {"success": True, "message_type": f"respuesta_gemini_{tipo_consulta}", "respuesta": respuesta_final_gemini, "processing_time": processing_time_taken()}
+        return {"success": True, "message_type": f"respuesta_gemini_fallback_{tipo_consulta}", "respuesta": respuesta_final_gemini, "processing_time": processing_time_taken()}
