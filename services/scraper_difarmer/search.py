@@ -71,7 +71,7 @@ def extraer_forma_farmaceutica(texto):
     # Mapeo de formas farmacéuticas y sus variantes
     formas_map = {
         'inyectable': ['inyectable', 'iny', 'inj', 'sol. iny', 'solucion inyectable'],
-        'tableta': ['tableta', 'tabletas', 'tab', 'tabs', 'comprimidos'],
+        'tableta': ['tableta', 'tabletas', 'tab', 'tabs', 'comprimidos', 'comps'],
         'capsula': ['capsula', 'capsulas', 'cap', 'caps', 'cápsula', 'cápsulas'],
         'solucion': ['solucion', 'solución', 'sol'],
         'jarabe': ['jarabe', 'suspension', 'suspensión'],
@@ -104,8 +104,8 @@ def normalizar_texto_simple(texto):
 
 def extraer_info_completa_tarjeta(tarjeta_elemento):
     """
-    Extrae información completa de la tarjeta de Difarmer incluyendo principio activo.
-    Basado en la estructura HTML real: nombre principal + principio activo separados.
+    Extrae información completa de la tarjeta de Difarmer basada en la estructura HTML real.
+    CORREGIDO: Extracción más precisa usando las clases CSS específicas de Difarmer.
     
     Args:
         tarjeta_elemento: Elemento de la tarjeta del producto
@@ -116,6 +116,7 @@ def extraer_info_completa_tarjeta(tarjeta_elemento):
     info_completa = {
         'nombre_principal': '',
         'principio_activo': '',
+        'laboratorio': '',
         'texto_completo': '',
         'nombres_para_comparar': []  # Lista de todos los nombres/textos a comparar
     }
@@ -125,96 +126,174 @@ def extraer_info_completa_tarjeta(tarjeta_elemento):
         texto_completo = tarjeta_elemento.text if tarjeta_elemento else ""
         info_completa['texto_completo'] = texto_completo
         
-        logger.info(f"📋 Extrayendo info completa de tarjeta:")
+        logger.info(f"📋 Extrayendo info completa de tarjeta Difarmer:")
         logger.info(f"   Texto completo: {texto_completo}")
         
-        # ✅ MÉTODO 1: Buscar elementos específicos por clase CSS (como en la imagen)
-        try:
-            # Nombre principal: font-weight-bold font-poppins
-            elementos_nombre = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
-                ".font-weight-bold.font-poppins, .font-weight-bold")
-            for elem in elementos_nombre:
-                if elem.is_displayed() and elem.text.strip():
-                    texto_limpio = elem.text.strip()
-                    if len(texto_limpio) > 10:  # Filtrar textos muy cortos
-                        info_completa['nombre_principal'] = texto_limpio
-                        info_completa['nombres_para_comparar'].append(texto_limpio)
-                        logger.info(f"✅ Nombre principal extraído: '{texto_limpio}'")
-                        break
-            
-            # Principio activo: font-weight-bolder ml-2 (como se ve en el HTML)
-            elementos_principio = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
-                ".font-weight-bolder.ml-2, .font-weight-bolder")
-            for elem in elementos_principio:
-                if elem.is_displayed() and elem.text.strip():
-                    texto_limpio = elem.text.strip()
-                    # Filtrar textos que parezcan principios activos (no precios, códigos, etc.)
-                    if (len(texto_limpio) > 2 and 
-                        not '$' in texto_limpio and 
-                        not re.match(r'^\d+$', texto_limpio) and
-                        not ':' in texto_limpio):
-                        info_completa['principio_activo'] = texto_limpio
-                        info_completa['nombres_para_comparar'].append(texto_limpio)
-                        logger.info(f"✅ Principio activo extraído: '{texto_limpio}'")
-                        break
-                        
-        except Exception as e:
-            logger.warning(f"⚠️ Error en extracción por CSS: {e}")
+        # ✅ MÉTODO 1: Extracción por clases CSS específicas de Difarmer
         
-        # ✅ MÉTODO 2: Si no encontramos con CSS, usar análisis de líneas de texto
-        if not info_completa['nombre_principal'] or not info_completa['principio_activo']:
+        # 1. NOMBRE PRINCIPAL: font-weight-bold font-poppins
+        try:
+            elementos_nombre_principal = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                ".font-weight-bold.font-poppins")
+            
+            for elem in elementos_nombre_principal:
+                if elem.is_displayed() and elem.text.strip():
+                    nombre_texto = elem.text.strip()
+                    # Verificar que sea un nombre de producto válido (no precio, no código)
+                    if (len(nombre_texto) > 10 and 
+                        not '$' in nombre_texto and 
+                        not nombre_texto.isdigit() and
+                        not nombre_texto.startswith('Código:')):
+                        
+                        info_completa['nombre_principal'] = nombre_texto
+                        info_completa['nombres_para_comparar'].append(nombre_texto)
+                        logger.info(f"✅ Nombre principal extraído: '{nombre_texto}'")
+                        break
+        except Exception as e:
+            logger.warning(f"⚠️ Error extrayendo nombre principal: {e}")
+        
+        # 2. PRINCIPIO ACTIVO: font-weight-bolder ml-2  
+        try:
+            elementos_principio_activo = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                ".font-weight-bolder.ml-2")
+            
+            for elem in elementos_principio_activo:
+                if elem.is_displayed() and elem.text.strip():
+                    principio_texto = elem.text.strip()
+                    # Verificar que sea un principio activo válido
+                    if (len(principio_texto) > 2 and 
+                        not '$' in principio_texto and 
+                        not ':' in principio_texto and
+                        not principio_texto.isdigit()):
+                        
+                        info_completa['principio_activo'] = principio_texto
+                        info_completa['nombres_para_comparar'].append(principio_texto)
+                        logger.info(f"✅ Principio activo extraído: '{principio_texto}'")
+                        break
+        except Exception as e:
+            logger.warning(f"⚠️ Error extrayendo principio activo: {e}")
+        
+        # 3. LABORATORIO: font-poppins ml-2 (con "Laboratorio:")
+        try:
+            elementos_laboratorio = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                ".font-poppins.ml-2")
+            
+            for elem in elementos_laboratorio:
+                if elem.is_displayed() and elem.text.strip():
+                    lab_texto = elem.text.strip()
+                    # Buscar texto que contenga "Laboratorio:"
+                    if 'laboratorio:' in lab_texto.lower():
+                        # Extraer solo el nombre del laboratorio
+                        lab_nombre = lab_texto.replace('Laboratorio:', '').replace('laboratorio:', '').strip()
+                        if lab_nombre:
+                            info_completa['laboratorio'] = lab_nombre
+                            logger.info(f"✅ Laboratorio extraído: '{lab_nombre}'")
+                        break
+        except Exception as e:
+            logger.warning(f"⚠️ Error extrayendo laboratorio: {e}")
+        
+        # ✅ MÉTODO 2: Fallback usando selectores más amplios si no funcionó el Método 1
+        if not info_completa['nombre_principal'] and not info_completa['principio_activo']:
+            logger.info("🔄 Método 1 no exitoso, usando fallback con selectores amplios...")
+            
+            # Buscar cualquier elemento con font-weight-bold
+            try:
+                elementos_bold = tarjeta_elemento.find_elements(By.CSS_SELECTOR, 
+                    ".font-weight-bold, .font-weight-bolder")
+                
+                for elem in elementos_bold:
+                    if elem.is_displayed() and elem.text.strip():
+                        texto = elem.text.strip()
+                        if (len(texto) > 5 and 
+                            not '$' in texto and 
+                            not texto.isdigit() and
+                            not ':' in texto):
+                            
+                            # Si es largo, probablemente sea nombre principal
+                            if len(texto) > 15 and not info_completa['nombre_principal']:
+                                info_completa['nombre_principal'] = texto
+                                info_completa['nombres_para_comparar'].append(texto)
+                                logger.info(f"✅ Nombre principal (fallback): '{texto}'")
+                            
+                            # Si es corto, probablemente sea principio activo
+                            elif len(texto) <= 15 and not info_completa['principio_activo']:
+                                info_completa['principio_activo'] = texto
+                                info_completa['nombres_para_comparar'].append(texto)
+                                logger.info(f"✅ Principio activo (fallback): '{texto}'")
+                            
+                            # Si ya tenemos ambos, parar
+                            if info_completa['nombre_principal'] and info_completa['principio_activo']:
+                                break
+                                
+            except Exception as e:
+                logger.warning(f"⚠️ Error en fallback: {e}")
+        
+        # ✅ MÉTODO 3: Análisis por líneas si aún no tenemos información
+        if not info_completa['nombres_para_comparar']:
+            logger.info("🔄 Métodos anteriores fallaron, analizando por líneas...")
+            
             lineas = texto_completo.split('\n')
             logger.info(f"📝 Analizando {len(lineas)} líneas de texto:")
             
             for i, linea in enumerate(lineas):
                 linea_limpia = linea.strip()
-                if not linea_limpia:
+                if not linea_limpia or len(linea_limpia) < 3:
                     continue
                     
                 logger.info(f"   Línea {i}: '{linea_limpia}'")
                 
-                # Detectar nombre principal (líneas largas con características de medicamento)
-                if (not info_completa['nombre_principal'] and 
-                    len(linea_limpia) > 15 and
-                    re.search(r'[A-Z]{3,}.*(?:MG|ML|TABS|TAB|CAP|SOL|INY)', linea_limpia.upper())):
-                    info_completa['nombre_principal'] = linea_limpia
-                    info_completa['nombres_para_comparar'].append(linea_limpia)
-                    logger.info(f"✅ Nombre principal (línea): '{linea_limpia}'")
+                # Filtrar líneas que no son nombres de productos
+                if (any(x in linea_limpia for x in ['$', ':', 'León', 'CEDIS', 'Otros', 'Existencia', 'Colectivo']) or
+                    linea_limpia.isdigit() or
+                    re.match(r'^\d+$', linea_limpia)):
+                    continue
                 
-                # Detectar principio activo (líneas cortas, solo palabras, sin números/símbolos)
-                elif (not info_completa['principio_activo'] and
-                      3 <= len(linea_limpia) <= 20 and
-                      not '$' in linea_limpia and
-                      not ':' in linea_limpia and
-                      not re.search(r'\d+\s*(mg|ml|tab)', linea_limpia.lower()) and
-                      re.match(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$', linea_limpia)):
+                # Si contiene características de medicamento, es probable que sea nombre
+                if re.search(r'[A-Z]{3,}.*(?:MG|ML|TABS|TAB|CAP|SOL|INY|COMP)', linea_limpia.upper()):
+                    info_completa['nombres_para_comparar'].append(linea_limpia)
+                    if not info_completa['nombre_principal']:
+                        info_completa['nombre_principal'] = linea_limpia
+                    logger.info(f"✅ Nombre de medicamento (línea): '{linea_limpia}'")
+                
+                # Si es corto y contiene solo letras, puede ser principio activo
+                elif (3 <= len(linea_limpia) <= 20 and
+                      re.match(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$', linea_limpia) and
+                      not info_completa['principio_activo']):
                     info_completa['principio_activo'] = linea_limpia
                     info_completa['nombres_para_comparar'].append(linea_limpia)
-                    logger.info(f"✅ Principio activo (línea): '{linea_limpia}'")
+                    logger.info(f"✅ Posible principio activo (línea): '{linea_limpia}'")
         
-        # ✅ MÉTODO 3: Fallback - usar líneas significativas como candidatos
+        # ✅ MÉTODO 4: Si aún no tenemos nada, usar líneas significativas como último recurso
         if not info_completa['nombres_para_comparar']:
+            logger.info("🔄 Último recurso: usando líneas significativas...")
+            
             lineas_significativas = []
             for linea in texto_completo.split('\n'):
                 linea_limpia = linea.strip()
                 if (linea_limpia and 
                     len(linea_limpia) > 3 and
                     not '$' in linea_limpia and
-                    not linea_limpia.isdigit()):
+                    not linea_limpia.isdigit() and
+                    not any(x in linea_limpia for x in ['León:', 'CEDIS:', 'Existencia:'])):
                     lineas_significativas.append(linea_limpia)
             
-            info_completa['nombres_para_comparar'] = lineas_significativas[:3]  # Max 3 líneas
-            logger.info(f"🔄 Fallback - usando líneas significativas: {info_completa['nombres_para_comparar']}")
+            # Tomar las primeras 3 líneas significativas
+            info_completa['nombres_para_comparar'] = lineas_significativas[:3]
+            logger.info(f"🔄 Fallback final - líneas significativas: {info_completa['nombres_para_comparar']}")
         
-        logger.info(f"📊 EXTRACCIÓN COMPLETA:")
+        # ✅ LOG FINAL DEL RESULTADO
+        logger.info(f"📊 EXTRACCIÓN FINAL COMPLETADA:")
         logger.info(f"   Nombre principal: '{info_completa['nombre_principal']}'")
         logger.info(f"   Principio activo: '{info_completa['principio_activo']}'")
-        logger.info(f"   Nombres para comparar: {info_completa['nombres_para_comparar']}")
+        logger.info(f"   Laboratorio: '{info_completa['laboratorio']}'")
+        logger.info(f"   Nombres para comparar ({len(info_completa['nombres_para_comparar'])}): {info_completa['nombres_para_comparar']}")
         
         return info_completa
         
     except Exception as e:
-        logger.error(f"❌ Error extrayendo info completa: {e}")
+        logger.error(f"❌ Error general extrayendo info completa: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return info_completa
 
 def calcular_similitud_individual(busqueda, texto_comparar):
@@ -288,7 +367,7 @@ def calcular_similitud_individual(busqueda, texto_comparar):
         texto_norm = texto_norm.replace(conc_texto.lower(), "")
     
     # Eliminar palabras comunes de formas farmacéuticas
-    palabras_ignorar = ['sol', 'iny', 'tabletas', 'tab', 'caps', 'mg', 'ml', 'amptas', 'con', 'c']
+    palabras_ignorar = ['sol', 'iny', 'tabletas', 'tab', 'caps', 'mg', 'ml', 'amptas', 'con', 'c', 'comps']
     
     palabras_busq = [p for p in busq_norm.split() if p and p not in palabras_ignorar and len(p) > 2]
     palabras_texto = [p for p in texto_norm.split() if p and p not in palabras_ignorar and len(p) > 2]
@@ -399,8 +478,7 @@ def calcular_similitud_producto(busqueda, producto_encontrado):
 def buscar_producto(driver, nombre_producto):
     """
     Busca un producto en el sitio de Difarmer y navega a los detalles del producto.
-    MEJORADO: Extrae información completa de la tarjeta (nombre + principio activo) 
-    y usa algoritmo de similitud mejorado.
+    CORREGIDO: Verifica mensaje de "No se encontraron resultados" y limita tarjetas a máximo 10.
    
     Args:
         driver (webdriver.Chrome): Instancia del navegador con sesión iniciada
@@ -457,33 +535,66 @@ def buscar_producto(driver, nombre_producto):
             f.write(driver.page_source)
         logger.info("📄 HTML de resultados guardado para análisis")
        
-        # ✅ NUEVA LÓGICA: Buscar tarjetas de productos y extraer info completa
-        logger.info("🎯 ESTRATEGIA MEJORADA: Buscar tarjetas y extraer información completa")
+        # ✅ NUEVO: VERIFICAR PRIMERO SI HAY MENSAJE DE "NO RESULTADOS"
+        logger.info("🔍 Verificando si hay mensaje de 'No se encontraron resultados'...")
         
-        # Buscar tarjetas de productos o elementos que contengan información de productos
+        mensajes_no_resultados = [
+            "No se encontraron resultados",
+            "No se encontró",
+            "Sin resultados",
+            "0 resultados",
+            "No hay productos"
+        ]
+        
+        texto_pagina = driver.page_source.lower()
+        
+        for mensaje in mensajes_no_resultados:
+            if mensaje.lower() in texto_pagina:
+                logger.warning(f"❌ MENSAJE DE 'NO RESULTADOS' DETECTADO: '{mensaje}'")
+                logger.warning(f"   No hay productos para la búsqueda: '{nombre_producto}'")
+                driver.save_screenshot("no_resultados_detectado.png")
+                return False
+        
+        # ✅ BÚSQUEDA DE TARJETAS CON LÍMITE
+        logger.info("🎯 Buscando tarjetas de productos (máximo 10 permitidas)...")
+        
+        # Selectores más específicos y ordenados por prioridad
         selectores_tarjetas = [
-            # Basado en las imágenes, buscar divs que contengan productos
-            "//div[contains(., 'Laboratorio:') and contains(., 'Mi precio:')]",
-            "//div[contains(., 'Código Difarmer:')]",
+            # Selectores más específicos primero
             "//div[contains(@class, 'producto') or contains(@class, 'item') or contains(@class, 'card')]",
-            "//div[.//img and contains(., '$')]",  # Divs con imagen y precio
+            "//div[.//img and contains(., '$') and contains(., 'Laboratorio:')]",  # Más específico
+            "//div[contains(., 'Código Difarmer:')]",
+            "//div[contains(., 'Laboratorio:') and contains(., 'Mi precio:')]",  # Más general al final
             "//div[contains(., 'Existencia:')]",
-            "//div[contains(., 'León:')]"  # León es donde está la existencia según las imágenes
+            "//div[contains(., 'León:')]"
         ]
         
         primera_tarjeta = None
         info_completa_primer_producto = None
+        tarjetas_encontradas = 0
         
         for selector in selectores_tarjetas:
             try:
                 elementos = driver.find_elements(By.XPATH, selector)
                 elementos_visibles = [elem for elem in elementos if elem.is_displayed()]
                 
-                if elementos_visibles:
-                    logger.info(f"✅ Encontradas {len(elementos_visibles)} tarjetas con selector: {selector}")
+                tarjetas_encontradas = len(elementos_visibles)
+                
+                logger.info(f"🔍 Selector: {selector}")
+                logger.info(f"   Tarjetas encontradas: {tarjetas_encontradas}")
+                
+                # ✅ VERIFICACIÓN CRÍTICA: Si hay más de 10 tarjetas, son demasiadas (no específicas)
+                if tarjetas_encontradas > 10:
+                    logger.warning(f"⚠️ DEMASIADAS TARJETAS ({tarjetas_encontradas} > 10) con selector: {selector}")
+                    logger.warning(f"   Este selector es demasiado amplio, probando siguiente...")
+                    continue
+                
+                # Si hay entre 1-10 tarjetas, es un buen rango
+                if 1 <= tarjetas_encontradas <= 10:
+                    logger.info(f"✅ RANGO ACEPTABLE de tarjetas ({tarjetas_encontradas}) con selector: {selector}")
                     primera_tarjeta = elementos_visibles[0]
                     
-                    # ✅ NUEVA FUNCIONALIDAD: Extraer información completa de la tarjeta
+                    # ✅ Extraer información completa de la tarjeta
                     info_completa_primer_producto = extraer_info_completa_tarjeta(primera_tarjeta)
                     
                     if info_completa_primer_producto.get('nombres_para_comparar'):
@@ -494,7 +605,19 @@ def buscar_producto(driver, nombre_producto):
                 logger.warning(f"⚠️ Error con selector {selector}: {e}")
                 continue
         
-        # Si no encontramos tarjetas específicas, buscar cualquier texto que parezca nombre de producto
+        # ✅ VERIFICACIÓN FINAL: Si NO se encontraron tarjetas válidas
+        if tarjetas_encontradas == 0:
+            logger.warning(f"❌ NO se encontraron tarjetas de productos para: '{nombre_producto}'")
+            driver.save_screenshot("no_tarjetas_encontradas.png")
+            return False
+        
+        elif tarjetas_encontradas > 10:
+            logger.warning(f"❌ TODAS las tarjetas superan el límite de 10 (encontradas: {tarjetas_encontradas})")
+            logger.warning(f"   Esto indica que la búsqueda no fue específica para: '{nombre_producto}'")
+            driver.save_screenshot("demasiadas_tarjetas.png")
+            return False
+        
+        # Si no se pudo extraer info de la tarjeta, buscar en texto general
         if not primera_tarjeta or not info_completa_primer_producto:
             logger.info("🔍 No se encontraron tarjetas específicas, buscando en texto general")
             
@@ -518,19 +641,7 @@ def buscar_producto(driver, nombre_producto):
         # Verificar si tenemos información para evaluar
         if not info_completa_primer_producto or not info_completa_primer_producto.get('nombres_para_comparar'):
             logger.warning("❌ No se pudo extraer información de ningún producto de los resultados")
-            
-            # Como último recurso, verificar si hay mensaje de "No se encontraron resultados"
-            no_results_messages = driver.find_elements(By.XPATH, 
-                "//*[contains(text(), 'No se encontraron resultados')]")
-            
-            for message in no_results_messages:
-                if message.is_displayed():
-                    logger.warning(f"❌ Mensaje de 'No resultados' confirmado para: '{nombre_producto}'")
-                    driver.save_screenshot("no_resultados_confirmado.png")
-                    return False
-            
-            # Si no hay mensaje explícito pero tampoco encontramos productos, asumir que no hay resultados
-            logger.warning(f"❌ No se encontraron productos válidos para: '{nombre_producto}'")
+            logger.warning(f"   No hay datos válidos para evaluar similitud con: '{nombre_producto}'")
             return False
         
         # ✅ CALCULAR SIMILITUD con algoritmo MEJORADO (comparación múltiple)
@@ -541,6 +652,7 @@ def buscar_producto(driver, nombre_producto):
         logger.info(f"   Búsqueda: '{nombre_producto}'")
         logger.info(f"   Datos encontrados: {info_completa_primer_producto.get('nombres_para_comparar', [])}")
         logger.info(f"   Similitud: {similitud:.3f} (umbral: {umbral_similitud})")
+        logger.info(f"   Tarjetas analizadas: {tarjetas_encontradas}")
         
         if similitud < umbral_similitud:
             logger.warning(f"❌ SIMILITUD INSUFICIENTE ({similitud:.3f} < {umbral_similitud})")
