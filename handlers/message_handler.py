@@ -1,5 +1,5 @@
 """
-Manejador de mensajes para SOPRIM BOT.
+Manejador de mensajes para SOPRiIM BOT.
 NUEVO: Sistema de buffer de mensajes de 15 segundos para procesar mensajes consecutivos como uno solo.
 """
 import logging
