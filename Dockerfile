@@ -23,22 +23,16 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# ✅ INSTALAR CHROME 130 (versión que funciona con tu código actual)
-# Descargar e instalar versión específica que NO tiene problemas con Selenium
-RUN wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_130.0.6723.116-1_amd64.deb \
-    && dpkg -i google-chrome-stable_130.0.6723.116-1_amd64.deb || apt-get install -f -y \
-    && apt-get update && apt-get install -f -y \
-    && rm google-chrome-stable_130.0.6723.116-1_amd64.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ PREVENIR que Chrome se actualice automáticamente
-RUN apt-mark hold google-chrome-stable
-
-# ✅ VERIFICAR que Chrome 130 se instaló correctamente
-RUN google-chrome --version
+# Descargar e instalar Google Chrome
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de trabajo
 WORKDIR /app
@@ -60,11 +54,8 @@ COPY . .
 # Dar permisos al entrypoint
 RUN chmod +x entrypoint.sh
 
-# Variables de entorno
-ENV PORT=8080
-ENV CHROME_VERSION=130.0.6723.116
-
 # Exponer puerto
+ENV PORT=8080
 EXPOSE $PORT
 
 # Definir el punto de entrada
