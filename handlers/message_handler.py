@@ -35,7 +35,7 @@ class MessageHandler:
         self.sheets_service = SheetsService()
         
         # ✅ NUEVO: Sistema de buffer de mensajes
-        self.BUFFER_TIMEOUT_SECONDS = 15  # 15 segundos de buffer
+        self.BUFFER_TIMEOUT_SECONDS = 10  # 10 segundos de buffer (más ágil)
         self.message_buffers = {}  # {phone_number: {'messages': [], 'timer': None, 'processing': False}}
         
         # Configuración existente
@@ -207,14 +207,32 @@ class MessageHandler:
         tiene_media = bool(media_urls and len(media_urls) > 0)
         
         # 3. Detectar si es un mensaje "completo" que no debería usar buffer
+        mensaje_lower = (mensaje or "").lower()
+        
+        # Frases completas que indican una consulta completa
+        frases_completas = [
+            "cuánto cuesta", "precio de", "disponible el", "tienes disponible",
+            "necesito información", "busco información", "quiero comprar",
+            "me interesa el", "información sobre el"
+        ]
+        
+        # Palabras que solo son completas si van acompañadas de más contexto
+        palabras_contextuales = ["tienes", "necesito", "busco", "quiero", "disponible"]
+        
+        # Palabras que siempre indican mensaje completo
+        palabras_completas = ["gracias", "thank", "ok", "vale", "perfecto", "excelente"]
+        
         es_mensaje_completo = (
-            mensaje_length > 100 or  # Mensajes largos
+            mensaje_length > 80 or  # Mensajes largos (reducido de 100 a 80)
             tiene_media or  # Mensajes con imágenes
-            any(palabra in (mensaje or "").lower() for palabra in [
-                "gracias", "thank", "ok", "vale", "perfecto", "excelente",
-                "cuánto cuesta", "precio", "disponible", "tienes", "necesito",
-                "busco", "quiero", "me interesa", "información sobre"
-            ])
+            any(frase in mensaje_lower for frase in frases_completas) or  # Frases completas
+            any(palabra in mensaje_lower for palabra in palabras_completas) or  # Palabras siempre completas
+            # Palabras contextuales solo si van con más información relevante
+            (any(palabra in mensaje_lower for palabra in palabras_contextuales) and 
+             (mensaje_length > 20 or any(med_word in mensaje_lower for med_word in [
+                 "paracetamol", "ibuprofeno", "amoxicilina", "omeprazol", "losartan", 
+                 "mg", "ml", "tabletas", "cápsulas", "jarabe", "inyectable"
+             ])))
         )
         
         if es_mensaje_completo:
