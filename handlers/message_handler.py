@@ -465,6 +465,109 @@ class MessageHandler:
             self.mensaje_espera_enviado[phone_number_key_clean] = ahora
             logger.info(f"Enviado mensaje de espera a {phone_number_key_clean}")
 
-    # [Resto de las funciones auxiliares originales...]
-    # _procesar_producto_individual_con_logica_interna, _procesar_producto_con_timeout, etc.
-    # (Se mantienen igual que en el código original)
+    async def _procesar_producto_individual_con_logica_interna(
+        self, 
+        producto_nombre: str, 
+        raw_phone_number_with_prefix: str,
+        historial_chat: list, 
+        mensaje_usuario_original_completo: str,
+        cantidad_solicitada_info: int = None
+    ):
+        phone_number_key_clean = raw_phone_number_with_prefix.replace("whatsapp:", "")
+        logger.info(f"==> Iniciando procesamiento individual para: '{producto_nombre}' (Usuario: {phone_number_key_clean}, Cantidad: {cantidad_solicitada_info})")
+        
+        if not producto_nombre or not producto_nombre.strip():
+            logger.warning("Intento de procesar un nombre de producto vacío o nulo. Abortando búsqueda individual.")
+            return {"success": False, "respuesta": "No se especificó un producto válido para buscar.", "producto_procesado": None}
+
+        current_scraper = self.scraping_service 
+        info_producto_final_para_gemini = None
+        
+        try:
+            info_producto_sheets = self.sheets_service.buscar_producto(producto_nombre, threshold=0.70)
+            if info_producto_sheets:
+                logger.info(f"Producto '{producto_nombre}' encontrado en Base Interna (Sheets).")
+                info_producto_final_para_gemini = {
+                    "opcion_mejor_precio": info_producto_sheets,
+                    "opcion_entrega_inmediata": info_producto_sheets if info_producto_sheets.get("fuente") == "Base Interna" else None,
+                    "tiene_doble_opcion": False
+                }
+            else:
+                logger.info(f"Producto '{producto_nombre}' NO en Base Interna. Intentando scraping...")
+                if self._can_process_scraping_throttled(phone_number_key_clean):
+                    info_producto_scraped = current_scraper.buscar_producto(producto_nombre)
+                    if info_producto_scraped and (info_producto_scraped.get("opcion_mejor_precio") or info_producto_scraped.get("opcion_entrega_inmediata")):
+                        logger.info(f"Producto '{producto_nombre}' encontrado vía scraping.")
+                        info_producto_final_para_gemini = info_producto_scraped
+                        if hasattr(current_scraper, '_full_cleanup_after_phase1'):
+                            logger.info(f"Ejecutando limpieza después de scraping exitoso para '{producto_nombre}'.")
+                            current_scraper._full_cleanup_after_phase1()
+                    else:
+                        logger.info(f"Producto '{producto_nombre}' NO encontrado vía scraping.")
+                else:
+                    logger.info(f"Scraping throttled para '{producto_nombre}'. No se puede buscar en este momento.")
+            
+            if info_producto_final_para_gemini:
+                es_consulta_de_cantidad = isinstance(cantidad_solicitada_info, int) and cantidad_solicitada_info > 0
+                respuesta_producto_gemini = self.gemini_service.generate_product_response(
+                    user_message=mensaje_usuario_original_completo, 
+                    producto_info=info_producto_final_para_gemini,
+                    additional_context=producto_nombre, 
+                    conversation_history=historial_chat,
+                    es_consulta_cantidad=es_consulta_de_cantidad,
+                    cantidad_solicitada=cantidad_solicitada_info if es_consulta_de_cantidad else None
+                )
+                self.whatsapp_service.send_product_response(raw_phone_number_with_prefix, respuesta_producto_gemini, info_producto_final_para_gemini.get("opcion_mejor_precio") or info_producto_final_para_gemini.get("opcion_entrega_inmediata"))
+                final_user_response = respuesta_producto_gemini
+            else:
+                final_user_response = (f"Lo siento, no pude encontrar información para el producto '{producto_nombre}'. "
+                                      "¿Podrías verificar el nombre o darme más detalles? También puedes preguntar por alternativas.")
+                self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, final_user_response)
+            
+            guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, final_user_response)
+            self._update_circuit_breaker(success=True)
+            return {"success": True, "respuesta": final_user_response, "producto_procesado": producto_nombre}
+
+        except Exception as e:
+            logger.error(f"Error severo en _procesar_producto_individual para '{producto_nombre}': {e}\n{traceback.format_exc()}")
+            self._update_circuit_breaker(success=False)
+            error_msg_usuario = f"Lo siento, hubo un problema técnico al obtener información para '{producto_nombre}'. Por favor, intenta de nuevo más tarde."
+            self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, error_msg_usuario)
+            guardar_interaccion(phone_number_key_clean, mensaje_usuario_original_completo, error_msg_usuario)
+            return {"success": False, "error": str(e), "producto_procesado": producto_nombre, "respuesta": error_msg_usuario}
+
+    async def _procesar_producto_con_timeout(self, producto_nombre: str, raw_phone_number_with_prefix: str, historial: list, mensaje_original: str, cantidad_info_para_procesar: int = None):
+        try:
+            logger.info(f"⏳ Iniciando _procesar_producto_con_timeout para: '{producto_nombre}', Cantidad: {cantidad_info_para_procesar}")
+            if not producto_nombre or not producto_nombre.strip(): 
+                logger.error("Timeout: Nombre de producto vacío o nulo recibido.")
+                return {"success": False, "error": "producto_vacio", "producto_procesado": None, "respuesta": "No se especificó un producto para buscar."}
+
+            if not cantidad_info_para_procesar: 
+                await self._enviar_mensaje_espera_si_necesario(raw_phone_number_with_prefix, raw_phone_number_with_prefix.replace("whatsapp:", ""))
+
+            resultado = await asyncio.wait_for(
+                self._procesar_producto_individual_con_logica_interna(
+                    producto_nombre, 
+                    raw_phone_number_with_prefix,
+                    historial, 
+                    mensaje_original,
+                    cantidad_solicitada_info=cantidad_info_para_procesar
+                ),
+                timeout=self.TIMEOUT_POR_PRODUCTO
+            )
+            return resultado
+        except asyncio.TimeoutError:
+            logger.error(f"⏰ TIMEOUT procesando producto: '{producto_nombre}' después de {self.TIMEOUT_POR_PRODUCTO}s.")
+            self._update_circuit_breaker(success=False)
+            timeout_msg_usuario = f"Lo siento, la búsqueda para '{producto_nombre}' tomó más tiempo del esperado. Por favor, intenta de nuevo en un momento."
+            self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, timeout_msg_usuario)
+            guardar_interaccion(raw_phone_number_with_prefix.replace("whatsapp:", ""), mensaje_original, timeout_msg_usuario)
+            return {"success": False, "error": "timeout", "producto_procesado": producto_nombre, "respuesta": timeout_msg_usuario}
+        except Exception as e:
+            logger.error(f"❌ Error inesperado en _procesar_producto_con_timeout para '{producto_nombre}': {e}\n{traceback.format_exc()}")
+            self._update_circuit_breaker(success=False)
+            error_msg_usuario = f"Lo siento, ocurrió un error inesperado al procesar tu solicitud para '{producto_nombre}'. Intenta de nuevo más tarde."
+            self.whatsapp_service.send_text_message(raw_phone_number_with_prefix, error_msg_usuario)
+            guardar_interaccion(raw_phone_number_with_prefix.replace("whatsapp:", ""), mensaje_original, error_msg_usuario)
+            return {"success": False, "error": str(e), "producto_procesado": producto_nombre, "respuesta": error_msg_usuario}
