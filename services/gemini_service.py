@@ -221,7 +221,7 @@ NO des información médica.
             producto_nombre_original_consulta = additional_context 
             
             mensaje_final_accion = ("Para confirmar tu pedido o si tienes más preguntas, por favor responde a este mensaje, "
-                                 "o contacta a Isaac al +52 1 477 677 5291 (WhatsApp/llamada). "
+                                 "o contacta a Isaac al +52 1 477 677 5291 (wa.me/524776775291 / llamada). "
                                  "Nuestra dirección para recolecciones es Baya #503, Col. Arboledas de San José, León, México.")
 
             # ✅ MODIFICACIÓN PRINCIPAL: Solo verificar que existe producto_info básico
