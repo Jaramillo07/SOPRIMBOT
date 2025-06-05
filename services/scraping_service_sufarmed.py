@@ -1,6 +1,7 @@
 """
 Módulo de scraping específico para la farmacia Sufarmed.
 ACTUALIZADO: Con normalización de búsqueda específica para Sufarmed.
+CORREGIDO: Eliminada recursión infinita en __init__
 REGLA SUFARMED: Solo nombre del principio activo (sin formas farmacéuticas ni dosis).
 """
 import logging
@@ -109,6 +110,11 @@ class ScrapingService:
         self.password = password
         self.login_url = login_url
         self.timeout = 15
+        
+        # ✅ CORREGIDO: Eliminada la línea que causaba recursión infinita
+        # ANTES: self.sufarmed_service = SufarmedService()  # ❌ Recursión infinita
+        # AHORA: Esta línea ha sido eliminada
+        
         logger.info("ScrapingService para Sufarmed inicializado")
     
     def buscar_producto(self, nombre_producto: str) -> dict:
