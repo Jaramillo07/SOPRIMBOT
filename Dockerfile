@@ -26,13 +26,23 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Descargar e instalar Google Chrome
+# ✅ CORREGIDO: Instalar Chrome versión específica estable (NO la más reciente)
+# Usar Chrome 114 que es muy estable y compatible con Selenium
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
     && apt-get update \
-    && apt-get install -y google-chrome-stable \
+    && wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_114.0.5735.90-1_amd64.deb \
+    && dpkg -i google-chrome-stable_114.0.5735.90-1_amd64.deb || apt-get install -f -y \
+    && apt-get install -f -y \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm google-chrome-stable_114.0.5735.90-1_amd64.deb
+
+# ✅ PREVENIR auto-updates de Chrome
+RUN apt-mark hold google-chrome-stable
+
+# ✅ VERIFICAR instalación de Chrome
+RUN google-chrome --version
 
 # Crear directorio de trabajo
 WORKDIR /app
@@ -48,11 +58,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 # (Compatible con los demás scrapers, solo añade una dependencia nueva)
 RUN pip install --no-cache-dir undetected-chromedriver==3.5.4
 
+# ✅ INSTALAR ChromeDriver versión compatible con Chrome 114
+RUN wget -q https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip \
+    && unzip chromedriver_linux64.zip \
+    && mv chromedriver /usr/local/bin/ \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm chromedriver_linux64.zip
+
+# ✅ VERIFICAR instalación de ChromeDriver
+RUN chromedriver --version
+
 # Copiar código de la aplicación
 COPY . .
 
 # Dar permisos al entrypoint
 RUN chmod +x entrypoint.sh
+
+# ✅ VARIABLES DE ENTORNO para versiones fijas
+ENV CHROME_VERSION=114.0.5735.90
+ENV CHROMEDRIVER_VERSION=114.0.5735.90
 
 # Exponer puerto
 ENV PORT=8080
