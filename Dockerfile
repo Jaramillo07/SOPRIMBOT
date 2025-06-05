@@ -25,31 +25,33 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ INSTALACIÓN SIMPLE DE CHROME (sin conflictos)
-RUN wget -qO- https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+# ✅ INSTALAR CHROME 130 (versión que funciona con tu código actual)
+# Descargar e instalar versión específica que NO tiene problemas con Selenium
+RUN wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_130.0.6723.116-1_amd64.deb \
+    && dpkg -i google-chrome-stable_130.0.6723.116-1_amd64.deb || apt-get install -f -y \
+    && apt-get update && apt-get install -f -y \
+    && rm google-chrome-stable_130.0.6723.116-1_amd64.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ PREVENIR auto-updates de Chrome
+# ✅ PREVENIR que Chrome se actualice automáticamente
 RUN apt-mark hold google-chrome-stable
 
-# ✅ VERIFICAR instalación
+# ✅ VERIFICAR que Chrome 130 se instaló correctamente
 RUN google-chrome --version
 
 # Crear directorio de trabajo
 WORKDIR /app
 
-# Crear directorios necesarios
+# Crear directorios para logs y capturas de pantalla de todos los scrapers
 RUN mkdir -p /app/debug_screenshots /app/debug_logs /app/conversations
 
-# Copiar e instalar dependencias Python
+# Copiar requirements y instalar dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Instalar undetected-chromedriver para NADRO
+# Agregar undetected-chromedriver para el scraper NADRO
+# (Compatible con los demás scrapers, solo añade una dependencia nueva)
 RUN pip install --no-cache-dir undetected-chromedriver==3.5.4
 
 # Copiar código de la aplicación
@@ -60,7 +62,7 @@ RUN chmod +x entrypoint.sh
 
 # Variables de entorno
 ENV PORT=8080
-ENV CHROME_STABLE=true
+ENV CHROME_VERSION=130.0.6723.116
 
 # Exponer puerto
 EXPOSE $PORT
