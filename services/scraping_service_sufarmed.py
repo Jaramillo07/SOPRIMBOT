@@ -1,7 +1,7 @@
 """
 Módulo de scraping específico para la farmacia Sufarmed.
 ACTUALIZADO: Con normalización de búsqueda específica para Sufarmed.
-CORREGIDO: Eliminada recursión infinita en __init__
+CORREGIDO: Eliminada recursión infinita en __init__ + función inicializar_navegador mejorada
 REGLA SUFARMED: Solo nombre del principio activo (sin formas farmacéuticas ni dosis).
 """
 import logging
@@ -151,7 +151,7 @@ def find_one(driver, wait, candidates):
 def inicializar_navegador(headless: bool = HEADLESS_BROWSER):
     """
     Inicializa el navegador Chrome de forma compatible con entornos Docker/headless.
-    Usa el binario de Chrome preinstalado en lugar de depender de webdriver-manager.
+    CORREGIDO: Evita webdriver-manager y usa Chrome directamente.
     """
     # Rutas predefinidas para entornos Docker
     chrome_binary_path = "/usr/bin/google-chrome"
@@ -171,6 +171,15 @@ def inicializar_navegador(headless: bool = HEADLESS_BROWSER):
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
     
+    # ✅ NUEVAS OPCIONES PARA EVITAR ERRORES DE CONEXIÓN
+    options.add_argument("--disable-web-security")
+    options.add_argument("--disable-features=VizDisplayCompositor")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--remote-debugging-port=9222")
+    
     # Especificar la ruta al binario Chrome
     options.binary_location = chrome_binary_path
     
@@ -180,24 +189,58 @@ def inicializar_navegador(headless: bool = HEADLESS_BROWSER):
             logger.error(f"Binario de Chrome no encontrado en: {chrome_binary_path}")
             return None
         
-        # En Selenium 4, no es necesario especificar el chromedriver, se descarga automáticamente
-        logger.info("Inicializando Chrome en modo compatible con Docker")
-        driver = webdriver.Chrome(options=options)
+        logger.info("🚀 Inicializando Chrome SIN webdriver-manager (directo)")
+        
+        # ✅ CAMBIO PRINCIPAL: NO usar webdriver-manager, usar driver del sistema
+        try:
+            # Método 1: Usar chromedriver del sistema directamente
+            driver = webdriver.Chrome(options=options)
+            logger.info("✅ Chrome inicializado con chromedriver del sistema")
+        except Exception as e1:
+            logger.warning(f"⚠️ Falló chromedriver del sistema: {e1}")
+            
+            # Método 2: Intentar con Service vacío
+            try:
+                service = Service()
+                driver = webdriver.Chrome(service=service, options=options)
+                logger.info("✅ Chrome inicializado con Service vacío")
+            except Exception as e2:
+                logger.warning(f"⚠️ Falló Service vacío: {e2}")
+                
+                # Método 3: Último recurso - usar webdriver-manager con versión específica
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    # Forzar una versión estable conocida
+                    service = Service(ChromeDriverManager(version="114.0.5735.90").install())
+                    driver = webdriver.Chrome(service=service, options=options)
+                    logger.info("✅ Chrome inicializado con webdriver-manager versión específica")
+                except Exception as e3:
+                    logger.error(f"❌ Todos los métodos fallaron: {e3}")
+                    return None
         
         # Verificar que el navegador se inicializó correctamente
-        user_agent = driver.execute_script("return navigator.userAgent")
-        logger.info(f"Navegador inicializado correctamente con User-Agent: {user_agent}")
+        try:
+            user_agent = driver.execute_script("return navigator.userAgent")
+            logger.info(f"✅ Navegador verificado - User-Agent: {user_agent[:50]}...")
+        except Exception as e:
+            logger.error(f"❌ Chrome inicializado pero no responde: {e}")
+            try:
+                driver.quit()
+            except:
+                pass
+            return None
         
         # Establecer timeouts razonables
         driver.set_page_load_timeout(30)
         driver.implicitly_wait(10)
         
         return driver
+        
     except WebDriverException as e:
-        logger.error(f"Error específico de WebDriver al inicializar Chrome: {e}")
+        logger.error(f"❌ Error específico de WebDriver al inicializar Chrome: {e}")
         return None
     except Exception as e:
-        logger.error(f"Error general al inicializar el navegador: {e}")
+        logger.error(f"❌ Error general al inicializar el navegador: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return None
