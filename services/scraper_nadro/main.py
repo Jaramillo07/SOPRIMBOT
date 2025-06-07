@@ -48,7 +48,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # Configuración
 USERNAME = "ventas@insumosjip.com"
-PASSWORD = "Newton35$"
+PASSWORD = "Edu2014$"
 MAIN_URL = "https://i22.nadro.mx/"  # URL base sin token de estado
 
 # ===============================
