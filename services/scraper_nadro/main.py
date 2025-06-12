@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Módulo principal para el scraper de NADRO - VERSIÓN CON LIMPIEZA EXTREMA
-✅ CORREGIDO: Implementa limpieza extrema de cookies, caché y datos siguiendo instrucciones de NADRO
-✅ NUEVO: Cada ejecución usa perfil completamente nuevo y limpio
-✅ NUEVO: Limpieza agresiva "Desde siempre" como indica NADRO
+Módulo NADRO - VERSIÓN SIMULANDO NAVEGADOR MÓVIL
+✅ SOLUCIÓN: Simula Safari en iPhone / Chrome en Android
+✅ OBJETIVO: Evitar bloqueo de navegadores desktop
+✅ ESTRATEGIA: NADRO permite móviles pero bloquea desktop
 """
 
 import time
@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 # Importar undetected_chromedriver solo si está disponible
 try:
     import undetected_chromedriver as uc
-    # Parche para evitar WinError 6 en el destructor de Chrome
     uc.Chrome.__del__ = lambda self: None
     UNDETECTED_AVAILABLE = True
 except ImportError:
@@ -53,433 +52,229 @@ PASSWORD = "Edu2014$"
 MAIN_URL = "https://i22.nadro.mx/"
 
 # ===============================
-# ✅ NUEVAS FUNCIONES DE LIMPIEZA EXTREMA
+# 📱 CONFIGURACIÓN MÓVIL PARA NADRO
 # ===============================
 
-def limpiar_datos_chrome_sistema():
+def get_mobile_user_agents():
     """
-    ✅ FUNCIÓN NUEVA: Limpia datos de Chrome a nivel del sistema operativo
-    Simula el "Borrar datos de navegación -> Desde siempre" que NADRO recomienda
+    ✅ User Agents reales de navegadores móviles que funcionan con NADRO
     """
-    try:
-        logger.info("🧹 ===== LIMPIEZA EXTREMA DE CHROME EN SISTEMA =====")
+    return [
+        # Safari en iPhone (iOS 17)
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
         
-        # Rutas comunes de datos de Chrome en diferentes OS
-        chrome_data_paths = []
+        # Chrome en Android
+        "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 12; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
         
-        if os.name == 'nt':  # Windows
-            chrome_data_paths = [
-                os.path.expanduser("~\\AppData\\Local\\Google\\Chrome\\User Data"),
-                os.path.expanduser("~\\AppData\\Roaming\\Google\\Chrome"),
-                os.path.expanduser("~\\AppData\\Local\\Chromium\\User Data"),
-            ]
-        else:  # Linux/Mac
-            chrome_data_paths = [
-                os.path.expanduser("~/.config/google-chrome"),
-                os.path.expanduser("~/.cache/google-chrome"),
-                os.path.expanduser("~/Library/Application Support/Google/Chrome"),  # Mac
-                os.path.expanduser("~/Library/Caches/Google/Chrome"),  # Mac
-            ]
+        # Samsung Internet en Android
+        "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
         
-        # Agregar directorios temporales
-        temp_dirs = [
-            tempfile.gettempdir(),
-            "/tmp" if os.name != 'nt' else os.environ.get('TEMP', 'C:\\Temp')
-        ]
-        
-        for temp_dir in temp_dirs:
-            if os.path.exists(temp_dir):
-                chrome_temp_pattern = os.path.join(temp_dir, "*chrome*")
-                try:
-                    import glob
-                    temp_chrome_files = glob.glob(chrome_temp_pattern)
-                    for temp_file in temp_chrome_files:
-                        try:
-                            if os.path.isfile(temp_file):
-                                os.remove(temp_file)
-                            elif os.path.isdir(temp_file):
-                                shutil.rmtree(temp_file)
-                            logger.info(f"🗑️ Archivo/directorio temporal eliminado: {temp_file}")
-                        except Exception as e:
-                            logger.debug(f"No se pudo eliminar {temp_file}: {e}")
-                except:
-                    pass
-        
-        # Intentar limpiar archivos específicos de cookies/caché si Chrome está cerrado
-        for chrome_path in chrome_data_paths:
-            if os.path.exists(chrome_path):
-                try:
-                    # Archivos específicos a limpiar
-                    files_to_clean = [
-                        "Default/Cookies",
-                        "Default/Cookies-journal", 
-                        "Default/Cache",
-                        "Default/Code Cache",
-                        "Default/GPUCache",
-                        "Default/Local Storage",
-                        "Default/Session Storage",
-                        "Default/IndexedDB",
-                        "Default/Web Data",
-                        "Default/History",
-                        "Default/Login Data"
-                    ]
-                    
-                    for file_rel_path in files_to_clean:
-                        file_full_path = os.path.join(chrome_path, file_rel_path)
-                        try:
-                            if os.path.exists(file_full_path):
-                                if os.path.isfile(file_full_path):
-                                    os.remove(file_full_path)
-                                    logger.info(f"🗑️ Archivo eliminado: {file_rel_path}")
-                                elif os.path.isdir(file_full_path):
-                                    shutil.rmtree(file_full_path)
-                                    logger.info(f"🗑️ Directorio eliminado: {file_rel_path}")
-                        except Exception as e:
-                            logger.debug(f"No se pudo eliminar {file_rel_path}: {e}")
-                            
-                except Exception as e:
-                    logger.debug(f"Error accediendo a {chrome_path}: {e}")
-        
-        logger.info("✅ ===== LIMPIEZA EXTREMA DEL SISTEMA COMPLETADA =====")
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Error en limpieza extrema del sistema: {e}")
+        # Edge en Android
+        "Mozilla/5.0 (Linux; Android 12; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) EdgA/119.0.0.0 Mobile Safari/537.36"
+    ]
 
-def crear_perfil_temporal_unico():
+def get_mobile_viewport():
     """
-    ✅ FUNCIÓN MEJORADA: Crea un perfil temporal con nombre único timestamp
+    ✅ Resoluciones móviles reales
     """
-    timestamp = int(time.time() * 1000)  # timestamp en milisegundos
+    viewports = [
+        {"width": 375, "height": 667},   # iPhone SE/8
+        {"width": 390, "height": 844},   # iPhone 12/13/14
+        {"width": 414, "height": 896},   # iPhone 11/XR
+        {"width": 360, "height": 800},   # Android común
+        {"width": 412, "height": 915},   # Pixel
+    ]
+    return random.choice(viewports)
+
+def crear_perfil_movil_temporal():
+    """
+    ✅ Crea perfil temporal específico para móvil
+    """
+    timestamp = int(time.time() * 1000)
     random_id = random.randint(1000, 9999)
-    temp_dir = tempfile.mkdtemp(prefix=f"nadro_clean_{timestamp}_{random_id}_")
+    temp_dir = tempfile.mkdtemp(prefix=f"nadro_mobile_{timestamp}_{random_id}_")
     
-    logger.info(f"🆕 Perfil temporal único creado: {temp_dir}")
+    logger.info(f"📱 Perfil móvil temporal creado: {temp_dir}")
     return temp_dir
 
-def limpiar_perfil_temporal_agresivo(profile_path):
+def limpiar_perfil_movil(profile_path):
     """
-    ✅ FUNCIÓN MEJORADA: Elimina el perfil temporal de forma agresiva
+    ✅ Limpia perfil móvil temporal
     """
     try:
         if profile_path and Path(profile_path).exists():
-            # Intentar múltiples veces con diferentes métodos
-            max_attempts = 3
-            for attempt in range(max_attempts):
-                try:
-                    # Método 1: shutil.rmtree con parámetros agresivos
-                    shutil.rmtree(profile_path, ignore_errors=True)
-                    
-                    # Verificar si se eliminó
-                    if not Path(profile_path).exists():
-                        logger.info(f"✅ Perfil temporal eliminado (intento {attempt + 1}): {profile_path}")
-                        return
-                    
-                    # Método 2: Eliminar archivos individualmente
-                    if attempt == 1:
-                        for root, dirs, files in os.walk(profile_path, topdown=False):
-                            for file in files:
-                                try:
-                                    os.remove(os.path.join(root, file))
-                                except:
-                                    pass
-                            for dir in dirs:
-                                try:
-                                    os.rmdir(os.path.join(root, dir))
-                                except:
-                                    pass
-                        os.rmdir(profile_path)
-                    
-                    time.sleep(0.5)  # Pequeña pausa entre intentos
-                    
-                except Exception as e:
-                    logger.debug(f"Intento {attempt + 1} falló: {e}")
-                    if attempt == max_attempts - 1:
-                        # Último intento con comando del sistema
-                        try:
-                            if os.name == 'nt':  # Windows
-                                os.system(f'rmdir /s /q "{profile_path}"')
-                            else:  # Linux/Mac
-                                os.system(f'rm -rf "{profile_path}"')
-                        except:
-                            pass
-            
-            # Verificación final
-            if Path(profile_path).exists():
-                logger.warning(f"⚠️ No se pudo eliminar completamente: {profile_path}")
-            else:
-                logger.info(f"✅ Perfil temporal eliminado exitosamente: {profile_path}")
-                
+            shutil.rmtree(profile_path, ignore_errors=True)
+            logger.info(f"🗑️ Perfil móvil eliminado: {profile_path}")
     except Exception as e:
-        logger.warning(f"⚠️ Error eliminando perfil temporal: {e}")
+        logger.warning(f"⚠️ Error eliminando perfil móvil: {e}")
 
-def limpiar_sesion_nadro_extrema(driver):
+def configurar_headers_moviles(driver):
     """
-    ✅ FUNCIÓN NUEVA: Limpieza extrema específica para NADRO
-    Simula exactamente lo que NADRO recomienda: "Desde siempre"
+    ✅ Configura headers específicos de navegadores móviles
     """
     try:
-        logger.info("🧹 ===== LIMPIEZA EXTREMA ESTILO NADRO =====")
+        # Headers que envían los navegadores móviles reales
+        mobile_headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0"
+        }
         
-        # 1. Limpiar todas las cookies
-        logger.info("🍪 Limpiando TODAS las cookies...")
-        driver.delete_all_cookies()
-        
-        # 2. Limpiar localStorage
-        logger.info("💾 Limpiando localStorage...")
-        driver.execute_script("window.localStorage.clear();")
-        
-        # 3. Limpiar sessionStorage  
-        logger.info("🗂️ Limpiando sessionStorage...")
-        driver.execute_script("window.sessionStorage.clear();")
-        
-        # 4. Limpiar indexedDB agresivamente
-        logger.info("🗄️ Limpiando indexedDB...")
-        driver.execute_script("""
-            // Limpiar todas las bases de datos IndexedDB
-            if (window.indexedDB) {
-                // Método 1: Limpiar bases de datos conocidas
-                const commonDBs = ['NADRO', 'nadro', 'cache', 'session', 'user_data', 'vtex', 'VTEX'];
-                commonDBs.forEach(dbName => {
-                    try {
-                        const deleteReq = indexedDB.deleteDatabase(dbName);
-                        deleteReq.onsuccess = () => console.log('DB deleted:', dbName);
-                        deleteReq.onerror = () => console.log('DB delete failed:', dbName);
-                    } catch(e) { console.log('Error deleting DB:', dbName, e); }
-                });
-                
-                // Método 2: Obtener lista de todas las DBs y eliminarlas
-                try {
-                    if (indexedDB.databases) {
-                        indexedDB.databases().then(databases => {
-                            databases.forEach(db => {
-                                try {
-                                    indexedDB.deleteDatabase(db.name);
-                                    console.log('Auto-detected DB deleted:', db.name);
-                                } catch(e) { console.log('Error auto-deleting DB:', db.name, e); }
-                            });
-                        });
-                    }
-                } catch(e) { console.log('Error listing databases:', e); }
-            }
-        """)
-        
-        # 5. Limpiar WebSQL (si está disponible)
-        logger.info("🗃️ Limpiando WebSQL...")
-        driver.execute_script("""
-            if (window.openDatabase) {
-                try {
-                    // Limpiar bases de datos WebSQL comunes
-                    const webSQLDBs = ['NADRO', 'cache', 'session'];
-                    webSQLDBs.forEach(dbName => {
-                        try {
-                            const db = openDatabase(dbName, '', '', '');
-                            db.transaction(tx => {
-                                tx.executeSql('DROP TABLE IF EXISTS data');
-                                tx.executeSql('DROP TABLE IF EXISTS cache');  
-                                tx.executeSql('DROP TABLE IF EXISTS session');
-                            });
-                        } catch(e) { console.log('WebSQL clean error:', dbName, e); }
-                    });
-                } catch(e) { console.log('WebSQL not supported or error:', e); }
-            }
-        """)
-        
-        # 6. Limpiar Application Cache
-        logger.info("📦 Limpiando Application Cache...")
-        driver.execute_script("""
-            if (window.applicationCache) {
-                try {
-                    window.applicationCache.update();
-                    console.log('Application cache updated');
-                } catch(e) { console.log('Application cache error:', e); }
-            }
-        """)
-        
-        # 7. Limpiar Cache API (Service Workers)
-        logger.info("🔧 Limpiando Cache API...")
-        driver.execute_script("""
-            if ('caches' in window) {
-                caches.keys().then(cacheNames => {
-                    cacheNames.forEach(cacheName => {
-                        caches.delete(cacheName).then(success => {
-                            console.log('Cache deleted:', cacheName, success);
-                        });
-                    });
-                });
-            }
-        """)
-        
-        # 8. Desregistrar Service Workers
-        logger.info("👷 Desregistrando Service Workers...")
-        driver.execute_script("""
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.getRegistrations().then(registrations => {
-                    registrations.forEach(registration => {
-                        registration.unregister().then(success => {
-                            console.log('Service Worker unregistered:', success);
-                        });
-                    });
-                });
-            }
-        """)
-        
-        # 9. Limpiar variables globales de NADRO/VTEX
-        logger.info("🌐 Limpiando variables globales...")
-        driver.execute_script("""
-            // Limpiar variables globales comunes de VTEX/NADRO
-            const globalVarsToDelete = [
-                'vtex', 'VTEX', 'nadro', 'NADRO', '_satellite', 'dataLayer',
-                'gtag', 'ga', 'fbq', '__vtex', '__nadro'
-            ];
-            
-            globalVarsToDelete.forEach(varName => {
-                try {
-                    if (window[varName]) {
-                        delete window[varName];
-                        console.log('Global var deleted:', varName);
-                    }
-                } catch(e) { console.log('Error deleting global var:', varName, e); }
-            });
-        """)
-        
-        # 10. Usar Chrome DevTools Protocol para limpiar caché si está disponible
-        logger.info("🔧 Limpiando caché via CDP...")
+        # Aplicar headers usando CDP si está disponible
         try:
-            # Network.clearBrowserCache
-            driver.execute_cdp_cmd('Network.clearBrowserCache', {})
-            logger.info("✅ Caché de navegador limpiado via CDP")
-            
-            # Storage.clearDataForOrigin 
-            driver.execute_cdp_cmd('Storage.clearDataForOrigin', {
-                'origin': 'https://i22.nadro.mx',
-                'storageTypes': 'all'
+            driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": driver.execute_script("return navigator.userAgent;"),
+                "acceptLanguage": "es-MX,es;q=0.9,en;q=0.8",
+                "platform": "iPhone" if "iPhone" in driver.execute_script("return navigator.userAgent;") else "Linux armv7l"
             })
-            logger.info("✅ Datos de origen NADRO limpiados via CDP")
+            
+            driver.execute_cdp_cmd('Network.enable', {})
+            logger.info("✅ Headers móviles configurados via CDP")
             
         except Exception as e:
-            logger.debug(f"CDP limpieza no disponible: {e}")
+            logger.debug(f"CDP headers no disponibles: {e}")
         
-        # 11. Forzar refresco completo de página
-        logger.info("🔄 Refrescando navegador...")
-        driver.refresh()
-        time.sleep(2)
-        
-        # 12. Verificar limpieza
-        logger.info("🔍 Verificando limpieza...")
-        storage_check = driver.execute_script("""
-            const checks = {
-                cookies: document.cookie.length,
-                localStorage: Object.keys(localStorage).length,
-                sessionStorage: Object.keys(sessionStorage).length
-            };
-            return checks;
+        # Inyectar propiedades móviles en JavaScript
+        driver.execute_script("""
+            // Simular propiedades de dispositivo móvil
+            Object.defineProperty(navigator, 'maxTouchPoints', {
+                get: () => 5
+            });
+            
+            Object.defineProperty(navigator, 'platform', {
+                get: () => navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Linux armv7l'
+            });
+            
+            // Simular eventos touch
+            window.TouchEvent = window.TouchEvent || function(){};
+            
+            // Simular conexión móvil
+            if (navigator.connection) {
+                Object.defineProperty(navigator.connection, 'effectiveType', {
+                    get: () => '4g'
+                });
+            }
+            
+            console.log('📱 Propiedades móviles inyectadas');
         """)
         
-        logger.info(f"📊 Estado post-limpieza: {storage_check}")
-        
-        logger.info("✅ ===== LIMPIEZA EXTREMA NADRO COMPLETADA =====")
+        logger.info("📱 Configuración móvil aplicada exitosamente")
         
     except Exception as e:
-        logger.error(f"❌ Error durante limpieza extrema NADRO: {e}")
+        logger.error(f"❌ Error configurando headers móviles: {e}")
 
-def inicializar_navegador_ultra_limpio(headless=True):
+def inicializar_navegador_movil(headless=True):
     """
-    ✅ FUNCIÓN NUEVA: Inicializa navegador con configuración ultra limpia
-    Implementa todas las recomendaciones de NADRO
+    ✅ FUNCIÓN PRINCIPAL: Inicializa navegador simulando móvil
     """
-    # PASO 1: Limpieza previa del sistema
-    limpiar_datos_chrome_sistema()
-    time.sleep(1)
+    # Crear perfil temporal para móvil
+    profile_path = crear_perfil_movil_temporal()
     
-    # PASO 2: Crear perfil temporal único
-    profile_path = crear_perfil_temporal_unico()
+    # Seleccionar configuración móvil aleatoria
+    user_agent = random.choice(get_mobile_user_agents())
+    viewport = get_mobile_viewport()
+    
+    logger.info(f"📱 Simulando: {user_agent[:50]}...")
+    logger.info(f"📐 Resolución: {viewport['width']}x{viewport['height']}")
     
     if UNDETECTED_AVAILABLE:
         try:
-            logger.info("🔧 Iniciando navegador ULTRA LIMPIO (undetected)...")
+            logger.info("🔧 Iniciando navegador móvil (undetected)...")
             
             options = uc.ChromeOptions()
             
-            # ✅ CRÍTICO: Configuración ultra limpia
+            # ✅ CONFIGURACIÓN MÓVIL CRÍTICA
+            options.add_argument(f"--user-agent={user_agent}")
+            options.add_argument(f"--window-size={viewport['width']},{viewport['height']}")
             options.add_argument(f"--user-data-dir={profile_path}")
-            options.add_argument("--incognito")  # Modo incógnito
-            options.add_argument("--no-first-run")
-            options.add_argument("--no-default-browser-check")
             
-            # ✅ NUEVO: Deshabilitar TODA persistencia de datos
+            # ✅ SIMULAR DISPOSITIVO MÓVIL
+            options.add_argument("--disable-desktop-notifications")
+            options.add_argument("--disable-web-security")  # Para mejor simulación móvil
+            options.add_argument("--allow-running-insecure-content")
+            
+            # Configuración de limpieza (mantenida)
+            options.add_argument("--incognito")
+            options.add_argument("--no-first-run")
             options.add_argument("--disable-background-networking")
             options.add_argument("--disable-sync")
-            options.add_argument("--disable-translate")
-            options.add_argument("--disable-ipc-flooding-protection")
-            options.add_argument("--disable-client-side-phishing-detection")
-            options.add_argument("--disable-component-update")
-            options.add_argument("--disable-default-apps")
-            options.add_argument("--disable-domain-reliability")
-            options.add_argument("--disable-features=TranslateUI,BlinkGenPropertyTrees")
             
-            # ✅ NUEVO: Forzar limpieza de datos al inicio y salida
-            options.add_argument("--aggressive-cache-discard")
-            options.add_argument("--disable-background-timer-throttling")
-            options.add_argument("--disable-renderer-backgrounding")
-            
-            # ✅ NUEVO: Configuración de cookies y storage
-            options.add_argument("--disable-web-security")  # Para poder limpiar mejor
-            options.add_argument("--disable-features=VizDisplayCompositor")
-            
-            # Configuración anti-detección (mantener lo que funcionaba)
+            # Configuración anti-detección
             options.add_argument("--disable-blink-features=AutomationControlled")
             options.add_argument("--disable-extensions")
             options.add_argument("--disable-popup-blocking")
-            options.add_argument("--disable-notifications")
             
-            # Configuración headless
+            # Configuración headless si es necesario
             if headless:
                 options.add_argument("--headless=new")
                 options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--disable-gpu")
             
-            # Ventana con tamaño aleatorio
-            width = random.randint(1100, 1300)
-            height = random.randint(700, 900)
-            options.add_argument(f"--window-size={width},{height}")
-            
-            # User Agent rotativo
-            user_agents = [
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            ]
-            options.add_argument(f"--user-agent={random.choice(user_agents)}")
+            # ✅ CONFIGURACIÓN EXPERIMENTAL MÓVIL
+            mobile_emulation = {
+                "deviceMetrics": {
+                    "width": viewport['width'],
+                    "height": viewport['height'],
+                    "pixelRatio": 2.0 if "iPhone" in user_agent else 1.0
+                },
+                "userAgent": user_agent,
+                "touch": True,
+                "mobile": True
+            }
+            options.add_experimental_option("mobileEmulation", mobile_emulation)
             
             # Inicializar navegador
             driver = uc.Chrome(options=options)
             
-            # ✅ CRÍTICO: Limpieza inmediata después de inicializar
+            # ✅ CONFIGURACIÓN POST-INICIALIZACIÓN
             time.sleep(1)
-            limpiar_sesion_nadro_extrema(driver)
             
-            logger.info("✅ Navegador ULTRA LIMPIO inicializado (undetected)")
+            # Configurar headers móviles
+            configurar_headers_moviles(driver)
+            
+            # Verificar configuración móvil
+            mobile_check = driver.execute_script("""
+                return {
+                    userAgent: navigator.userAgent,
+                    platform: navigator.platform,
+                    maxTouchPoints: navigator.maxTouchPoints,
+                    width: window.screen.width,
+                    height: window.screen.height,
+                    hasTouchEvent: 'TouchEvent' in window
+                };
+            """)
+            
+            logger.info(f"📱 Verificación móvil: {mobile_check}")
+            
+            logger.info("✅ Navegador móvil inicializado (undetected)")
             return driver, profile_path
             
         except Exception as e:
-            logger.error(f"❌ Error inicializando navegador ultra limpio (undetected): {e}")
-            limpiar_perfil_temporal_agresivo(profile_path)
+            logger.error(f"❌ Error inicializando navegador móvil (undetected): {e}")
+            limpiar_perfil_movil(profile_path)
             logger.info("Intentando con navegador estándar...")
     
     # Respaldo con Selenium estándar
     try:
         options = webdriver.ChromeOptions() if not UNDETECTED_AVAILABLE else Options()
         
-        # Aplicar TODAS las mismas configuraciones ultra limpias
+        # Aplicar TODA la configuración móvil
+        options.add_argument(f"--user-agent={user_agent}")
+        options.add_argument(f"--window-size={viewport['width']},{viewport['height']}")
         options.add_argument(f"--user-data-dir={profile_path}")
         options.add_argument("--incognito")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-background-networking")
-        options.add_argument("--disable-sync")
-        options.add_argument("--disable-translate")
-        options.add_argument("--aggressive-cache-discard")
+        options.add_argument("--disable-desktop-notifications")
         
         if headless:
             options.add_argument("--headless=new")
@@ -487,17 +282,28 @@ def inicializar_navegador_ultra_limpio(headless=True):
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-notifications")
         options.add_argument("--disable-blink-features=AutomationControlled")
         
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
+        # Emulación móvil
+        mobile_emulation = {
+            "deviceMetrics": {
+                "width": viewport['width'],
+                "height": viewport['height'],
+                "pixelRatio": 2.0 if "iPhone" in user_agent else 1.0
+            },
+            "userAgent": user_agent,
+            "touch": True,
+            "mobile": True
+        }
+        options.add_experimental_option("mobileEmulation", mobile_emulation)
+        
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # JavaScript anti-detección
+        # Anti-detección
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": """
                 Object.defineProperty(navigator, 'webdriver', {
@@ -506,136 +312,53 @@ def inicializar_navegador_ultra_limpio(headless=True):
             """
         })
         
-        # ✅ CRÍTICO: Limpieza inmediata
+        # Configurar headers móviles
         time.sleep(1)
-        limpiar_sesion_nadro_extrema(driver)
+        configurar_headers_moviles(driver)
         
-        logger.info("✅ Navegador ULTRA LIMPIO inicializado (estándar)")
+        logger.info("✅ Navegador móvil inicializado (estándar)")
         return driver, profile_path
         
     except Exception as e:
-        logger.error(f"❌ Error inicializando navegador ultra limpio (estándar): {e}")
-        limpiar_perfil_temporal_agresivo(profile_path)
+        logger.error(f"❌ Error inicializando navegador móvil (estándar): {e}")
+        limpiar_perfil_movil(profile_path)
         return None, None
 
-def safe_driver_quit_ultra(driver, profile_path):
+def safe_driver_quit_movil(driver, profile_path):
     """
-    ✅ FUNCIÓN NUEVA: Cierre ultra seguro con limpieza extrema
+    ✅ Cierre seguro del navegador móvil
     """
     try:
         if driver:
-            logger.info("🧹 Realizando limpieza final extrema...")
-            
-            # Última limpieza antes de cerrar
-            try:
-                limpiar_sesion_nadro_extrema(driver)
-                time.sleep(1)
-            except Exception as e:
-                logger.debug(f"Error en limpieza final: {e}")
-            
-            # Cerrar todas las ventanas
-            try:
-                for handle in driver.window_handles:
-                    driver.switch_to.window(handle)
-                    driver.close()
-            except:
-                pass
-            
-            # Cerrar navegador
             driver.quit()
-            logger.info("✅ Navegador cerrado")
-            
-        # Esperar liberación de archivos
-        time.sleep(3)
+            logger.info("✅ Navegador móvil cerrado")
         
-        # Limpiar perfil temporal agresivamente
-        limpiar_perfil_temporal_agresivo(profile_path)
-        
-        # Limpieza adicional del sistema
-        limpiar_datos_chrome_sistema()
+        time.sleep(2)
+        limpiar_perfil_movil(profile_path)
         
     except Exception as e:
-        logger.error(f"❌ Error cerrando navegador ultra: {e}")
-        # Forzar cierre de procesos
-        try:
-            import psutil
-            for proc in psutil.process_iter(['pid', 'name']):
-                try:
-                    if 'chrome' in proc.info['name'].lower():
-                        proc.kill()
-                except:
-                    pass
-        except:
-            # Método alternativo si psutil no está disponible
-            try:
-                if os.name == 'nt':  # Windows
-                    os.system("taskkill /f /im chromedriver.exe 2>nul")
-                    os.system("taskkill /f /im chrome.exe 2>nul")
-                else:  # Linux/Mac
-                    os.system("pkill -f chromedriver 2>/dev/null")
-                    os.system("pkill -f chrome 2>/dev/null")
-            except:
-                pass
+        logger.error(f"❌ Error cerrando navegador móvil: {e}")
 
 # ===============================
-# SISTEMA DE SIMILITUD (mantenemos el existente)
+# FUNCIONES DE BÚSQUEDA (adaptadas para móvil)
 # ===============================
-
-def normalizar_texto_nadro_similitud(texto):
-    """Normalización específica para comparación en NADRO."""
-    if not texto:
-        return ""
-    
-    # Convertir a minúsculas y quitar acentos
-    texto = texto.lower()
-    texto = unicodedata.normalize('NFD', texto)
-    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
-    
-    # Normalizaciones específicas de farmacéuticos
-    replacements = {
-        'acetaminofen': 'paracetamol',
-        'acetaminofén': 'paracetamol', 
-        'miligramos': 'mg',
-        'mililitros': 'ml',
-        'microgramos': 'mcg',
-        'gramos': 'g',
-        'tabletas': 'tab',
-        'comprimidos': 'tab',
-        'capsulas': 'cap',
-        'cápsulas': 'cap',
-        'inyectable': 'iny',
-        'solucion': 'sol',
-        'solución': 'sol',
-        'jarabe': 'jar'
-    }
-    
-    for original, replacement in replacements.items():
-        texto = re.sub(rf'\b{original}\b', replacement, texto)
-    
-    # Eliminar caracteres especiales excepto espacios y números
-    texto = re.sub(r'[^\w\s]', ' ', texto)
-    texto = re.sub(r'\s+', ' ', texto).strip()
-    
-    return texto
 
 def normalizar_busqueda_nadro(producto_nombre):
     """
-    Normaliza la búsqueda para NADRO: nombre + cantidad separados.
+    Normaliza la búsqueda para NADRO (misma lógica)
     """
     if not producto_nombre:
         return producto_nombre
     
-    # Convertir a minúsculas para procesamiento
     texto = producto_nombre.lower().strip()
     
-    # Extraer cantidad (número + unidad)
+    # Extraer cantidad
     patron_cantidad = r'(\d+(?:\.\d+)?)\s*(mg|g|ml|mcg|ui|iu|%|cc|mgs)'
     match_cantidad = re.search(patron_cantidad, texto)
     cantidad = ""
     if match_cantidad:
         numero = match_cantidad.group(1)
         unidad = match_cantidad.group(2)
-        # Normalizar unidad
         if unidad == 'mgs':
             unidad = 'mg'
         cantidad = f"{numero} {unidad}"
@@ -649,24 +372,18 @@ def normalizar_busqueda_nadro(producto_nombre):
         'ampolla', 'vial', 'frasco', 'sobre', 'tubo'
     ]
     
-    # Dividir en palabras
     palabras = texto.split()
     palabras_filtradas = []
     
     for palabra in palabras:
-        # Saltar números y unidades
         if re.match(r'\d+(?:\.\d+)?', palabra) or palabra in ['mg', 'g', 'ml', 'mcg', 'ui', 'iu', '%', 'cc', 'mgs']:
             continue
-        # Saltar números con unidades pegadas
         if re.match(r'\d+(?:\.\d+)?(mg|g|ml|mcg|ui|iu|%|cc|mgs)', palabra):
             continue
-        # Saltar formas farmacéuticas
         if palabra in formas_farmaceuticas:
             continue
-        # Mantener palabras del nombre
         palabras_filtradas.append(palabra)
     
-    # Tomar las primeras 1-2 palabras del nombre
     if palabras_filtradas:
         if len(palabras_filtradas) == 1:
             nombre = palabras_filtradas[0]
@@ -675,49 +392,44 @@ def normalizar_busqueda_nadro(producto_nombre):
     else:
         nombre = producto_nombre.split()[0] if producto_nombre.split() else producto_nombre
     
-    # Combinar nombre + cantidad
     if cantidad:
         resultado = f"{nombre} {cantidad}"
     else:
         resultado = nombre
     
-    logger.info(f"[NADRO] Normalización: '{producto_nombre}' → '{resultado}'")
+    logger.info(f"[NADRO MÓVIL] Normalización: '{producto_nombre}' → '{resultado}'")
     return resultado
 
-# ===============================
-# FUNCIONES DE BÚSQUEDA (mantenemos la lógica existente)
-# ===============================
-
-def buscar_producto(driver, nombre_producto):
+def buscar_producto_movil(driver, nombre_producto):
     """
-    Busca un producto en NADRO (lógica mantenida, solo mejorada la limpieza)
+    ✅ Búsqueda adaptada para navegador móvil
     """
     try:
-        logger.info(f"🔍 Buscando producto: {nombre_producto}")
+        logger.info(f"📱 Buscando producto en modo móvil: {nombre_producto}")
         
-        # Verificar que el navegador esté limpio
-        storage_state = driver.execute_script("""
+        # Verificar que estamos simulando móvil correctamente
+        mobile_verification = driver.execute_script("""
             return {
-                cookies: document.cookie.length,
-                localStorage: Object.keys(localStorage).length,
-                sessionStorage: Object.keys(sessionStorage).length
+                userAgent: navigator.userAgent.substring(0, 50),
+                isMobile: /Mobi|Android/i.test(navigator.userAgent),
+                touchPoints: navigator.maxTouchPoints,
+                screenWidth: window.screen.width
             };
         """)
-        logger.info(f"📊 Estado del navegador antes de búsqueda: {storage_state}")
+        logger.info(f"📱 Verificación móvil: {mobile_verification}")
         
-        # Continuar con la lógica de búsqueda existente...
-        # (mantener toda la lógica de buscar_producto del código original)
+        time.sleep(5)  # Espera inicial para carga
         
-        time.sleep(5)
-        
-        # --- 1) Encontrar el campo de búsqueda ---
+        # Buscar campo de búsqueda (mismo que antes)
         search_selectors = [
-            "input[placeholder='Buscar...']",
+            "input[placeholder*='Buscar']",
+            "input[placeholder*='buscar']",
             "input.vtex-styleguide-9-x-input",
             "div.vtex-store-components-3-x-searchBarContainer input",
             "input[type='text'][placeholder]",
             "div.vtex-search-2-x-searchBar input"
         ]
+        
         search_field = None
         for selector in search_selectors:
             try:
@@ -725,6 +437,7 @@ def buscar_producto(driver, nombre_producto):
                 for el in elems:
                     if el.is_displayed():
                         search_field = el
+                        logger.info(f"📱 Campo de búsqueda encontrado: {selector}")
                         break
                 if search_field:
                     break
@@ -732,33 +445,49 @@ def buscar_producto(driver, nombre_producto):
                 continue
                 
         if not search_field:
-            logger.error("❌ No se encontró campo de búsqueda")
-            return {"error": "No se pudo encontrar el campo de búsqueda", "productos": []}
+            logger.error("❌ No se encontró campo de búsqueda en modo móvil")
+            return {"error": "Campo de búsqueda no encontrado", "productos": []}
 
-        # --- 2) Buscar producto ---
+        # ✅ INTERACCIÓN MÓVIL: Simular touch y typing más lento
+        logger.info("📱 Simulando interacción móvil...")
+        
+        # Scroll hasta el campo de búsqueda
+        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_field)
+        time.sleep(1)
+        
+        # Simular tap en móvil
         driver.execute_script("arguments[0].focus();", search_field)
-        time.sleep(0.5)
+        time.sleep(0.8)  # Delay móvil más largo
+        
+        # Limpiar campo
         search_field.clear()
         time.sleep(0.5)
         
-        # Escribir con delays humanos
-        for c in nombre_producto:
-            search_field.send_keys(c)
-            time.sleep(random.uniform(0.05, 0.2))
+        # ✅ TYPING MÓVIL: Más lento, simula escritura en pantalla táctil
+        logger.info(f"📱 Escribiendo en modo móvil: {nombre_producto}")
+        for i, char in enumerate(nombre_producto):
+            search_field.send_keys(char)
+            # Delays variables más largos para simular typing móvil
+            delay = random.uniform(0.1, 0.4)
+            time.sleep(delay)
+            
+            # Pausa más larga cada 3-4 caracteres (simula corrección/pensamiento)
+            if (i + 1) % 4 == 0:
+                time.sleep(random.uniform(0.3, 0.8))
         
-        time.sleep(1)
+        time.sleep(1.5)  # Pausa antes de enviar
         search_field.send_keys(Keys.RETURN)
-
-        # --- 3) Esperar y procesar resultados ---
-        logger.info("⏳ Esperando resultados...")
-        time.sleep(8)
+        
+        # ✅ ESPERA MÓVIL: Los móviles son más lentos
+        logger.info("📱 Esperando resultados (timing móvil)...")
+        time.sleep(10)  # Espera más larga para móviles
         
         # Tomar screenshot para debug
         debug_dir = Path("debug_screenshots")
         debug_dir.mkdir(exist_ok=True)
-        driver.save_screenshot(str(debug_dir / "resultados_busqueda_ultra_limpio.png"))
+        driver.save_screenshot(str(debug_dir / "resultados_busqueda_movil.png"))
         
-        # Buscar productos en la página
+        # Buscar productos (misma lógica)
         product_selectors = [
             "div.vtex-search-result-3-x-galleryItem",
             "article.vtex-product-summary-2-x-element", 
@@ -772,21 +501,22 @@ def buscar_producto(driver, nombre_producto):
                 elems = driver.find_elements(By.CSS_SELECTOR, sel)
                 if elems:
                     productos = elems
-                    logger.info(f"✅ Encontrados {len(elems)} productos con selector: {sel}")
+                    logger.info(f"📱 Encontrados {len(elems)} productos móviles: {sel}")
                     break
             except:
                 continue
 
         if not productos:
-            logger.warning("⚠️ No se encontraron productos")
+            logger.warning("⚠️ No se encontraron productos en modo móvil")
             return {"warning": "No se encontraron productos", "productos": []}
 
-        # Procesar productos encontrados
+        # Procesar productos con delays móviles
         resultados = []
-        for i, prod in enumerate(productos[:5]):  # Limitar a 5 para evitar timeout
+        for i, prod in enumerate(productos[:5]):
             try:
-                driver.execute_script("arguments[0].scrollIntoView({behavior:'smooth',block:'center'});", prod)
-                time.sleep(0.5)
+                # ✅ SCROLL MÓVIL: Suave y lento
+                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", prod)
+                time.sleep(1.2)  # Delay móvil
                 
                 info = {}
                 
@@ -796,6 +526,7 @@ def buscar_producto(driver, nombre_producto):
                         el = prod.find_element(By.CSS_SELECTOR, sel)
                         if el.text.strip():
                             info["nombre"] = el.text.strip()
+                            logger.info(f"📱 Nombre móvil: {info['nombre']}")
                             break
                     except:
                         pass
@@ -815,16 +546,16 @@ def buscar_producto(driver, nombre_producto):
                             txt = el.text.strip()
                             if "$" in txt and any(c.isdigit() for c in txt):
                                 info["precio_farmacia"] = txt
+                                logger.info(f"📱 Precio móvil: {txt}")
                                 break
                         if info.get("precio_farmacia"):
                             break
                     except:
                         pass
 
-                # Detectar disponibilidad por botón COMPRAR
+                # Detectar disponibilidad (misma lógica)
                 disponibilidad_detectada = False
                 
-                # Buscar botones COMPRAR
                 try:
                     xpath_comprar = [
                         ".//button[contains(translate(text(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'COMPRAR')]",
@@ -846,71 +577,77 @@ def buscar_producto(driver, nombre_producto):
                                     else:
                                         info["existencia"] = "Disponible"
                                     disponibilidad_detectada = True
+                                    logger.info(f"📱 Disponibilidad móvil: {info['existencia']}")
                                     break
                         if disponibilidad_detectada:
                             break
                 except Exception as e:
-                    logger.debug(f"Error detectando disponibilidad: {e}")
+                    logger.debug(f"Error disponibilidad móvil: {e}")
 
                 if not disponibilidad_detectada:
                     info["existencia"] = "Estado desconocido"
 
                 if info.get("nombre"):
                     resultados.append(info)
+                    logger.info(f"📱 Producto móvil #{i+1}: {info['nombre']} - {info.get('precio_farmacia', 'N/D')} - {info['existencia']}")
                 
             except Exception as e:
-                logger.error(f"❌ Error procesando producto {i+1}: {e}")
+                logger.error(f"❌ Error procesando producto móvil {i+1}: {e}")
                 continue
 
         if resultados:
-            logger.info(f"✅ {len(resultados)} productos procesados exitosamente")
+            logger.info(f"✅ {len(resultados)} productos procesados en modo móvil")
             return {"success": True, "productos": resultados}
         else:
-            return {"warning": "No se pudieron procesar productos", "productos": []}
+            return {"warning": "No se pudieron procesar productos móviles", "productos": []}
 
     except Exception as e:
-        logger.error(f"❌ Error en búsqueda: {e}")
+        logger.error(f"❌ Error en búsqueda móvil: {e}")
         return {"error": str(e), "productos": []}
 
-def login_and_search_ultra_limpio(producto):
+def login_and_search_movil(producto):
     """
-    ✅ FUNCIÓN PRINCIPAL CON LIMPIEZA EXTREMA PARA NADRO
+    ✅ FUNCIÓN PRINCIPAL: Login y búsqueda en modo móvil
     """
     driver = None
     profile_path = None
     
     try:
-        logger.info("🚀 ===== INICIANDO SESIÓN ULTRA LIMPIA PARA NADRO =====")
+        logger.info("📱 ===== INICIANDO SESIÓN EN MODO MÓVIL =====")
         
-        # Inicializar navegador ultra limpio
-        driver, profile_path = inicializar_navegador_ultra_limpio(headless=True)
+        # Inicializar navegador móvil
+        driver, profile_path = inicializar_navegador_movil(headless=True)
         if not driver:
-            return {"error": "No se pudo inicializar navegador ultra limpio", "productos": []}
+            return {"error": "No se pudo inicializar navegador móvil", "productos": []}
         
-        # Navegar con pausa
-        logger.info(f"🌐 Navegando a {MAIN_URL} con sesión limpia...")
+        # Navegar con timing móvil
+        logger.info(f"📱 Navegando a {MAIN_URL} en modo móvil...")
         driver.get(MAIN_URL)
-        time.sleep(random.uniform(4, 6))
+        time.sleep(random.uniform(5, 8))  # Móviles son más lentos
         
-        # Verificar estado de limpieza
-        storage_check = driver.execute_script("""
+        # Verificar carga móvil
+        page_info = driver.execute_script("""
             return {
-                cookies: document.cookie.length,
-                localStorage: Object.keys(localStorage).length,
-                sessionStorage: Object.keys(sessionStorage).length,
-                url: window.location.href
+                readyState: document.readyState,
+                userAgent: navigator.userAgent.substring(0, 60),
+                viewport: {width: window.innerWidth, height: window.innerHeight}
             };
         """)
-        logger.info(f"📊 Verificación de limpieza inicial: {storage_check}")
+        logger.info(f"📱 Estado página móvil: {page_info}")
         
-        # Buscar enlace de login
-        logger.info("🔍 Buscando acceso a login...")
+        # Buscar acceso a login (adaptado para móvil)
+        logger.info("📱 Buscando acceso a login en interfaz móvil...")
+        
+        # En móvil, el login puede estar en un menú hamburguesa
         login_selectors = [
             "a[href*='login']", 
             "a.vtex-login-2-x-button",
             "span:contains('Iniciar sesión')",
             "button:contains('Ingresar')",
-            "a:contains('Iniciar sesión')"
+            "a:contains('Iniciar sesión')",
+            ".menu-toggle",  # Menú hamburguesa
+            ".mobile-menu-button",
+            "[aria-label*='menu']"
         ]
         
         login_found = False
@@ -919,10 +656,13 @@ def login_and_search_ultra_limpio(producto):
                 elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 for element in elements:
                     if element.is_displayed():
-                        logger.info("🖱️ Accediendo a página de login...")
+                        logger.info(f"📱 Elemento login móvil encontrado: {selector}")
+                        # Scroll suave antes de hacer click
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                        time.sleep(1)
                         element.click()
                         login_found = True
-                        time.sleep(random.uniform(4, 6))
+                        time.sleep(random.uniform(5, 8))  # Espera móvil
                         break
                 if login_found:
                     break
@@ -930,52 +670,63 @@ def login_and_search_ultra_limpio(producto):
                 continue
         
         if not login_found:
-            logger.info("📍 Navegando directamente a URL de login...")
+            logger.info("📱 Navegando directamente a URL login móvil...")
             driver.get("https://i22.nadro.mx/login")
-            time.sleep(random.uniform(4, 6))
+            time.sleep(random.uniform(5, 8))
         
-        # Captura de debug
+        # Captura móvil
         debug_dir = Path("debug_screenshots") 
         debug_dir.mkdir(exist_ok=True)
-        driver.save_screenshot(str(debug_dir / "login_ultra_limpio.png"))
+        driver.save_screenshot(str(debug_dir / "login_movil.png"))
         
-        # PROCESO DE LOGIN
-        logger.info("🔐 Iniciando login ultra limpio...")
+        # ✅ PROCESO DE LOGIN MÓVIL
+        logger.info("📱 Iniciando login en modo móvil...")
         
         try:
-            # Campo usuario
-            username_field = WebDriverWait(driver, 15).until(
+            # Campo usuario (con mayor timeout para móvil)
+            username_field = WebDriverWait(driver, 20).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='text'], input[type='email'], #username, input[name='username']"))
             )
             
-            # Escribir usuario
-            logger.info(f"👤 Ingresando usuario: {USERNAME}")
+            # ✅ INTERACCIÓN MÓVIL USUARIO
+            logger.info(f"📱 Ingresando usuario móvil: {USERNAME}")
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", username_field)
+            time.sleep(1)
+            driver.execute_script("arguments[0].focus();", username_field)
+            time.sleep(0.8)
+            
             username_field.clear()
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(1)
             
-            for c in USERNAME:
-                username_field.send_keys(c)
-                time.sleep(random.uniform(0.1, 0.3))
-            
-            time.sleep(random.uniform(0.5, 1.5))
-            
-            # Campo contraseña
-            password_field = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='password'], #password, input[name='password']"))
-            )
-            
-            # Escribir contraseña
-            logger.info("🔒 Ingresando contraseña...")
-            password_field.clear()
-            time.sleep(random.uniform(0.5, 1.5))
-            
-            for c in PASSWORD:
-                password_field.send_keys(c)
-                time.sleep(random.uniform(0.1, 0.3))
+            # Typing móvil (más lento)
+            for char in USERNAME:
+                username_field.send_keys(char)
+                time.sleep(random.uniform(0.15, 0.4))
             
             time.sleep(random.uniform(1, 2))
             
-            # Botón login
+            # Campo contraseña
+            password_field = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='password'], #password, input[name='password']"))
+            )
+            
+            # ✅ INTERACCIÓN MÓVIL CONTRASEÑA
+            logger.info("📱 Ingresando contraseña móvil...")
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", password_field)
+            time.sleep(1)
+            driver.execute_script("arguments[0].focus();", password_field)
+            time.sleep(0.8)
+            
+            password_field.clear()
+            time.sleep(1)
+            
+            for char in PASSWORD:
+                password_field.send_keys(char)
+                time.sleep(random.uniform(0.15, 0.4))
+            
+            time.sleep(random.uniform(1.5, 2.5))
+            
+            # Botón login móvil
             button_selectors = [
                 "button[type='submit']",
                 "input[type='submit']",
@@ -996,22 +747,24 @@ def login_and_search_ultra_limpio(producto):
                 except:
                     continue
             
-            # Enviar login
+            # ✅ ENVIAR LOGIN MÓVIL
             if login_button:
-                logger.info("🚀 Enviando login...")
+                logger.info("📱 Enviando login móvil...")
+                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", login_button)
+                time.sleep(1)
                 login_button.click()
             else:
-                logger.info("⌨️ Enviando con Enter...")
+                logger.info("📱 Enviando con Enter móvil...")
                 password_field.send_keys(Keys.RETURN)
             
-            # ✅ ESPERA EXTENDIDA DESPUÉS DEL LOGIN (problema principal de NADRO)
-            logger.info("⏳ Esperando procesamiento de login ultra limpio (tiempo extendido)...")
-            time.sleep(15)  # Tiempo más largo para login ultra limpio
+            # ✅ ESPERA MÓVIL EXTENDIDA (crítico para NADRO)
+            logger.info("📱 Esperando procesamiento login móvil (timing extendido)...")
+            time.sleep(18)  # Tiempo AÚN MÁS largo para móviles
             
-            # Captura post-login
-            driver.save_screenshot(str(debug_dir / "post_login_ultra_limpio.png"))
+            # Captura post-login móvil
+            driver.save_screenshot(str(debug_dir / "post_login_movil.png"))
             
-            # Verificar login exitoso
+            # Verificar login móvil exitoso
             current_url = driver.current_url.lower()
             page_text = driver.page_source.lower()
             
@@ -1019,57 +772,51 @@ def login_and_search_ultra_limpio(producto):
                 "login" not in current_url or
                 "logout" in page_text or
                 "cerrar sesión" in page_text or
-                "mi cuenta" in page_text
+                "mi cuenta" in page_text or
+                "bienvenido" in page_text
             )
             
             if login_exitoso:
-                logger.info("✅ LOGIN ULTRA LIMPIO EXITOSO!")
+                logger.info("✅ LOGIN MÓVIL EXITOSO!")
                 
-                # Verificar estado final
-                final_storage = driver.execute_script("""
-                    return {
-                        cookies: document.cookie.length,
-                        localStorage: Object.keys(localStorage).length,
-                        sessionStorage: Object.keys(sessionStorage).length
-                    };
-                """)
-                logger.info(f"📊 Estado final del navegador: {final_storage}")
+                # Pequeña pausa adicional para estabilizar
+                time.sleep(3)
                 
-                # Proceder con búsqueda
-                resultado = buscar_producto(driver, producto)
+                # Proceder con búsqueda móvil
+                resultado = buscar_producto_movil(driver, producto)
                 return resultado
             else:
-                logger.error("❌ Login ultra limpio falló")
+                logger.error("❌ Login móvil falló")
                 
-                # Debug del error
+                # Debug móvil
                 debug_logs_dir = Path("debug_logs")
                 debug_logs_dir.mkdir(exist_ok=True)
-                with open(debug_logs_dir / "login_ultra_limpio_fallido.html", "w", encoding="utf-8") as f:
+                with open(debug_logs_dir / "login_movil_fallido.html", "w", encoding="utf-8") as f:
                     f.write(driver.page_source)
                 
-                return {"error": "Login ultra limpio falló", "productos": []}
+                return {"error": "Login móvil falló", "productos": []}
                 
         except Exception as e:
-            logger.error(f"❌ Error en proceso de login ultra limpio: {e}")
-            driver.save_screenshot(str(debug_dir / "error_login_ultra_limpio.png"))
-            return {"error": f"Error login ultra limpio: {str(e)}", "productos": []}
+            logger.error(f"❌ Error en proceso login móvil: {e}")
+            driver.save_screenshot(str(debug_dir / "error_login_movil.png"))
+            return {"error": f"Error login móvil: {str(e)}", "productos": []}
     
     except Exception as e:
-        logger.error(f"❌ Error general en login ultra limpio: {e}")
+        logger.error(f"❌ Error general login móvil: {e}")
         return {"error": str(e), "productos": []}
     
     finally:
-        # Limpieza final extrema
-        logger.info("🧹 Iniciando limpieza final extrema...")
-        safe_driver_quit_ultra(driver, profile_path)
+        # Limpieza móvil
+        logger.info("📱 Limpieza final móvil...")
+        safe_driver_quit_movil(driver, profile_path)
 
 def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
-    ✅ FUNCIÓN PRINCIPAL CORREGIDA: Implementa limpieza extrema siguiendo instrucciones NADRO
+    ✅ FUNCIÓN PRINCIPAL: Búsqueda NADRO simulando navegador móvil
     """
     try:
-        logger.info(f"🚀 BÚSQUEDA NADRO ULTRA LIMPIA: {nombre_medicamento}")
-        logger.info("📋 Implementando recomendaciones de NADRO: Borrar datos 'Desde siempre'")
+        logger.info(f"📱 BÚSQUEDA NADRO MODO MÓVIL: {nombre_medicamento}")
+        logger.info("🎯 ESTRATEGIA: Simular Safari/Chrome móvil (NADRO permite móviles)")
         
         # Normalizar búsqueda
         nombre_normalizado = normalizar_busqueda_nadro(nombre_medicamento)
@@ -1078,8 +825,8 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
         Path("debug_screenshots").mkdir(exist_ok=True)
         Path("debug_logs").mkdir(exist_ok=True)
         
-        # ✅ USAR FUNCIÓN ULTRA LIMPIA
-        resultado = login_and_search_ultra_limpio(nombre_normalizado)
+        # ✅ USAR FUNCIÓN MÓVIL
+        resultado = login_and_search_movil(nombre_normalizado)
         
         # Procesar resultado
         if "error" in resultado:
@@ -1100,7 +847,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "existencia": "0"
             }
         
-        # Formatear primer producto encontrado
+        # Formatear primer producto
         if resultado.get("productos"):
             primer_producto = resultado["productos"][0]
             
@@ -1125,19 +872,19 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 else:
                     info_producto["existencia"] = "0"
             
-            logger.info(f"✅ PRODUCTO ENCONTRADO CON SESIÓN ULTRA LIMPIA: {info_producto['nombre']} - {info_producto['precio']} - Stock: {info_producto['existencia']}")
+            logger.info(f"✅ PRODUCTO ENCONTRADO MODO MÓVIL: {info_producto['nombre']} - {info_producto['precio']} - Stock: {info_producto['existencia']}")
             return info_producto
         
         return {
             "nombre": nombre_medicamento,
-            "mensaje": "No se pudo procesar respuesta NADRO",
+            "mensaje": "No se pudo procesar respuesta NADRO móvil",
             "estado": "error",
             "fuente": "NADRO",
             "existencia": "0"
         }
         
     except Exception as e:
-        logger.error(f"❌ Error general NADRO ultra limpio: {e}")
+        logger.error(f"❌ Error general NADRO móvil: {e}")
         return {
             "nombre": nombre_medicamento,
             "error": str(e),
@@ -1149,26 +896,26 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
 if __name__ == "__main__":
     import sys
     
-    print("=== NADRO SCRAPER CON LIMPIEZA EXTREMA ===")
-    print("=== Implementa recomendaciones oficiales de NADRO ===")
-    print("=== Borrar datos 'Desde siempre' automáticamente ===")
+    print("📱 === NADRO SCRAPER MODO MÓVIL ===")
+    print("🎯 Simula Safari en iPhone / Chrome en Android")
+    print("✅ Evita bloqueo de navegadores desktop")
     
     if len(sys.argv) > 1:
         medicamento = " ".join(sys.argv[1:])
     else:
         medicamento = input("Nombre del medicamento: ")
     
-    print(f"\n🚀 Iniciando búsqueda ultra limpia para: {medicamento}")
-    print("⏳ Aplicando limpieza extrema de cookies/caché...")
+    print(f"\n📱 Iniciando búsqueda móvil para: {medicamento}")
+    print("⏳ Simulando navegador móvil...")
     
     resultado = buscar_info_medicamento(medicamento)
     
     if resultado.get('estado') == 'encontrado':
-        print(f"\n✅ ÉXITO CON LIMPIEZA EXTREMA")
+        print(f"\n✅ ÉXITO CON NAVEGADOR MÓVIL")
         print(f"Producto: {resultado['nombre']}")
         print(f"Precio: {resultado['precio']}")
         print(f"Stock: {resultado['existencia']}")
     else:
         print(f"\n❌ {resultado.get('mensaje', resultado.get('error', 'Error desconocido'))}")
     
-    print(f"\n🧹 Limpieza extrema completada.")
+    print(f"\n📱 Simulación móvil completada.")
