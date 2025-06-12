@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Módulo NADRO - VERSIÓN SIMULANDO NAVEGADOR MÓVIL
-✅ SOLUCIÓN: Simula Safari en iPhone / Chrome en Android
-✅ OBJETIVO: Evitar bloqueo de navegadores desktop
-✅ ESTRATEGIA: NADRO permite móviles pero bloquea desktop
+Módulo principal para el scraper de NADRO - VERSIÓN COMPLETA CORREGIDA
+Proporciona funcionalidad para buscar información de productos en el portal NADRO.
+ACTUALIZADO: Con normalización específica para NADRO (nombre + cantidad separados).
+REGLA NADRO: Nombre del principio activo + cantidad separada.
+MODIFICADO: Con sistema de similitud 80%+ para validación más flexible.
+✅ CORREGIDO: Limpieza completa de cookies, cache, localStorage y sessionStorage
 """
 
 import time
@@ -17,7 +19,6 @@ import re
 import unicodedata
 import tempfile
 import shutil
-import os
 from pathlib import Path
 
 # Configurar logging
@@ -30,11 +31,13 @@ logger = logging.getLogger(__name__)
 # Importar undetected_chromedriver solo si está disponible
 try:
     import undetected_chromedriver as uc
+    # Parche para evitar WinError 6 en el destructor de Chrome
     uc.Chrome.__del__ = lambda self: None
     UNDETECTED_AVAILABLE = True
 except ImportError:
     logger.warning("undetected_chromedriver no está disponible. Se usará selenium estándar.")
     UNDETECTED_AVAILABLE = False
+    # Importaciones alternativas si undetected_chromedriver no está disponible
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
@@ -49,321 +52,375 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 # Configuración
 USERNAME = "ventas@insumosjip.com"
 PASSWORD = "Edu2014$"
-MAIN_URL = "https://i22.nadro.mx/"
+MAIN_URL = "https://i22.nadro.mx/"  # URL base sin token de estado
 
 # ===============================
-# 📱 CONFIGURACIÓN MÓVIL PARA NADRO
+# ✅ NUEVAS FUNCIONES DE LIMPIEZA DE SESIÓN
 # ===============================
 
-def get_mobile_user_agents():
+def crear_perfil_temporal():
     """
-    ✅ User Agents reales de navegadores móviles que funcionan con NADRO
+    Crea un perfil temporal de Chrome que se eliminará automáticamente
     """
-    return [
-        # Safari en iPhone (iOS 17)
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        
-        # Chrome en Android
-        "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 12; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
-        
-        # Samsung Internet en Android
-        "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
-        
-        # Edge en Android
-        "Mozilla/5.0 (Linux; Android 12; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) EdgA/119.0.0.0 Mobile Safari/537.36"
-    ]
-
-def get_mobile_viewport():
-    """
-    ✅ Resoluciones móviles reales
-    """
-    viewports = [
-        {"width": 375, "height": 667},   # iPhone SE/8
-        {"width": 390, "height": 844},   # iPhone 12/13/14
-        {"width": 414, "height": 896},   # iPhone 11/XR
-        {"width": 360, "height": 800},   # Android común
-        {"width": 412, "height": 915},   # Pixel
-    ]
-    return random.choice(viewports)
-
-def crear_perfil_movil_temporal():
-    """
-    ✅ Crea perfil temporal específico para móvil
-    """
-    timestamp = int(time.time() * 1000)
-    random_id = random.randint(1000, 9999)
-    temp_dir = tempfile.mkdtemp(prefix=f"nadro_mobile_{timestamp}_{random_id}_")
-    
-    logger.info(f"📱 Perfil móvil temporal creado: {temp_dir}")
+    temp_dir = tempfile.mkdtemp(prefix="nadro_profile_")
+    logger.info(f"🆕 Perfil temporal creado: {temp_dir}")
     return temp_dir
 
-def limpiar_perfil_movil(profile_path):
+def limpiar_perfil_temporal(profile_path):
     """
-    ✅ Limpia perfil móvil temporal
+    Elimina completamente el perfil temporal
     """
     try:
         if profile_path and Path(profile_path).exists():
-            shutil.rmtree(profile_path, ignore_errors=True)
-            logger.info(f"🗑️ Perfil móvil eliminado: {profile_path}")
+            shutil.rmtree(profile_path)
+            logger.info(f"🧹 Perfil temporal eliminado: {profile_path}")
     except Exception as e:
-        logger.warning(f"⚠️ Error eliminando perfil móvil: {e}")
+        logger.warning(f"⚠️ Error eliminando perfil temporal: {e}")
 
-def configurar_headers_moviles(driver):
+def limpiar_sesion_completa(driver):
     """
-    ✅ Configura headers específicos de navegadores móviles
+    ✅ FUNCIÓN NUEVA: Limpia COMPLETAMENTE todos los datos de sesión
     """
     try:
-        # Headers que envían los navegadores móviles reales
-        mobile_headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0"
-        }
+        logger.info("🧹 ===== INICIANDO LIMPIEZA COMPLETA DE SESIÓN =====")
         
-        # Aplicar headers usando CDP si está disponible
-        try:
-            driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": driver.execute_script("return navigator.userAgent;"),
-                "acceptLanguage": "es-MX,es;q=0.9,en;q=0.8",
-                "platform": "iPhone" if "iPhone" in driver.execute_script("return navigator.userAgent;") else "Linux armv7l"
-            })
-            
-            driver.execute_cdp_cmd('Network.enable', {})
-            logger.info("✅ Headers móviles configurados via CDP")
-            
-        except Exception as e:
-            logger.debug(f"CDP headers no disponibles: {e}")
+        # 1. Limpiar todas las cookies
+        logger.info("🍪 Limpiando cookies...")
+        driver.delete_all_cookies()
         
-        # Inyectar propiedades móviles en JavaScript
+        # 2. Limpiar localStorage
+        logger.info("💾 Limpiando localStorage...")
+        driver.execute_script("window.localStorage.clear();")
+        
+        # 3. Limpiar sessionStorage
+        logger.info("🗂️ Limpiando sessionStorage...")
+        driver.execute_script("window.sessionStorage.clear();")
+        
+        # 4. Limpiar indexedDB
+        logger.info("🗄️ Limpiando indexedDB...")
         driver.execute_script("""
-            // Simular propiedades de dispositivo móvil
-            Object.defineProperty(navigator, 'maxTouchPoints', {
-                get: () => 5
-            });
-            
-            Object.defineProperty(navigator, 'platform', {
-                get: () => navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Linux armv7l'
-            });
-            
-            // Simular eventos touch
-            window.TouchEvent = window.TouchEvent || function(){};
-            
-            // Simular conexión móvil
-            if (navigator.connection) {
-                Object.defineProperty(navigator.connection, 'effectiveType', {
-                    get: () => '4g'
+            if (window.indexedDB) {
+                const deleteDatabase = (dbName) => {
+                    return new Promise((resolve, reject) => {
+                        const deleteReq = indexedDB.deleteDatabase(dbName);
+                        deleteReq.onsuccess = () => resolve();
+                        deleteReq.onerror = () => reject(deleteReq.error);
+                    });
+                };
+                
+                // Lista común de bases de datos que NADRO podría usar
+                const commonDBs = ['NADRO', 'cache', 'session', 'user_data'];
+                commonDBs.forEach(dbName => {
+                    try { deleteDatabase(dbName); } catch(e) {}
                 });
             }
-            
-            console.log('📱 Propiedades móviles inyectadas');
         """)
         
-        logger.info("📱 Configuración móvil aplicada exitosamente")
-        
-    except Exception as e:
-        logger.error(f"❌ Error configurando headers móviles: {e}")
-
-def inicializar_navegador_movil(headless=True):
-    """
-    ✅ FUNCIÓN PRINCIPAL: Inicializa navegador simulando móvil
-    """
-    # Crear perfil temporal para móvil
-    profile_path = crear_perfil_movil_temporal()
-    
-    # Seleccionar configuración móvil aleatoria
-    user_agent = random.choice(get_mobile_user_agents())
-    viewport = get_mobile_viewport()
-    
-    logger.info(f"📱 Simulando: {user_agent[:50]}...")
-    logger.info(f"📐 Resolución: {viewport['width']}x{viewport['height']}")
-    
-    if UNDETECTED_AVAILABLE:
+        # 5. Limpiar cache del navegador (si es posible)
+        logger.info("🗑️ Intentando limpiar cache...")
         try:
-            logger.info("🔧 Iniciando navegador móvil (undetected)...")
-            
-            options = uc.ChromeOptions()
-            
-            # ✅ CONFIGURACIÓN MÓVIL CRÍTICA
-            options.add_argument(f"--user-agent={user_agent}")
-            options.add_argument(f"--window-size={viewport['width']},{viewport['height']}")
-            options.add_argument(f"--user-data-dir={profile_path}")
-            
-            # ✅ SIMULAR DISPOSITIVO MÓVIL
-            options.add_argument("--disable-desktop-notifications")
-            options.add_argument("--disable-web-security")  # Para mejor simulación móvil
-            options.add_argument("--allow-running-insecure-content")
-            
-            # Configuración de limpieza (mantenida)
-            options.add_argument("--incognito")
-            options.add_argument("--no-first-run")
-            options.add_argument("--disable-background-networking")
-            options.add_argument("--disable-sync")
-            
-            # Configuración anti-detección
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-popup-blocking")
-            
-            # Configuración headless si es necesario
-            if headless:
-                options.add_argument("--headless=new")
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-gpu")
-            
-            # ✅ CONFIGURACIÓN EXPERIMENTAL MÓVIL
-            mobile_emulation = {
-                "deviceMetrics": {
-                    "width": viewport['width'],
-                    "height": viewport['height'],
-                    "pixelRatio": 2.0 if "iPhone" in user_agent else 1.0
-                },
-                "userAgent": user_agent,
-                "touch": True,
-                "mobile": True
-            }
-            options.add_experimental_option("mobileEmulation", mobile_emulation)
-            
-            # Inicializar navegador
-            driver = uc.Chrome(options=options)
-            
-            # ✅ CONFIGURACIÓN POST-INICIALIZACIÓN
-            time.sleep(1)
-            
-            # Configurar headers móviles
-            configurar_headers_moviles(driver)
-            
-            # Verificar configuración móvil
-            mobile_check = driver.execute_script("""
-                return {
-                    userAgent: navigator.userAgent,
-                    platform: navigator.platform,
-                    maxTouchPoints: navigator.maxTouchPoints,
-                    width: window.screen.width,
-                    height: window.screen.height,
-                    hasTouchEvent: 'TouchEvent' in window
-                };
-            """)
-            
-            logger.info(f"📱 Verificación móvil: {mobile_check}")
-            
-            logger.info("✅ Navegador móvil inicializado (undetected)")
-            return driver, profile_path
-            
+            # Navegar a página de configuración de Chrome para limpiar cache
+            driver.execute_cdp_cmd('Network.clearBrowserCache', {})
+            logger.info("✅ Cache limpiado via CDP")
         except Exception as e:
-            logger.error(f"❌ Error inicializando navegador móvil (undetected): {e}")
-            limpiar_perfil_movil(profile_path)
-            logger.info("Intentando con navegador estándar...")
-    
-    # Respaldo con Selenium estándar
-    try:
-        options = webdriver.ChromeOptions() if not UNDETECTED_AVAILABLE else Options()
+            logger.warning(f"⚠️ No se pudo limpiar cache via CDP: {e}")
         
-        # Aplicar TODA la configuración móvil
-        options.add_argument(f"--user-agent={user_agent}")
-        options.add_argument(f"--window-size={viewport['width']},{viewport['height']}")
-        options.add_argument(f"--user-data-dir={profile_path}")
-        options.add_argument("--incognito")
-        options.add_argument("--disable-desktop-notifications")
-        
-        if headless:
-            options.add_argument("--headless=new")
-        
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        
-        # Emulación móvil
-        mobile_emulation = {
-            "deviceMetrics": {
-                "width": viewport['width'],
-                "height": viewport['height'],
-                "pixelRatio": 2.0 if "iPhone" in user_agent else 1.0
-            },
-            "userAgent": user_agent,
-            "touch": True,
-            "mobile": True
-        }
-        options.add_experimental_option("mobileEmulation", mobile_emulation)
-        
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        
-        # Anti-detección
-        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": """
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """
-        })
-        
-        # Configurar headers móviles
-        time.sleep(1)
-        configurar_headers_moviles(driver)
-        
-        logger.info("✅ Navegador móvil inicializado (estándar)")
-        return driver, profile_path
-        
-    except Exception as e:
-        logger.error(f"❌ Error inicializando navegador móvil (estándar): {e}")
-        limpiar_perfil_movil(profile_path)
-        return None, None
-
-def safe_driver_quit_movil(driver, profile_path):
-    """
-    ✅ Cierre seguro del navegador móvil
-    """
-    try:
-        if driver:
-            driver.quit()
-            logger.info("✅ Navegador móvil cerrado")
-        
+        # 6. Forzar refresco completo
+        logger.info("🔄 Refrescando navegador...")
+        driver.refresh()
         time.sleep(2)
-        limpiar_perfil_movil(profile_path)
+        
+        logger.info("✅ ===== LIMPIEZA COMPLETA FINALIZADA =====")
         
     except Exception as e:
-        logger.error(f"❌ Error cerrando navegador móvil: {e}")
+        logger.error(f"❌ Error durante limpieza de sesión: {e}")
+
+def verificar_pagina_login_vs_principal(driver):
+    """
+    ✅ FUNCIÓN NUEVA: Verifica si estamos en login o en página principal
+    """
+    try:
+        current_url = driver.current_url.lower()
+        page_text = driver.page_source.lower()
+        
+        # Indicadores de página de login
+        login_indicators = [
+            "login" in current_url,
+            "iniciar sesión" in page_text,
+            "username" in page_text,
+            "password" in page_text,
+            "ingresar" in page_text
+        ]
+        
+        # Indicadores de página principal/logueado
+        main_indicators = [
+            "logout" in page_text,
+            "cerrar sesión" in page_text,
+            "mi cuenta" in page_text,
+            "buscar producto" in page_text,
+            "carrito" in page_text
+        ]
+        
+        en_login = any(login_indicators)
+        en_principal = any(main_indicators)
+        
+        logger.info(f"📍 Estado de página: Login={en_login}, Principal={en_principal}")
+        logger.info(f"📍 URL actual: {current_url}")
+        
+        return {
+            "en_login": en_login,
+            "en_principal": en_principal,
+            "url": current_url
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error verificando página: {e}")
+        return {"en_login": False, "en_principal": False, "url": "unknown"}
 
 # ===============================
-# FUNCIONES DE BÚSQUEDA (adaptadas para móvil)
+# SISTEMA DE SIMILITUD 80%+ PARA NADRO
+# ===============================
+
+def normalizar_texto_nadro_similitud(texto):
+    """Normalización específica para comparación en NADRO."""
+    if not texto:
+        return ""
+    
+    # Convertir a minúsculas y quitar acentos
+    texto = texto.lower()
+    texto = unicodedata.normalize('NFD', texto)
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
+    
+    # Normalizaciones específicas de farmacéuticos
+    replacements = {
+        'acetaminofen': 'paracetamol',
+        'acetaminofén': 'paracetamol', 
+        'miligramos': 'mg',
+        'mililitros': 'ml',
+        'microgramos': 'mcg',
+        'gramos': 'g',
+        'tabletas': 'tab',
+        'comprimidos': 'tab',
+        'capsulas': 'cap',
+        'cápsulas': 'cap',
+        'inyectable': 'iny',
+        'solucion': 'sol',
+        'solución': 'sol',
+        'jarabe': 'jar'
+    }
+    
+    for original, replacement in replacements.items():
+        texto = re.sub(rf'\b{original}\b', replacement, texto)
+    
+    # Eliminar caracteres especiales excepto espacios y números
+    texto = re.sub(r'[^\w\s]', ' ', texto)
+    texto = re.sub(r'\s+', ' ', texto).strip()
+    
+    return texto
+
+def extraer_componentes_nadro(texto_normalizado):
+    """Extrae componentes clave del producto: nombre base + dosis."""
+    # Extraer dosis (número + unidad)
+    patron_dosis = r'(\d+(?:[.,]\d+)?)\s*(mg|ml|mcg|g|ui|l|tab|cap|iny|sol|jar)\b'
+    match_dosis = re.search(patron_dosis, texto_normalizado)
+    
+    dosis_valor = ""
+    dosis_unidad = ""
+    if match_dosis:
+        dosis_valor = match_dosis.group(1).replace(',', '.')
+        dosis_unidad = match_dosis.group(2)
+    
+    # Remover la dosis del texto para obtener nombre base
+    texto_sin_dosis = re.sub(patron_dosis, '', texto_normalizado).strip()
+    texto_sin_dosis = re.sub(r'\s+', ' ', texto_sin_dosis)
+    
+    # Palabras clave (sin artículos ni palabras comunes)
+    stop_words = {'el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'y', 'con', 'por', 'para'}
+    palabras = [p for p in texto_sin_dosis.split() if p not in stop_words and len(p) > 2]
+    
+    return {
+        'nombre_base': texto_sin_dosis,
+        'dosis_valor': dosis_valor,
+        'dosis_unidad': dosis_unidad,
+        'palabras_clave': set(palabras)
+    }
+
+def calcular_similitud_nadro_80(consulta_original, producto_encontrado):
+    """Calcula similitud con umbral 80% para NADRO (más flexible)."""
+    if not consulta_original or not producto_encontrado:
+        return 0.0
+    
+    # Normalizar ambos textos
+    consulta_norm = normalizar_texto_nadro_similitud(consulta_original)
+    producto_norm = normalizar_texto_nadro_similitud(producto_encontrado)
+    
+    logger.debug(f"🔍 NADRO Similitud: '{consulta_original}' -> '{consulta_norm}'")
+    logger.debug(f"🔍 NADRO Producto: '{producto_encontrado}' -> '{producto_norm}'")
+    
+    # Extraer componentes
+    comp_consulta = extraer_componentes_nadro(consulta_norm)
+    comp_producto = extraer_componentes_nadro(producto_norm)
+    
+    # CRITERIO 1: Coincidencia exacta de texto normalizado (peso: 40%)
+    coincidencia_exacta = 0.0
+    if consulta_norm == producto_norm:
+        coincidencia_exacta = 1.0
+        logger.debug(f"✅ NADRO: Coincidencia EXACTA de texto normalizado")
+    elif consulta_norm in producto_norm or producto_norm in consulta_norm:
+        coincidencia_exacta = 0.8
+        logger.debug(f"✅ NADRO: Coincidencia PARCIAL de texto")
+    
+    # CRITERIO 2: Coincidencia de palabras clave (peso: 30%)
+    palabras_consulta = comp_consulta['palabras_clave']
+    palabras_producto = comp_producto['palabras_clave']
+    
+    if not palabras_consulta:
+        coincidencia_palabras = 0.0
+    else:
+        palabras_comunes = palabras_consulta.intersection(palabras_producto)
+        coincidencia_palabras = len(palabras_comunes) / len(palabras_consulta)
+        
+        # Bonus si TODAS las palabras coinciden
+        if len(palabras_comunes) == len(palabras_consulta) == len(palabras_producto):
+            coincidencia_palabras = 1.0
+            logger.debug(f"✅ NADRO: TODAS las palabras clave coinciden: {palabras_comunes}")
+        else:
+            logger.debug(f"📝 NADRO: Palabras comunes: {palabras_comunes} de {palabras_consulta}")
+    
+    # CRITERIO 3: Coincidencia de dosis (peso: 30%) - MÁS FLEXIBLE PARA 80%
+    coincidencia_dosis = 0.0
+    
+    consulta_tiene_dosis = bool(comp_consulta['dosis_valor'] and comp_consulta['dosis_unidad'])
+    producto_tiene_dosis = bool(comp_producto['dosis_valor'] and comp_producto['dosis_unidad'])
+    
+    if consulta_tiene_dosis and producto_tiene_dosis:
+        # Ambos tienen dosis: deben coincidir exactamente
+        try:
+            dosis_consulta = float(comp_consulta['dosis_valor'])
+            dosis_producto = float(comp_producto['dosis_valor'])
+            unidad_consulta = comp_consulta['dosis_unidad']
+            unidad_producto = comp_producto['dosis_unidad']
+            
+            if dosis_consulta == dosis_producto and unidad_consulta == unidad_producto:
+                coincidencia_dosis = 1.0
+                logger.debug(f"✅ NADRO: Dosis EXACTA: {dosis_consulta}{unidad_consulta}")
+            else:
+                # ✅ CAMBIO: En lugar de 0.0, usar 0.3 para ser más flexible con 80%
+                coincidencia_dosis = 0.3  # Penalización menos severa 
+                logger.debug(f"⚠️ NADRO: Dosis DIFERENTE: {dosis_consulta}{unidad_consulta} vs {dosis_producto}{unidad_producto}")
+        except ValueError:
+            coincidencia_dosis = 0.2  # ✅ CAMBIO: Menos penalización por error de conversión
+            logger.debug(f"❌ NADRO: Error convirtiendo dosis: '{comp_consulta['dosis_valor']}' vs '{comp_producto['dosis_valor']}'")
+    
+    elif not consulta_tiene_dosis and not producto_tiene_dosis:
+        # Ninguno tiene dosis: OK, no penalizar
+        coincidencia_dosis = 1.0
+        logger.debug(f"✅ NADRO: Ninguno tiene dosis - OK")
+    
+    elif not consulta_tiene_dosis and producto_tiene_dosis:
+        # Consulta sin dosis, producto con dosis: más neutral para 80%
+        coincidencia_dosis = 0.8  # ✅ CAMBIO: Aumentado de 0.7 a 0.8
+        logger.debug(f"⚠️ NADRO: Consulta sin dosis, producto con dosis: {comp_producto['dosis_valor']}{comp_producto['dosis_unidad']}")
+    
+    else:
+        # Consulta con dosis, producto sin dosis: menos penalización para 80%
+        coincidencia_dosis = 0.5  # ✅ CAMBIO: Aumentado de 0.3 a 0.5
+        logger.debug(f"⚠️ NADRO: Consulta con dosis {comp_consulta['dosis_valor']}{comp_consulta['dosis_unidad']}, producto sin dosis")
+    
+    # CÁLCULO FINAL (pesos: 40% texto + 30% palabras + 30% dosis)
+    similitud_final = (
+        coincidencia_exacta * 0.40 +
+        coincidencia_palabras * 0.30 +
+        coincidencia_dosis * 0.30
+    )
+    
+    # BONUS: Si el producto empieza igual que la consulta
+    if producto_norm.startswith(consulta_norm) and len(consulta_norm) > 5:
+        similitud_final += 0.05
+        logger.debug(f"🎯 NADRO: Bonus por inicio coincidente")
+    
+    # ✅ NUEVO BONUS: Si la consulta está contenida en el producto (para 80%)
+    if len(consulta_norm) > 3 and consulta_norm in producto_norm:
+        similitud_final += 0.03
+        logger.debug(f"🎯 NADRO: Bonus por consulta contenida en producto")
+    
+    # Asegurar que esté entre 0 y 1
+    similitud_final = max(0.0, min(1.0, similitud_final))
+    
+    logger.debug(f"📊 NADRO SIMILITUD FINAL: {similitud_final:.3f} | Exacta:{coincidencia_exacta:.2f} Palabras:{coincidencia_palabras:.2f} Dosis:{coincidencia_dosis:.2f}")
+    
+    return similitud_final
+
+def filtrar_productos_nadro_similitud(consulta_original, lista_productos, umbral=0.80):
+    """Filtra productos de NADRO que superen 80% de similitud."""
+    if not lista_productos:
+        logger.warning(f"🔍 NADRO: Lista de productos vacía para '{consulta_original}'")
+        return []
+    
+    resultados_validos = []
+    
+    logger.info(f"🔍 NADRO: Evaluando {len(lista_productos)} productos con umbral {umbral}")
+    
+    for i, producto in enumerate(lista_productos):
+        nombre_producto = producto.get('nombre', '')
+        
+        if not nombre_producto:
+            logger.warning(f"⚠️ NADRO: Producto #{i+1} sin nombre")
+            continue
+        
+        similitud = calcular_similitud_nadro_80(consulta_original, nombre_producto)
+        
+        if similitud >= umbral:
+            producto_con_similitud = producto.copy()
+            producto_con_similitud['similitud_nadro'] = similitud
+            resultados_validos.append(producto_con_similitud)
+            
+            logger.info(f"✅ NADRO #{i+1}: {similitud:.3f} - '{nombre_producto[:40]}...'")
+        else:
+            logger.info(f"❌ NADRO #{i+1}: {similitud:.3f} - '{nombre_producto[:40]}...' [RECHAZADO]")
+    
+    # Ordenar por similitud descendente
+    resultados_validos.sort(key=lambda x: x.get('similitud_nadro', 0), reverse=True)
+    
+    logger.info(f"🏆 NADRO: {len(resultados_validos)} de {len(lista_productos)} productos superaron el umbral {umbral}")
+    
+    return resultados_validos
+
+# ===============================
+# FIN SISTEMA DE SIMILITUD
 # ===============================
 
 def normalizar_busqueda_nadro(producto_nombre):
     """
-    Normaliza la búsqueda para NADRO (misma lógica)
+    Normaliza la búsqueda para NADRO: nombre + cantidad separados.
+    Ejemplo: "diclofenaco inyectable 75 mg" → "diclofenaco 75 mg"
+    
+    Args:
+        producto_nombre (str): Nombre completo del producto
+        
+    Returns:
+        str: Nombre del principio activo + cantidad separados
     """
     if not producto_nombre:
         return producto_nombre
     
+    # Convertir a minúsculas para procesamiento
     texto = producto_nombre.lower().strip()
     
-    # Extraer cantidad
+    # Extraer cantidad (número + unidad)
     patron_cantidad = r'(\d+(?:\.\d+)?)\s*(mg|g|ml|mcg|ui|iu|%|cc|mgs)'
     match_cantidad = re.search(patron_cantidad, texto)
     cantidad = ""
     if match_cantidad:
         numero = match_cantidad.group(1)
         unidad = match_cantidad.group(2)
+        # Normalizar unidad
         if unidad == 'mgs':
             unidad = 'mg'
         cantidad = f"{numero} {unidad}"
     
-    # Extraer nombre del principio activo
+    # Extraer nombre del principio activo (primera palabra significativa)
+    # Eliminar formas farmacéuticas comunes
     formas_farmaceuticas = [
         'inyectable', 'tabletas', 'tablets', 'cápsulas', 'capsulas', 
         'jarabe', 'solución', 'solucion', 'crema', 'gel', 'ungüento',
@@ -372,64 +429,237 @@ def normalizar_busqueda_nadro(producto_nombre):
         'ampolla', 'vial', 'frasco', 'sobre', 'tubo'
     ]
     
+    # Dividir en palabras
     palabras = texto.split()
     palabras_filtradas = []
     
     for palabra in palabras:
+        # Saltar números y unidades ya procesados
         if re.match(r'\d+(?:\.\d+)?', palabra) or palabra in ['mg', 'g', 'ml', 'mcg', 'ui', 'iu', '%', 'cc', 'mgs']:
             continue
+        # Saltar números con unidades pegadas (ej: "75mg")
         if re.match(r'\d+(?:\.\d+)?(mg|g|ml|mcg|ui|iu|%|cc|mgs)', palabra):
             continue
+        # Saltar formas farmacéuticas
         if palabra in formas_farmaceuticas:
             continue
+        # Mantener palabras del nombre
         palabras_filtradas.append(palabra)
     
+    # Tomar las primeras 1-2 palabras del nombre (principio activo)
     if palabras_filtradas:
+        # Si solo hay una palabra, usarla
         if len(palabras_filtradas) == 1:
             nombre = palabras_filtradas[0]
         else:
+            # Si hay más palabras, tomar las primeras 2 para nombres compuestos
             nombre = ' '.join(palabras_filtradas[:2])
     else:
+        # Si no queda nada, usar la primera palabra original
         nombre = producto_nombre.split()[0] if producto_nombre.split() else producto_nombre
     
+    # Combinar nombre + cantidad
     if cantidad:
         resultado = f"{nombre} {cantidad}"
     else:
         resultado = nombre
     
-    logger.info(f"[NADRO MÓVIL] Normalización: '{producto_nombre}' → '{resultado}'")
+    logger.info(f"[NADRO] Normalización: '{producto_nombre}' → '{resultado}'")
     return resultado
 
-def buscar_producto_movil(driver, nombre_producto):
+def random_delay(min_seconds=1.0, max_seconds=3.0):
+    """Genera un retraso aleatorio para simular comportamiento humano"""
+    delay = random.uniform(min_seconds, max_seconds)
+    time.sleep(delay)
+    return delay
+
+def safe_driver_quit(driver, profile_path):
     """
-    ✅ Búsqueda adaptada para navegador móvil
+    ✅ FUNCIÓN MEJORADA: Cierra navegador y limpia perfil temporal
     """
     try:
-        logger.info(f"📱 Buscando producto en modo móvil: {nombre_producto}")
+        if driver:
+            # Última limpieza antes de cerrar
+            logger.info("🧹 Limpieza final antes de cerrar...")
+            try:
+                limpiar_sesion_completa(driver)
+            except:
+                pass
+            
+            # Cerrar navegador
+            driver.quit()
+            logger.info("✅ Navegador cerrado")
+            
+        # Esperar un momento para que se liberen archivos
+        time.sleep(2)
         
-        # Verificar que estamos simulando móvil correctamente
-        mobile_verification = driver.execute_script("""
-            return {
-                userAgent: navigator.userAgent.substring(0, 50),
-                isMobile: /Mobi|Android/i.test(navigator.userAgent),
-                touchPoints: navigator.maxTouchPoints,
-                screenWidth: window.screen.width
-            };
-        """)
-        logger.info(f"📱 Verificación móvil: {mobile_verification}")
+        # Limpiar perfil temporal
+        limpiar_perfil_temporal(profile_path)
         
-        time.sleep(5)  # Espera inicial para carga
+    except Exception as e:
+        logger.error(f"❌ Error al cerrar navegador: {e}")
+        # Intento alternativo para cerrar procesos
+        try:
+            import os
+            if os.name == 'nt':  # Windows
+                os.system("taskkill /f /im chromedriver.exe 2>nul")
+                os.system("taskkill /f /im chrome.exe 2>nul")
+            else:  # Linux/Mac
+                os.system("pkill -f chromedriver 2>/dev/null")
+                os.system("pkill -f chrome 2>/dev/null")
+        except:
+            pass
+
+def inicializar_navegador_limpio(headless=True):
+    """
+    ✅ FUNCIÓN MEJORADA: Inicializa navegador con sesión completamente limpia
+    """
+    # Crear perfil temporal único para cada ejecución
+    profile_path = crear_perfil_temporal()
+    
+    if UNDETECTED_AVAILABLE:
+        try:
+            logger.info("🔧 Iniciando navegador no detectable CON PERFIL LIMPIO...")
+            
+            options = uc.ChromeOptions()
+            
+            # ✅ CRÍTICO: Usar perfil temporal
+            options.add_argument(f"--user-data-dir={profile_path}")
+            
+            # ✅ CRÍTICO: Deshabilitar persistencia de datos
+            options.add_argument("--disable-background-networking")
+            options.add_argument("--disable-sync")
+            options.add_argument("--disable-translate")
+            options.add_argument("--disable-ipc-flooding-protection")
+            
+            # ✅ CRÍTICO: Modo incógnito para sesión limpia
+            options.add_argument("--incognito")
+            
+            # Configuración anti-detección
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-popup-blocking")
+            options.add_argument("--disable-notifications")
+            
+            # Opciones para entorno headless
+            if headless:
+                options.add_argument("--headless=new")
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+            
+            # Tamaño de ventana aleatorio
+            width = random.randint(1100, 1300)
+            height = random.randint(700, 900)
+            options.add_argument(f"--window-size={width},{height}")
+            
+            # User Agent aleatorio
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+            ]
+            options.add_argument(f"--user-agent={random.choice(user_agents)}")
+            
+            # ✅ NUEVO: Configuraciones adicionales para limpieza
+            options.add_argument("--disable-features=VizDisplayCompositor")
+            options.add_argument("--disable-web-security")
+            options.add_argument("--disable-features=TranslateUI")
+            
+            # Inicializar navegador
+            driver = uc.Chrome(options=options)
+            
+            # ✅ CRÍTICO: Limpiar sesión inmediatamente después de inicializar
+            time.sleep(1)
+            limpiar_sesion_completa(driver)
+            
+            logger.info("✅ Navegador no detectable inicializado con sesión limpia")
+            return driver, profile_path
+            
+        except Exception as e:
+            logger.error(f"❌ Error al inicializar navegador no detectable: {e}")
+            # Limpiar perfil si falló
+            limpiar_perfil_temporal(profile_path)
+            logger.info("Intentando con navegador estándar...")
+    
+    # Respaldo con Selenium estándar
+    try:
+        options = webdriver.ChromeOptions() if not UNDETECTED_AVAILABLE else Options()
         
-        # Buscar campo de búsqueda (mismo que antes)
+        # ✅ CRÍTICO: Usar perfil temporal
+        options.add_argument(f"--user-data-dir={profile_path}")
+        
+        # ✅ CRÍTICO: Modo incógnito
+        options.add_argument("--incognito")
+        
+        if headless:
+            options.add_argument("--headless=new")
+        
+        # Configuración para entorno sin interfaz gráfica
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-notifications")
+        
+        # Anti-detección
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+        
+        # ✅ NUEVO: Deshabilitar persistencia
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-sync")
+        
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        
+        # JavaScript anti-detección
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """
+        })
+        
+        # ✅ CRÍTICO: Limpiar sesión inmediatamente
+        time.sleep(1)
+        limpiar_sesion_completa(driver)
+        
+        logger.info("✅ Navegador estándar inicializado con sesión limpia")
+        return driver, profile_path
+        
+    except Exception as e:
+        logger.error(f"❌ Error al inicializar navegador estándar: {e}")
+        limpiar_perfil_temporal(profile_path)
+        return None, None
+
+def buscar_producto(driver, nombre_producto):
+    """
+    Busca un producto en NADRO:
+    CORREGIDO: Detecta el botón COMPRAR directamente en la lista de resultados
+    ANTES de hacer clic en los productos.
+    
+    Args:
+        driver: WebDriver con sesión iniciada
+        nombre_producto: texto a buscar (YA NORMALIZADO)
+        
+    Returns:
+        dict: Resultado de la búsqueda con información de productos
+    """
+    try:
+        logger.info(f"Buscando producto NORMALIZADO: {nombre_producto}")
+        screenshot_path = str(Path("debug_screenshots").joinpath("despues_login.png"))
+        driver.save_screenshot(screenshot_path)
+        time.sleep(5)  # asegurar carga de la página
+
+        # --- 1) Encontrar el campo de búsqueda ---
         search_selectors = [
-            "input[placeholder*='Buscar']",
-            "input[placeholder*='buscar']",
+            "input[placeholder='Buscar...']",
             "input.vtex-styleguide-9-x-input",
             "div.vtex-store-components-3-x-searchBarContainer input",
             "input[type='text'][placeholder]",
             "div.vtex-search-2-x-searchBar input"
         ]
-        
         search_field = None
         for selector in search_selectors:
             try:
@@ -437,304 +667,488 @@ def buscar_producto_movil(driver, nombre_producto):
                 for el in elems:
                     if el.is_displayed():
                         search_field = el
-                        logger.info(f"📱 Campo de búsqueda encontrado: {selector}")
                         break
                 if search_field:
                     break
             except:
                 continue
-                
         if not search_field:
-            logger.error("❌ No se encontró campo de búsqueda en modo móvil")
-            return {"error": "Campo de búsqueda no encontrado", "productos": []}
+            # intento genérico
+            elems = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            for el in elems:
+                if el.is_displayed():
+                    search_field = el
+                    break
+        if not search_field:
+            screenshot_path = str(Path("debug_screenshots").joinpath("error_no_campo_busqueda.png"))
+            driver.save_screenshot(screenshot_path)
+            html_path = str(Path("debug_logs").joinpath("pagina_despues_login.html"))
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            return {"error": "No se pudo encontrar el campo de búsqueda", "productos": []}
 
-        # ✅ INTERACCIÓN MÓVIL: Simular touch y typing más lento
-        logger.info("📱 Simulando interacción móvil...")
-        
-        # Scroll hasta el campo de búsqueda
-        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_field)
-        time.sleep(1)
-        
-        # Simular tap en móvil
+        # --- 2) Limpiar y escribir el texto de búsqueda NORMALIZADO ---
         driver.execute_script("arguments[0].focus();", search_field)
-        time.sleep(0.8)  # Delay móvil más largo
-        
-        # Limpiar campo
+        time.sleep(0.5)
         search_field.clear()
         time.sleep(0.5)
-        
-        # ✅ TYPING MÓVIL: Más lento, simula escritura en pantalla táctil
-        logger.info(f"📱 Escribiendo en modo móvil: {nombre_producto}")
-        for i, char in enumerate(nombre_producto):
-            search_field.send_keys(char)
-            # Delays variables más largos para simular typing móvil
-            delay = random.uniform(0.1, 0.4)
-            time.sleep(delay)
-            
-            # Pausa más larga cada 3-4 caracteres (simula corrección/pensamiento)
-            if (i + 1) % 4 == 0:
-                time.sleep(random.uniform(0.3, 0.8))
-        
-        time.sleep(1.5)  # Pausa antes de enviar
+        for c in nombre_producto:
+            search_field.send_keys(c)
+            time.sleep(random.uniform(0.05, 0.2))
+        time.sleep(1)
         search_field.send_keys(Keys.RETURN)
-        
-        # ✅ ESPERA MÓVIL: Los móviles son más lentos
-        logger.info("📱 Esperando resultados (timing móvil)...")
-        time.sleep(10)  # Espera más larga para móviles
-        
-        # Tomar screenshot para debug
-        debug_dir = Path("debug_screenshots")
-        debug_dir.mkdir(exist_ok=True)
-        driver.save_screenshot(str(debug_dir / "resultados_busqueda_movil.png"))
-        
-        # Buscar productos (misma lógica)
+
+        # --- 3) Esperar resultados ---
+        logger.info("Esperando resultados...")
+        time.sleep(8)
+        screenshot_path = str(Path("debug_screenshots").joinpath("resultados_busqueda.png"))
+        driver.save_screenshot(screenshot_path)
+        html_path = str(Path("debug_logs").joinpath("resultados_busqueda.html"))
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+
+        # --- 4) Detectar listado de productos ---
         product_selectors = [
             "div.vtex-search-result-3-x-galleryItem",
             "article.vtex-product-summary-2-x-element", 
             "div.vtex-product-summary-2-x-container",
             "div[data-testid='gallery-layout-item']"
         ]
-        
         productos = []
         for sel in product_selectors:
             try:
                 elems = driver.find_elements(By.CSS_SELECTOR, sel)
                 if elems:
                     productos = elems
-                    logger.info(f"📱 Encontrados {len(elems)} productos móviles: {sel}")
+                    logger.info(f"Encontrados {len(elems)} productos con selector: {sel}")
                     break
             except:
                 continue
 
         if not productos:
-            logger.warning("⚠️ No se encontraron productos en modo móvil")
-            return {"warning": "No se encontraron productos", "productos": []}
+            return {"error": "No se pudieron identificar productos en los resultados", "productos": []}
 
-        # Procesar productos con delays móviles
+        # --- NUEVA LÓGICA: PROCESAR DIRECTAMENTE EN LA LISTA (SIN HACER CLIC) ---
+        logger.info(f"🎯 PROCESANDO {len(productos)} PRODUCTOS DIRECTAMENTE EN LA LISTA")
         resultados = []
-        for i, prod in enumerate(productos[:5]):
+        
+        for i, prod in enumerate(productos[:10]):
             try:
-                # ✅ SCROLL MÓVIL: Suave y lento
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", prod)
-                time.sleep(1.2)  # Delay móvil
-                
+                driver.execute_script("arguments[0].scrollIntoView({behavior:'smooth',block:'center'});", prod)
+                time.sleep(0.5)
                 info = {}
-                
-                # Extraer nombre
-                for sel in [".vtex-product-summary-2-x-productBrand", "h3", ".vtex-product-summary-2-x-productNameContainer"]:
+
+                logger.info(f"🔍 ===== PROCESANDO PRODUCTO #{i+1} EN LISTA =====")
+
+                # ===== EXTRACCIÓN DE NOMBRE =====
+                for sel in [".vtex-product-summary-2-x-productBrand","h3",".vtex-product-summary-2-x-productNameContainer"]:
                     try:
                         el = prod.find_element(By.CSS_SELECTOR, sel)
                         if el.text.strip():
                             info["nombre"] = el.text.strip()
-                            logger.info(f"📱 Nombre móvil: {info['nombre']}")
+                            logger.info(f"📝 Nombre encontrado: {info['nombre']}")
                             break
                     except:
                         pass
 
-                # Extraer precio
-                precio_selectors = [
+                # ===== EXTRACCIÓN DE PRECIO =====
+                logger.info(f"💰 Extrayendo precio para producto {i+1}")
+                
+                precio_principal_selectors = [
                     ".vtex-product-price-1-x-sellingPrice",
                     ".vtex-store-components-3-x-price", 
                     ".nadro-nadro-components-1-x-priceContainer",
-                    ".price"
+                    ".nadro-nadro-components-1-x-priceContainerOnline--product-pill",
+                    ".price",
+                    "*[class*='price']"
                 ]
                 
-                for sel in precio_selectors:
+                for sel in precio_principal_selectors:
                     try:
                         els = prod.find_elements(By.CSS_SELECTOR, sel)
                         for el in els:
                             txt = el.text.strip()
                             if "$" in txt and any(c.isdigit() for c in txt):
                                 info["precio_farmacia"] = txt
-                                logger.info(f"📱 Precio móvil: {txt}")
+                                logger.info(f"✅ Precio extraído: {txt}")
                                 break
                         if info.get("precio_farmacia"):
                             break
                     except:
                         pass
 
-                # Detectar disponibilidad (misma lógica)
+                # Si no encontramos precio con selectores específicos
+                if not info.get("precio_farmacia"):
+                    try:
+                        all_elements = prod.find_elements(By.XPATH, ".//*[contains(text(), '$')]")
+                        for el in all_elements:
+                            txt = el.text.strip()
+                            if "$" in txt and any(c.isdigit() for c in txt) and len(txt) < 20:
+                                info["precio_farmacia"] = txt
+                                logger.info(f"✅ Precio encontrado (genérico): {txt}")
+                                break
+                    except:
+                        pass
+
+                # ===== DETECCIÓN DE BOTÓN COMPRAR EN LA TARJETA =====
+                logger.info(f"🎯 ===== DETECTANDO BOTÓN COMPRAR EN TARJETA #{i+1} =====")
+                
                 disponibilidad_detectada = False
                 
+                # MÉTODO 1: Buscar botones con texto "COMPRAR"
                 try:
-                    xpath_comprar = [
-                        ".//button[contains(translate(text(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'COMPRAR')]",
-                        ".//*[contains(translate(text(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'COMPRAR')]"
+                    logger.info(f"🔍 Método 1: Buscando botones con texto COMPRAR")
+                    
+                    # Selectores específicos para botones COMPRAR
+                    botones_comprar_selectors = [
+                        "button:contains('COMPRAR')",
+                        "button[class*='comprar']",
+                        "button[class*='buy']",
+                        "button[class*='add-to-cart']",
+                        ".comprar-button",
+                        ".buy-button",
+                        ".add-to-cart-button"
                     ]
                     
-                    for xpath in xpath_comprar:
-                        elementos = prod.find_elements(By.XPATH, xpath)
-                        for elem in elementos:
-                            if elem.is_displayed():
-                                texto_elem = elem.text.strip().upper()
-                                if "COMPRAR" in texto_elem:
-                                    if elem.tag_name.lower() == "button":
-                                        disabled = elem.get_attribute("disabled")
-                                        if not disabled:
+                    for selector in botones_comprar_selectors:
+                        try:
+                            botones = prod.find_elements(By.CSS_SELECTOR, selector)
+                            for boton in botones:
+                                if boton.is_displayed():
+                                    texto_boton = boton.text.strip().upper()
+                                    if "COMPRAR" in texto_boton:
+                                        disabled = boton.get_attribute("disabled")
+                                        class_attr = boton.get_attribute("class") or ""
+                                        
+                                        logger.info(f"✅ BOTÓN COMPRAR ENCONTRADO!")
+                                        logger.info(f"   📌 Texto: '{texto_boton}'")
+                                        logger.info(f"   📌 Disabled: {disabled}")
+                                        logger.info(f"   📌 Clases: {class_attr}")
+                                        
+                                        if not disabled and "disabled" not in class_attr.lower():
                                             info["existencia"] = "Disponible"
+                                            logger.info(f"✅ PRODUCTO DISPONIBLE - Botón COMPRAR activo")
                                         else:
-                                            info["existencia"] = "No disponible"
-                                    else:
-                                        info["existencia"] = "Disponible"
-                                    disponibilidad_detectada = True
-                                    logger.info(f"📱 Disponibilidad móvil: {info['existencia']}")
-                                    break
-                        if disponibilidad_detectada:
-                            break
+                                            info["existencia"] = "No disponible"  
+                                            logger.info(f"❌ PRODUCTO NO DISPONIBLE - Botón COMPRAR deshabilitado")
+                                        
+                                        disponibilidad_detectada = True
+                                        break
+                            if disponibilidad_detectada:
+                                break
+                        except:
+                            pass
+                        
+                    if disponibilidad_detectada:
+                        logger.info(f"✅ Método 1 EXITOSO")
+                    
                 except Exception as e:
-                    logger.debug(f"Error disponibilidad móvil: {e}")
+                    logger.error(f"Error en Método 1: {e}")
 
+                # MÉTODO 2: Buscar por XPath más agresivo si Método 1 falló
+                if not disponibilidad_detectada:
+                    try:
+                        logger.info(f"🔍 Método 2: XPath agresivo para COMPRAR")
+                        
+                        # XPath para buscar cualquier elemento que contenga "COMPRAR"
+                        xpath_comprar = [
+                            ".//button[contains(translate(text(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'COMPRAR')]",
+                            ".//*[contains(translate(text(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'COMPRAR')]",
+                            ".//button[contains(@class, 'comprar')]",
+                            ".//button[contains(@class, 'buy')]"
+                        ]
+                        
+                        for xpath in xpath_comprar:
+                            elementos = prod.find_elements(By.XPATH, xpath)
+                            for elem in elementos:
+                                if elem.is_displayed():
+                                    texto_elem = elem.text.strip().upper()
+                                    tag_name = elem.tag_name.lower()
+                                    
+                                    if "COMPRAR" in texto_elem:
+                                        logger.info(f"✅ ELEMENTO COMPRAR ENCONTRADO (XPath)!")
+                                        logger.info(f"   📌 Tag: {tag_name}")
+                                        logger.info(f"   📌 Texto: '{texto_elem}'")
+                                        
+                                        # Si es un botón, verificar si está habilitado
+                                        if tag_name == "button":
+                                            disabled = elem.get_attribute("disabled")
+                                            if not disabled:
+                                                info["existencia"] = "Disponible"
+                                                logger.info(f"✅ PRODUCTO DISPONIBLE")
+                                            else:
+                                                info["existencia"] = "No disponible"
+                                                logger.info(f"❌ PRODUCTO NO DISPONIBLE")
+                                        else:
+                                            # Si no es botón pero contiene COMPRAR, asumir disponible
+                                            info["existencia"] = "Disponible"
+                                            logger.info(f"✅ PRODUCTO DISPONIBLE (elemento no-botón)")
+                                        
+                                        disponibilidad_detectada = True
+                                        break
+                            if disponibilidad_detectada:
+                                break
+                                
+                        if disponibilidad_detectada:
+                            logger.info(f"✅ Método 2 EXITOSO")
+                            
+                    except Exception as e:
+                        logger.error(f"Error en Método 2: {e}")
+
+                # MÉTODO 3: Análisis de texto completo de la tarjeta
+                if not disponibilidad_detectada:
+                    try:
+                        logger.info(f"🔍 Método 3: Análisis de texto completo")
+                        
+                        texto_completo = prod.text.upper()
+                        logger.info(f"📄 Texto completo de tarjeta #{i+1}:")
+                        logger.info(f"📄 {texto_completo}")
+                        
+                        if "COMPRAR" in texto_completo:
+                            logger.info(f"✅ TEXTO 'COMPRAR' ENCONTRADO en la tarjeta")
+                            
+                            # Verificar si hay indicadores de "NO DISPONIBLE"
+                            if any(indicador in texto_completo for indicador in ["NO DISPONIBLE", "AGOTADO", "SIN STOCK"]):
+                                info["existencia"] = "No disponible"
+                                logger.info(f"❌ PRODUCTO NO DISPONIBLE (texto negativo encontrado)")
+                            else:
+                                info["existencia"] = "Disponible" 
+                                logger.info(f"✅ PRODUCTO DISPONIBLE (COMPRAR sin negativos)")
+                            
+                            disponibilidad_detectada = True
+                        else:
+                            logger.warning(f"❌ NO se encontró 'COMPRAR' en el texto de la tarjeta")
+                            
+                    except Exception as e:
+                        logger.error(f"Error en Método 3: {e}")
+
+                # MÉTODO 4: Buscar clases CSS que indiquen disponibilidad
+                if not disponibilidad_detectada:
+                    try:
+                        logger.info(f"🔍 Método 4: Análisis de clases CSS de disponibilidad")
+                        
+                        # Buscar elementos con clases que indiquen disponibilidad
+                        disponibilidad_classes = [
+                            "[class*='available']",
+                            "[class*='in-stock']", 
+                            "[class*='comprar']",
+                            "[class*='buy']",
+                            "[class*='add-cart']"
+                        ]
+                        
+                        for css_selector in disponibilidad_classes:
+                            elementos = prod.find_elements(By.CSS_SELECTOR, css_selector)
+                            for elem in elementos:
+                                if elem.is_displayed():
+                                    class_attr = elem.get_attribute("class") or ""
+                                    logger.info(f"✅ Elemento con clase de disponibilidad encontrado: {class_attr}")
+                                    
+                                    # Si la clase no contiene "disabled" o "unavailable"
+                                    if not any(neg in class_attr.lower() for neg in ["disabled", "unavailable", "out-of-stock"]):
+                                        info["existencia"] = "Disponible"
+                                        logger.info(f"✅ PRODUCTO DISPONIBLE (por clase CSS)")
+                                        disponibilidad_detectada = True
+                                        break
+                            if disponibilidad_detectada:
+                                break
+                                
+                    except Exception as e:
+                        logger.error(f"Error en Método 4: {e}")
+
+                # Si ningún método funcionó
                 if not disponibilidad_detectada:
                     info["existencia"] = "Estado desconocido"
+                    logger.error(f"❌ ¡TODOS LOS MÉTODOS FALLARON para producto #{i+1}!")
+                    logger.error(f"❌ No se pudo determinar disponibilidad")
+                    
+                    # Guardar HTML de la tarjeta para debug
+                    try:
+                        html_tarjeta = prod.get_attribute("outerHTML")
+                        debug_logs_dir = Path("debug_logs")
+                        debug_logs_dir.mkdir(exist_ok=True)
+                        with open(debug_logs_dir / f"tarjeta_{i+1}_html.html", "w", encoding="utf-8") as f:
+                            f.write(html_tarjeta)
+                        logger.error(f"💾 HTML de tarjeta guardado en debug_logs/tarjeta_{i+1}_html.html")
+                    except Exception as save_error:
+                        logger.error(f"Error guardando HTML: {save_error}")
 
+                # Agregar producto a resultados si tiene información mínima
                 if info.get("nombre"):
                     resultados.append(info)
-                    logger.info(f"📱 Producto móvil #{i+1}: {info['nombre']} - {info.get('precio_farmacia', 'N/D')} - {info['existencia']}")
+                    logger.info(f"📋 RESULTADO FINAL Producto #{i+1}:")
+                    logger.info(f"   📌 Nombre: {info['nombre']}")
+                    logger.info(f"   📌 Precio: {info.get('precio_farmacia','N/D')}")
+                    logger.info(f"   📌 Existencia: {info.get('existencia','N/D')}")
+                else:
+                    logger.warning(f"⚠️ Producto #{i+1} descartado - no tiene nombre")
                 
+                logger.info(f"🔚 ===== FIN PROCESAMIENTO PRODUCTO #{i+1} =====")
+
             except Exception as e:
-                logger.error(f"❌ Error procesando producto móvil {i+1}: {e}")
-                continue
+                logger.error(f"❌ Error procesando producto {i+1}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
 
         if resultados:
-            logger.info(f"✅ {len(resultados)} productos procesados en modo móvil")
-            return {"success": True, "productos": resultados}
+            # ✅ APLICAR FILTRO DE SIMILITUD 80%+
+            productos_filtrados = filtrar_productos_nadro_similitud(
+                nombre_producto,  # nombre normalizado que ya se pasa a la función
+                resultados,
+                umbral=0.80
+            )
+            
+            if productos_filtrados:
+                logger.info(f"✅ NADRO FILTRADO: {len(productos_filtrados)} productos válidos de {len(resultados)} originales")
+                return {"success": True, "productos": productos_filtrados}
+            else:
+                logger.warning(f"❌ NADRO: Ningún producto superó el umbral de 80% de similitud")
+                # Opcional: Mostrar el mejor resultado aunque no supere el 80%
+                if resultados:
+                    mejor_resultado = max(resultados, key=lambda x: calcular_similitud_nadro_80(nombre_producto, x.get('nombre', '')))
+                    similitud_mejor = calcular_similitud_nadro_80(nombre_producto, mejor_resultado.get('nombre', ''))
+                    logger.info(f"💡 Mejor resultado disponible: {similitud_mejor:.3f} - '{mejor_resultado.get('nombre', '')[:50]}...'")
+                
+                return {"warning": f"No se encontraron productos con similitud >= 80% para '{nombre_producto}'", "productos": []}
         else:
-            return {"warning": "No se pudieron procesar productos móviles", "productos": []}
+            logger.warning(f"⚠️ No se pudieron procesar productos de la lista")
+            return {"warning": "No se pudo extraer información de productos", "productos": []}
 
     except Exception as e:
-        logger.error(f"❌ Error en búsqueda móvil: {e}")
+        logger.error(f"Error durante la búsqueda de producto: {e}")
+        traceback.print_exc()
         return {"error": str(e), "productos": []}
 
-def login_and_search_movil(producto):
+def login_and_search_limpio(producto):
     """
-    ✅ FUNCIÓN PRINCIPAL: Login y búsqueda en modo móvil
+    ✅ FUNCIÓN PRINCIPAL MEJORADA: Login y búsqueda con sesión completamente limpia
     """
     driver = None
     profile_path = None
     
     try:
-        logger.info("📱 ===== INICIANDO SESIÓN EN MODO MÓVIL =====")
-        
-        # Inicializar navegador móvil
-        driver, profile_path = inicializar_navegador_movil(headless=True)
+        # Inicializar navegador con perfil limpio
+        driver, profile_path = inicializar_navegador_limpio(headless=True)
         if not driver:
-            return {"error": "No se pudo inicializar navegador móvil", "productos": []}
+            return {"error": "No se pudo inicializar el navegador", "productos": []}
         
-        # Navegar con timing móvil
-        logger.info(f"📱 Navegando a {MAIN_URL} en modo móvil...")
+        # Navegar a la página principal con delay aleatorio
+        logger.info(f"🌐 Navegando a {MAIN_URL}...")
         driver.get(MAIN_URL)
-        time.sleep(random.uniform(5, 8))  # Móviles son más lentos
+        time.sleep(random.uniform(3, 5))
         
-        # Verificar carga móvil
-        page_info = driver.execute_script("""
-            return {
-                readyState: document.readyState,
-                userAgent: navigator.userAgent.substring(0, 60),
-                viewport: {width: window.innerWidth, height: window.innerHeight}
-            };
-        """)
-        logger.info(f"📱 Estado página móvil: {page_info}")
+        # ✅ VERIFICAR ESTADO INICIAL
+        estado_inicial = verificar_pagina_login_vs_principal(driver)
         
-        # Buscar acceso a login (adaptado para móvil)
-        logger.info("📱 Buscando acceso a login en interfaz móvil...")
+        if estado_inicial["en_principal"]:
+            logger.warning("⚠️ Ya estamos en página principal sin login - algo raro")
+            logger.warning("⚠️ Forzando limpieza adicional...")
+            limpiar_sesion_completa(driver)
+            driver.get(MAIN_URL)
+            time.sleep(3)
+            estado_inicial = verificar_pagina_login_vs_principal(driver)
         
-        # En móvil, el login puede estar en un menú hamburguesa
-        login_selectors = [
-            "a[href*='login']", 
-            "a.vtex-login-2-x-button",
-            "span:contains('Iniciar sesión')",
-            "button:contains('Ingresar')",
-            "a:contains('Iniciar sesión')",
-            ".menu-toggle",  # Menú hamburguesa
-            ".mobile-menu-button",
-            "[aria-label*='menu']"
-        ]
-        
-        login_found = False
-        for selector in login_selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                for element in elements:
-                    if element.is_displayed():
-                        logger.info(f"📱 Elemento login móvil encontrado: {selector}")
-                        # Scroll suave antes de hacer click
-                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                        time.sleep(1)
-                        element.click()
-                        login_found = True
-                        time.sleep(random.uniform(5, 8))  # Espera móvil
+        # Buscar enlace de login si no estamos ya en página de login
+        if not estado_inicial["en_login"]:
+            logger.info("🔍 Buscando enlace de login...")
+            login_link_found = False
+            
+            login_selectors = [
+                "a[href*='login']", 
+                "a.vtex-login-2-x-button",
+                "span:contains('Iniciar sesión')",
+                "button:contains('Ingresar')",
+                "a:contains('Iniciar sesión')",
+                "span:contains('Login')"
+            ]
+            
+            for selector in login_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        if element.is_displayed():
+                            logger.info(f"🖱️ Enlace de login encontrado. Haciendo clic...")
+                            element.click()
+                            login_link_found = True
+                            time.sleep(random.uniform(3, 5))
+                            break
+                    if login_link_found:
                         break
-                if login_found:
-                    break
-            except:
-                continue
+                except:
+                    continue
+            
+            # Si no encontramos enlaces, usar URL directa
+            if not login_link_found:
+                logger.info("📍 No se encontró enlace. Navegando a URL de login directa...")
+                driver.get("https://i22.nadro.mx/login")
+                time.sleep(random.uniform(3, 5))
         
-        if not login_found:
-            logger.info("📱 Navegando directamente a URL login móvil...")
-            driver.get("https://i22.nadro.mx/login")
-            time.sleep(random.uniform(5, 8))
+        # ✅ VERIFICAR QUE ESTAMOS EN LOGIN
+        estado_login = verificar_pagina_login_vs_principal(driver)
+        if not estado_login["en_login"]:
+            # Captura para debug
+            debug_dir = Path("debug_screenshots")
+            debug_dir.mkdir(exist_ok=True)
+            driver.save_screenshot(str(debug_dir / "no_esta_en_login.png"))
+            
+            logger.error("❌ No estamos en página de login después de intentar navegar")
+            return {"error": "No se pudo acceder a la página de login", "productos": []}
         
-        # Captura móvil
-        debug_dir = Path("debug_screenshots") 
+        # Captura de página de login
+        debug_dir = Path("debug_screenshots")
         debug_dir.mkdir(exist_ok=True)
-        driver.save_screenshot(str(debug_dir / "login_movil.png"))
+        driver.save_screenshot(str(debug_dir / "pagina_login_limpia.png"))
         
-        # ✅ PROCESO DE LOGIN MÓVIL
-        logger.info("📱 Iniciando login en modo móvil...")
+        # PROCESO DE LOGIN con limpieza previa
+        logger.info("🔐 Iniciando proceso de login con sesión limpia...")
         
         try:
-            # Campo usuario (con mayor timeout para móvil)
-            username_field = WebDriverWait(driver, 20).until(
+            # Buscar campo de usuario
+            logger.info("👤 Buscando campo de usuario...")
+            username_field = WebDriverWait(driver, 15).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='text'], input[type='email'], #username, input[name='username']"))
             )
             
-            # ✅ INTERACCIÓN MÓVIL USUARIO
-            logger.info(f"📱 Ingresando usuario móvil: {USERNAME}")
-            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", username_field)
-            time.sleep(1)
-            driver.execute_script("arguments[0].focus();", username_field)
-            time.sleep(0.8)
-            
+            # Escribir usuario con delays humanos
+            logger.info(f"✍️ Ingresando usuario: {USERNAME}")
             username_field.clear()
-            time.sleep(1)
+            time.sleep(random.uniform(0.5, 1.5))
             
-            # Typing móvil (más lento)
-            for char in USERNAME:
-                username_field.send_keys(char)
-                time.sleep(random.uniform(0.15, 0.4))
+            for c in USERNAME:
+                username_field.send_keys(c)
+                time.sleep(random.uniform(0.1, 0.3))
             
-            time.sleep(random.uniform(1, 2))
+            time.sleep(random.uniform(0.5, 1.5))
             
-            # Campo contraseña
-            password_field = WebDriverWait(driver, 15).until(
+            # Buscar campo de contraseña
+            logger.info("🔒 Buscando campo de contraseña...")
+            password_field = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='password'], #password, input[name='password']"))
             )
             
-            # ✅ INTERACCIÓN MÓVIL CONTRASEÑA
-            logger.info("📱 Ingresando contraseña móvil...")
-            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", password_field)
-            time.sleep(1)
-            driver.execute_script("arguments[0].focus();", password_field)
-            time.sleep(0.8)
-            
+            # Escribir contraseña
+            logger.info("✍️ Ingresando contraseña...")
             password_field.clear()
-            time.sleep(1)
+            time.sleep(random.uniform(0.5, 1.5))
             
-            for char in PASSWORD:
-                password_field.send_keys(char)
-                time.sleep(random.uniform(0.15, 0.4))
+            for c in PASSWORD:
+                password_field.send_keys(c)
+                time.sleep(random.uniform(0.1, 0.3))
             
-            time.sleep(random.uniform(1.5, 2.5))
+            time.sleep(random.uniform(1, 2))
             
-            # Botón login móvil
+            # Buscar y hacer clic en botón de login
+            logger.info("🖱️ Buscando botón de login...")
+            login_button = None
+            
             button_selectors = [
                 "button[type='submit']",
                 "input[type='submit']",
+                "button.login-button",
                 "button:contains('Iniciar sesión')",
-                "button:contains('Ingresar')"
+                "button:contains('Ingresar')",
+                "button.btn-primary"
             ]
             
-            login_button = None
             for selector in button_selectors:
                 try:
                     elements = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -747,88 +1161,83 @@ def login_and_search_movil(producto):
                 except:
                     continue
             
-            # ✅ ENVIAR LOGIN MÓVIL
+            # Enviar login
             if login_button:
-                logger.info("📱 Enviando login móvil...")
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", login_button)
-                time.sleep(1)
+                logger.info("🚀 Haciendo clic en botón de login...")
                 login_button.click()
             else:
-                logger.info("📱 Enviando con Enter móvil...")
+                logger.info("⌨️ No se encontró botón. Enviando con Enter...")
                 password_field.send_keys(Keys.RETURN)
             
-            # ✅ ESPERA MÓVIL EXTENDIDA (crítico para NADRO)
-            logger.info("📱 Esperando procesamiento login móvil (timing extendido)...")
-            time.sleep(18)  # Tiempo AÚN MÁS largo para móviles
+            # Esperar procesamiento de login
+            logger.info("⏳ Procesando login...")
+            time.sleep(random.uniform(8, 12))
             
-            # Captura post-login móvil
-            driver.save_screenshot(str(debug_dir / "post_login_movil.png"))
+            # Captura después del login
+            driver.save_screenshot(str(debug_dir / "despues_login_limpio.png"))
             
-            # Verificar login móvil exitoso
-            current_url = driver.current_url.lower()
-            page_text = driver.page_source.lower()
+            # ✅ VERIFICAR LOGIN EXITOSO
+            estado_final = verificar_pagina_login_vs_principal(driver)
             
-            login_exitoso = (
-                "login" not in current_url or
-                "logout" in page_text or
-                "cerrar sesión" in page_text or
-                "mi cuenta" in page_text or
-                "bienvenido" in page_text
-            )
-            
-            if login_exitoso:
-                logger.info("✅ LOGIN MÓVIL EXITOSO!")
+            if estado_final["en_principal"] or "login" not in estado_final["url"]:
+                logger.info("✅ Login exitoso con sesión limpia. Procediendo con búsqueda...")
                 
-                # Pequeña pausa adicional para estabilizar
-                time.sleep(3)
-                
-                # Proceder con búsqueda móvil
-                resultado = buscar_producto_movil(driver, producto)
+                # Realizar búsqueda del producto
+                resultado = buscar_producto(driver, producto)
                 return resultado
             else:
-                logger.error("❌ Login móvil falló")
+                logger.error("❌ Login fallido con sesión limpia")
                 
-                # Debug móvil
+                # Guardar HTML para análisis
                 debug_logs_dir = Path("debug_logs")
                 debug_logs_dir.mkdir(exist_ok=True)
-                with open(debug_logs_dir / "login_movil_fallido.html", "w", encoding="utf-8") as f:
+                with open(debug_logs_dir / "login_fallido_limpio.html", "w", encoding="utf-8") as f:
                     f.write(driver.page_source)
                 
-                return {"error": "Login móvil falló", "productos": []}
+                return {"error": "Login fallido después de limpiar sesión", "productos": []}
                 
         except Exception as e:
-            logger.error(f"❌ Error en proceso login móvil: {e}")
-            driver.save_screenshot(str(debug_dir / "error_login_movil.png"))
-            return {"error": f"Error login móvil: {str(e)}", "productos": []}
+            logger.error(f"❌ Error durante proceso de login limpio: {e}")
+            driver.save_screenshot(str(debug_dir / "error_login_limpio.png"))
+            return {"error": f"Error de login con sesión limpia: {str(e)}", "productos": []}
     
     except Exception as e:
-        logger.error(f"❌ Error general login móvil: {e}")
+        logger.error(f"❌ Error general en login_and_search_limpio: {e}")
+        traceback.print_exc()
         return {"error": str(e), "productos": []}
     
     finally:
-        # Limpieza móvil
-        logger.info("📱 Limpieza final móvil...")
-        safe_driver_quit_movil(driver, profile_path)
+        # ✅ LIMPIEZA FINAL GARANTIZADA
+        logger.info("🧹 Iniciando limpieza final...")
+        safe_driver_quit(driver, profile_path)
 
 def buscar_info_medicamento(nombre_medicamento, headless=True):
     """
-    ✅ FUNCIÓN PRINCIPAL: Búsqueda NADRO simulando navegador móvil
+    ✅ FUNCIÓN PRINCIPAL CORREGIDA: Con limpieza completa de sesión
+    ACTUALIZADO: Con normalización específica para NADRO.
+    MODIFICADO: Con sistema de similitud 80%+ integrado.
+    
+    Args:
+        nombre_medicamento (str): Nombre del medicamento a buscar
+        headless (bool): Si es True, el navegador se ejecuta en modo headless
+        
+    Returns:
+        dict: Diccionario con la información del medicamento en formato compatible
     """
     try:
-        logger.info(f"📱 BÚSQUEDA NADRO MODO MÓVIL: {nombre_medicamento}")
-        logger.info("🎯 ESTRATEGIA: Simular Safari/Chrome móvil (NADRO permite móviles)")
+        logger.info(f"🚀 Iniciando búsqueda NADRO con sesión limpia: {nombre_medicamento}")
         
-        # Normalizar búsqueda
+        # ✅ NUEVO: Normalizar búsqueda para NADRO
         nombre_normalizado = normalizar_busqueda_nadro(nombre_medicamento)
         
-        # Crear directorios debug
+        # Crear directorios para debug
         Path("debug_screenshots").mkdir(exist_ok=True)
         Path("debug_logs").mkdir(exist_ok=True)
         
-        # ✅ USAR FUNCIÓN MÓVIL
-        resultado = login_and_search_movil(nombre_normalizado)
+        # ✅ USAR FUNCIÓN DE LOGIN LIMPIA
+        resultado = login_and_search_limpio(nombre_normalizado)
         
-        # Procesar resultado
+        # Si hay error, devolver un formato compatible con mensaje de error
         if "error" in resultado:
             return {
                 "nombre": nombre_medicamento,
@@ -838,6 +1247,7 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "existencia": "0"
             }
         
+        # Si hay advertencia pero sin productos
         if "warning" in resultado or not resultado.get("productos"):
             return {
                 "nombre": nombre_medicamento,
@@ -847,10 +1257,11 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "existencia": "0"
             }
         
-        # Formatear primer producto
+        # Si hay productos, formatear el primero en formato compatible
         if resultado.get("productos"):
             primer_producto = resultado["productos"][0]
             
+            # Crear un diccionario en formato compatible con el resto de scrapers
             info_producto = {
                 "nombre": primer_producto.get("nombre", nombre_medicamento),
                 "laboratorio": primer_producto.get("laboratorio", "No disponible"),
@@ -858,33 +1269,63 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
                 "registro_sanitario": "No disponible",
                 "url": "https://i22.nadro.mx/",
                 "imagen": primer_producto.get("imagen", ""),
-                "precio": primer_producto.get("precio_farmacia", "No disponible"),
+                "precio": primer_producto.get("precio_farmacia", primer_producto.get("precio_publico", "No disponible")),
                 "existencia": "0",
                 "fuente": "NADRO",
                 "estado": "encontrado"
             }
             
-            # Procesar existencia
+            # ===== PROCESAMIENTO DE EXISTENCIA CORREGIDO PARA NADRO =====
+            logger.info(f"🔄 Procesando existencia basada SOLO en botón COMPRAR")
+            
             existencia_raw = primer_producto.get("existencia", "")
             if existencia_raw:
-                if "disponible" in existencia_raw.lower():
+                existencia_lower = existencia_raw.lower()
+                logger.info(f"🔍 Analizando estado de disponibilidad: '{existencia_raw}'")
+                
+                # LÓGICA PRINCIPAL: Solo botón COMPRAR indica disponibilidad real
+                if "disponible" in existencia_lower:
+                    # Esto viene del botón COMPRAR activo
                     info_producto["existencia"] = "Si"
-                else:
+                    logger.info(f"✅ Producto DISPONIBLE (botón COMPRAR encontrado): {existencia_raw}")
+                elif "no disponible" in existencia_lower or "agotado" in existencia_lower:
+                    # Esto viene cuando no hay botón COMPRAR
                     info_producto["existencia"] = "0"
+                    logger.info(f"❌ Producto NO DISPONIBLE: {existencia_raw}")
+                else:
+                    # Cualquier otro texto (como "Entrega mañana") sin botón COMPRAR
+                    # indica que no pudimos determinar disponibilidad correctamente
+                    info_producto["existencia"] = "0"
+                    logger.warning(f"⚠️ Estado ambiguo - probablemente faltó detectar botón COMPRAR: {existencia_raw}")
+                    logger.warning(f"💡 NOTA: '{existencia_raw}' parece ser info de envío, no de disponibilidad")
+            else:
+                info_producto["existencia"] = "0"
+                logger.info(f"⚠️ Sin información de existencia")
             
-            logger.info(f"✅ PRODUCTO ENCONTRADO MODO MÓVIL: {info_producto['nombre']} - {info_producto['precio']} - Stock: {info_producto['existencia']}")
+            # Si hay más productos, incluirlos como datos adicionales
+            if len(resultado["productos"]) > 1:
+                info_producto["productos_adicionales"] = resultado["productos"][1:]
+                info_producto["total_productos"] = len(resultado["productos"])
+            
+            # Mostrar información de similitud si está disponible
+            if 'similitud_nadro' in primer_producto:
+                logger.info(f"🎯 NADRO: Producto seleccionado con similitud {primer_producto['similitud_nadro']:.3f}")
+            
+            logger.info(f"✅ Producto encontrado en NADRO (sesión limpia): {info_producto['nombre']} - Precio: {info_producto['precio']} - Existencia: {info_producto['existencia']}")
             return info_producto
         
+        # Si llegamos aquí sin retornar, algo salió mal
         return {
             "nombre": nombre_medicamento,
-            "mensaje": "No se pudo procesar respuesta NADRO móvil",
+            "mensaje": "No se pudo procesar la respuesta del servidor NADRO",
             "estado": "error",
             "fuente": "NADRO",
             "existencia": "0"
         }
         
     except Exception as e:
-        logger.error(f"❌ Error general NADRO móvil: {e}")
+        logger.error(f"❌ Error general en buscar_info_medicamento: {e}")
+        traceback.print_exc()
         return {
             "nombre": nombre_medicamento,
             "error": str(e),
@@ -893,29 +1334,67 @@ def buscar_info_medicamento(nombre_medicamento, headless=True):
             "existencia": "0"
         }
 
+# Para ejecución directa como script independiente
 if __name__ == "__main__":
     import sys
+    import json
     
-    print("📱 === NADRO SCRAPER MODO MÓVIL ===")
-    print("🎯 Simula Safari en iPhone / Chrome en Android")
-    print("✅ Evita bloqueo de navegadores desktop")
+    print("=== Sistema de Búsqueda de Medicamentos en NADRO ===")
+    print("=== CON LIMPIEZA COMPLETA DE SESIÓN + FILTRO SIMILITUD 80%+ ===")
     
+    # Si se proporciona un argumento por línea de comandos, usarlo como nombre del medicamento
     if len(sys.argv) > 1:
         medicamento = " ".join(sys.argv[1:])
     else:
-        medicamento = input("Nombre del medicamento: ")
+        # De lo contrario, pedir al usuario
+        medicamento = input("Ingrese el nombre del medicamento a buscar: ")
     
-    print(f"\n📱 Iniciando búsqueda móvil para: {medicamento}")
-    print("⏳ Simulando navegador móvil...")
+    # ✅ NUEVO: Mostrar normalización
+    medicamento_normalizado = normalizar_busqueda_nadro(medicamento)
+    print(f"\n=== NORMALIZACIÓN NADRO ===")
+    print(f"Original: {medicamento}")
+    print(f"Normalizado: {medicamento_normalizado}")
+    print("=" * 40)
     
-    resultado = buscar_info_medicamento(medicamento)
+    print(f"\nBuscando información sobre: {medicamento_normalizado}")
+    print("Espere un momento...\n")
     
-    if resultado.get('estado') == 'encontrado':
-        print(f"\n✅ ÉXITO CON NAVEGADOR MÓVIL")
-        print(f"Producto: {resultado['nombre']}")
-        print(f"Precio: {resultado['precio']}")
-        print(f"Stock: {resultado['existencia']}")
+    # Buscar información del medicamento
+    info = buscar_info_medicamento(medicamento)
+    
+    # Verificar el estado del resultado
+    estado = info.get('estado', 'desconocido')
+    
+    if estado == 'encontrado':
+        print("\n=== INFORMACIÓN DEL PRODUCTO ===")
+        print(f"Nombre: {info.get('nombre', 'No disponible')}")
+        print(f"Precio: {info.get('precio', 'No disponible')}")
+        print(f"Laboratorio: {info.get('laboratorio', 'No disponible')}")
+        print(f"Existencia: {info.get('existencia', 'No disponible')}")
+        print(f"URL: {info.get('url', 'No disponible')}")
+        print("\nResultado: Producto encontrado con similitud 80%+ y sesión limpia")
     else:
-        print(f"\n❌ {resultado.get('mensaje', resultado.get('error', 'Error desconocido'))}")
+        print(f"\n{info.get('mensaje', info.get('error', 'No se pudo obtener información del producto'))}")
+        print(f"\nEstado: {estado}")
     
-    print(f"\n📱 Simulación móvil completada.")
+    # Guardar resultado como JSON para procesamiento externo
+    try:
+        output_file = f"{medicamento.replace(' ', '_')}_resultado.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=4)
+        print(f"\nResultado guardado en: {output_file}")
+    except Exception as e:
+        print(f"\nError al guardar resultado: {e}")
+    
+    # Pruebas de similitud si se ejecuta directamente
+    print("\n🧪 PRUEBAS SIMILITUD 80%+:")
+    casos_prueba = [
+        ("paracetamol 500mg", "PARACETAMOL 500MG TABLETAS"),
+        ("losartan 50mg", "LOSARTAN POTASICO 50MG"),
+        ("ibuprofeno", "IBUPROFENO SUSPENSION 100ML"),
+    ]
+    
+    for consulta, producto in casos_prueba:
+        similitud = calcular_similitud_nadro_80(consulta, producto)
+        valido = similitud >= 0.80
+        print(f"'{consulta}' vs '{producto}': {similitud:.3f} {'✅' if valido else '❌'}")
